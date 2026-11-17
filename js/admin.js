@@ -5398,7 +5398,7 @@ function renderStaffStore(section, store) {
       { label: 'Actions', render: (row) => `<button type="button" class="compact-icon-action compact-edit-action" data-edit-store-item="${escapeHtml(row.__id)}" aria-label="Edit ${escapeHtml(row.ItemName || row.ItemCode || 'store item')}" title="Edit item"><span aria-hidden="true">&#9998;</span></button>` }
     ])}
     ${organisationStore ? directTransferVerificationWorkspace('organizationStoreDirectTransferVerification', 'Store transfers awaiting verification') : ''}
-    <section id="staffStoreOrdersWorkspace"><h2>Paid Orders & Collection</h2><div class="workflow-record-list">${(store.orders || []).length ? (store.orders || []).map((order) => {
+    <section id="staffStoreOrdersWorkspace"><h2>Paid Orders & Collection</h2><p class="muted">Orders awaiting collection are shown automatically. Use Browse all history to view collected orders for a selected period.</p><div class="workflow-record-list">${(store.orders || []).length ? (store.orders || []).map((order) => {
       const orderStatus = clean(order.Status || 'Paid - Awaiting Collection');
       const statusKey = orderStatus.toLowerCase();
       const collected = statusKey === 'collected';
@@ -5416,7 +5416,7 @@ function renderStaffStore(section, store) {
           <button type="button" class="student-face-workflow-action" data-store-face-order="${escapeHtml(order.OrderNo)}" aria-label="Find ${escapeHtml(order.DisplayName || order.AccountRef)} by face for collection">&#128247; Verify by face</button>
         ` : `<button type="button" class="store-order-status ${collected ? 'is-collected' : ''}" data-store-order="${escapeHtml(order.OrderNo)}" data-store-status="${escapeHtml(nextStatus)}" aria-label="${escapeHtml(statusLabel)} for ${escapeHtml(order.DisplayName || order.AccountRef)}" ${collected ? 'disabled' : ''}>${escapeHtml(statusLabel)}</button>`}
       </div></article>`;
-    }).join('') : '<p class="muted">No paid orders yet.</p>'}</div></section>`;
+    }).join('') : '<p class="muted">No orders awaiting collection or matching the selected history period.</p>'}</div></section>`;
   mountWorkspaceTabs(section, [
     { key: 'sales', label: organisationStore ? 'Point of sale' : 'Sales', icon: '\u{1F6D2}', nodes: document.getElementById('organizationCommercePOS') },
     ...(organisationStore ? [{ key: 'transfers', label: 'Transfer verification', icon: '\u{1F50E}', nodes: document.getElementById('organizationStoreDirectTransferVerification') }] : []),

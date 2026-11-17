@@ -56,6 +56,26 @@ function visible(rows, user) {
     && (!clean(row.OrganisationEdition) || lower(row.OrganisationEdition) === edition));
 }
 
+// Collection is a current work queue. Completed orders remain date-gated history.
+export async function loadStoreCollectionOrders(env, body, user, storeType) {
+  const [pending, history] = await Promise.all([
+    listBranchCollection(env, 'storeOrders', user.branchId, {
+      filters: [
+        { field: 'Status', op: 'in', value: ['Paid - Awaiting Collection', 'Ready for Collection'] },
+        { field: 'StoreType', op: '==', value: storeType }
+      ],
+      pageSize: 250, maxRows: 10000
+    }),
+    loadDatedHistory(env, 'storeOrders', body, 'CreatedAt', user.branchId)
+  ]);
+  const orders = new Map();
+  for (const row of visible([...history, ...pending], user)) {
+    if (clean(row.StoreType) !== storeType) continue;
+    orders.set(clean(row.__id || row.OrderNo || row.Reference), row);
+  }
+  return [...orders.values()];
+}
+
 export async function onRequestPost(context) {
   let idempotency = null;
   try {
@@ -222,7 +242,7 @@ export async function onRequestPost(context) {
     }
     const [{ categories, items }, orders, sales, procurementControlled] = await Promise.all([
       ensureStoreCategories(env, { readOnly: true, branchId: user.branchId, storeType }),
-      loadDatedHistory(env, 'storeOrders', body, 'CreatedAt', user.branchId),
+      loadStoreCollectionOrders(env, body, user, storeType),
       section === 'organizationStore'
         ? listOrganizationCommerceSales(env, section, user)
         : Promise.resolve([]),
