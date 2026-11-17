@@ -6,10 +6,38 @@ import {
   platformBankReferenceHash,
   platformTransferEvidence,
   publicPlatformTransferRecord,
-  validatePlatformPaymentSettings
+  validatePlatformPaymentSettings,
+  verifiedPlatformTransferFields
 } from '../functions/lib/platform-direct-bank-transfer.js';
+import { tenantProjectAssignmentEligibility } from '../functions/lib/tenant-project-pool.js';
 
 const source = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
+
+test('only reviewed paid transfers with a matching unique claim qualify for first-time allocation', () => {
+  const payment = { Reference: 'DMX-TRF-test', RegistrationReference: 'REG-test',
+    PaymentMethod: 'Direct Bank Transfer', Status: 'Approval Processing', Plan: 'Flex',
+    Amount: 382500, BankReference: 'test-bank-credit' };
+  const claim = { PaymentReference: payment.Reference, RegistrationReference: payment.RegistrationReference,
+    BankReferenceHash: 'test-reference-hash' };
+  const reviewedAt = '2026-11-17T10:00:00Z';
+  const fields = verifiedPlatformTransferFields(payment, claim, reviewedAt);
+  assert.equal(tenantProjectAssignmentEligibility(fields).bankTransferVerified, true);
+  assert.equal('CardVerificationStatus' in fields, false);
+  assert.deepEqual(verifiedPlatformTransferFields(payment, claim, reviewedAt), fields);
+  for (const patch of [{ Status: 'Awaiting Verification' }, { Status: 'Rejected' },
+    { Plan: 'Free' }, { Amount: 0 }, { Amount: -1 }, { Amount: Infinity }, { BankReference: '' }]) {
+    assert.throws(() => verifiedPlatformTransferFields({ ...payment, ...patch }, claim, reviewedAt));
+  }
+  for (const patch of [{ PaymentReference: 'another-payment' }, { RegistrationReference: 'another-subscriber' },
+    { BankReferenceHash: '' }]) {
+    assert.throws(() => verifiedPlatformTransferFields(payment, { ...claim, ...patch }, reviewedAt));
+  }
+  for (const key of Object.keys(fields)) {
+    const incomplete = { ...fields }; delete incomplete[key];
+    assert.equal(tenantProjectAssignmentEligibility(incomplete).eligible, false, key);
+  }
+  assert.equal(tenantProjectAssignmentEligibility({ PaymentStatus: 'Paid', BankReference: payment.BankReference }).eligible, false);
+});
 
 test('Dynamax direct-transfer settings remain separate from tenant bank settings', () => {
   const settings = normalizePlatformPaymentSettings({
@@ -59,6 +87,7 @@ test('Dynamax registration and upgrades use the central payment chooser', async 
   assert.match(registrationHtml, /js\/payment-methods\.js/);
   assert.ok(registrationHtml.indexOf('js/payment-methods.js') < registrationHtml.indexOf('js/register-organization.js'));
   assert.match(registrationClient, /methodsUrl:\s*'\/api\/platform-payment-methods'/);
+  assert.match(registrationClient, /allowDirectTransfer:\s*true/);
   assert.match(registrationClient, /PaymentMethod:\s*paymentChoice\.paymentMethod/);
   assert.match(adminHtml, /js\/payment-methods\.js/);
   assert.ok(adminHtml.indexOf('js/payment-methods.js') < adminHtml.indexOf('js/admin.js'));
@@ -79,6 +108,7 @@ test('manual subscription approval is server-controlled and duplicate-reference 
     source('js/plan-management.js')
   ]);
   assert.match(registrationApi, /Status:\s*'Awaiting Verification'/);
+  assert.doesNotMatch(registrationApi, /first-time subscriber must complete Paystack card verification/);
   assert.match(registrationApi, /PreserveActivePlan:\s*Boolean\(preserveActivePlan\)/);
   assert.match(registrationApi, /PendingDirectTransferReference/);
   assert.match(settingsApi, /requirePlatformAdmin/);

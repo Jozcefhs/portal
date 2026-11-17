@@ -13,7 +13,8 @@ import {
   normalizePlatformPaymentSettings,
   platformBankReferenceHash,
   publicPlatformTransferRecord,
-  validatePlatformPaymentSettings
+  validatePlatformPaymentSettings,
+  verifiedPlatformTransferFields
 } from '../lib/platform-direct-bank-transfer.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { paystackSecretMode } from '../lib/paystack-environment.js';
@@ -248,12 +249,13 @@ async function decideTransfer(env, platformEnv, body) {
   }, payment);
   try {
     const claimId = await platformBankReferenceHash(payment.BankReference);
-    const claim = await createDocumentIfAbsent(platformEnv, 'verifiedSubscriptionBankReferences', claimId, {
+    const claimFields = {
       BankReferenceHash: claimId,
       PaymentReference: reference,
       RegistrationReference: clean(payment.RegistrationReference),
       CreatedAt: reviewedAt
-    });
+    };
+    const claim = await createDocumentIfAbsent(platformEnv, 'verifiedSubscriptionBankReferences', claimId, claimFields);
     if (!claim.created && clean(claim.document?.PaymentReference) !== reference) {
       const error = new Error('This bank transaction reference has already been approved for another subscription.');
       error.status = 409;
@@ -263,7 +265,14 @@ async function decideTransfer(env, platformEnv, body) {
       platformEnv,
       reference,
       intent: { ...payment, Status: 'Approval Processing' },
-      savedRegistration: registration,
+      savedRegistration: {
+        ...registration,
+        ...verifiedPlatformTransferFields(
+          { ...payment, Reference: reference, Status: 'Approval Processing' },
+          claim.created ? claimFields : claim.document,
+          reviewedAt
+        )
+      },
       registrationReference,
       provider: 'Direct Bank Transfer',
       paidAt: reviewedAt,

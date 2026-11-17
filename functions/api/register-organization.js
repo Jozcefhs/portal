@@ -568,13 +568,6 @@ export async function initializeSubscriptionCheckout({
   }
   const availableMethods = await publicPlatformPaymentMethods(env);
   if (selectedPaymentMethod === 'direct_bank_transfer') {
-    if (!clean(registration.WorkspaceId)
-        && !(clean(registration.CardVerificationStatus).toLowerCase() === 'verified' && clean(registration.CardVerifiedAt))) {
-      const error = new Error('A first-time subscriber must complete Paystack card verification before a tenant project can be assigned. Direct bank transfer is available after the workspace has been activated.');
-      error.status = 409;
-      error.code = 'TENANT_CARD_VERIFICATION_REQUIRED';
-      throw error;
-    }
     const directTransfer = availableMethods.directTransfer || {};
     if (!directTransfer.enabled) {
       const error = new Error('Dynamax direct bank transfer is not configured yet.');
