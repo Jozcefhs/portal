@@ -1,8 +1,8 @@
 {
-  "version": "3.1.64",
+  "version": "3.1.65",
   "channel": "stable",
   "release_status": "published",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.64.exe",
-  "sha256": "472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e",
-  "notes": "Dynamax v3.1.64 adds separate total school-fee discount rates by branch, billing category, class and term; shares branch class and arm setup with Academic Management; preserves every selected class in fee rules; shows Day/Boarding for vendor customers; and supports payment requests covering up to 2,000 sales with detailed reports loaded on demand. Existing records, invoices and payments are preserved. Card terminal payments remain disabled."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.65.exe",
+  "sha256": "d3ea49c6d934c98fb7c08974b9617405f56b67cc38ec64f78bd8073d38509fad",
+  "notes": "Save User, Delete User and Close are visible in the User Management window at smaller sizes and higher display scaling. School Documents & Structure explains branch restrictions and saves the document and school-section switches."
 }
