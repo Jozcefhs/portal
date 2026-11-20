@@ -16103,7 +16103,8 @@ function academicScorebookWorkspace(data, rows) {
   const currentRosterRefs = new Set(roster.map(row => clean(row.StudentRef).toLowerCase()));
   const scoreActions = academicScoreActionState(sheet, sheetScores.filter(score => currentRosterRefs.has(clean(score.StudentRef).toLowerCase())), midTerm);
   const midTermNames = (midTerm.ComponentIds || []).map(id => (scheme.Components || []).find(row => row.Id === id)?.Name).filter(Boolean).join(', ');
-  const layoutUpdateAvailable = data.scorebookContext?.LayoutUpdateAvailable === true;
+  const layoutUpdateAvailable = sheet?.Status === 'Draft' && contextKey === responseContextKey
+    && data.scorebookContext?.SheetId === sheet.SheetId && data.scorebookContext?.LayoutUpdateAvailable === true;
   const canEdit = data.permissions?.canEnterScores === true && (!sheet || sheet.Status === 'Draft') && scheme.Ready;
   let editableCellCount = 0;
   const classroomLabel = (arm) => `${academicLabel(rows.classes, arm.ClassId)} / ${arm.Name}`;
@@ -16156,9 +16157,9 @@ function academicScorebookWorkspace(data, rows) {
     ? `<div class="academic-score-scheme-banner is-ready"><strong>${layoutUpdateAvailable ? 'Score sheet scheme' : 'Active scheme'}</strong><span>${scheme.Components.length} components · ${scheme.GradeBands.length} grade bands · revision ${escapeHtml(scheme.RevisionId)}</span></div>`
     : `<div class="academic-score-scheme-banner has-errors"><strong>Score entry is blocked</strong><span>${escapeHtml((scheme.Issues || []).join(' '))}</span></div>`;
   const layoutUpdate = layoutUpdateAvailable
-    ? `<div class="academic-score-lock-banner is-reactivated"><strong>New assessment layout available</strong><span>This Draft still uses its earlier captured columns. Apply revision ${escapeHtml(data.scorebookContext?.ActiveAssessmentRevisionId || '')} to show the configured Objective (A) and Theory (B) fields.</span>${data.permissions?.canManageScoreCorrections
+    ? `<div class="academic-score-lock-banner is-reactivated"><strong>New assessment layout available</strong><span>This Draft still uses its earlier captured columns. Apply revision ${escapeHtml(data.scorebookContext?.ActiveAssessmentRevisionId || '')} to show the configured Objective (A) and Theory (B) fields.</span>${data.permissions?.canApplyScoreLayout
       ? `<button type="button" class="secondary" data-academic-score-layout-update data-academic-id="${escapeHtml(sheet?.SheetId || '')}">Apply active layout</button>`
-      : '<small>Ask an Admin or Management user to apply the active layout.</small>'}</div>`
+      : '<small>The assigned subject teacher or an academic administrator can apply the active layout.</small>'}</div>`
     : '';
   const lockingNotice = sheet
     ? correctionActive

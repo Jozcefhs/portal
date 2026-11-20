@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from './helpers/module-policy-vm.mjs';
 import { academicAssessmentScheme, migrateAcademicScoreLayout } from '../functions/lib/academic-scorebook.js';
+import { academicManagementCapabilities, assertAcademicScoreSheetAuthority } from '../functions/lib/academic-management.js';
 
 const admin = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
 const server = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');
@@ -96,7 +97,7 @@ test('save, lock and midterm submission refresh only their selected sheet withou
   }
 });
 
-function migration({ conflict = false, excessive = false } = {}) {
+function migration({ conflict = false, excessive = false, status = 'Draft' } = {}) {
   const policy = { Assessment: { Components: [{ Id: 'ca1', Name: 'CA1', MaximumScore: 100, WeightPercentage: 100, SourceMode: 'any' }],
     GradeBands: [{ Grade: 'A', MinimumPercentage: 0, MaximumPercentage: 100, GradePoint: 5, Classification: 'pass' }] } };
   const old = academicAssessmentScheme(policy, { RevisionId: 'old' });
@@ -110,7 +111,7 @@ function migration({ conflict = false, excessive = false } = {}) {
       ComponentScores: [{ ComponentId: 'ca1', State: 'Numeric', RawScore: 0 }] },
     { SheetId: 'other', ScoreId: 'untouched', ComponentScores: [{ RawScore: 72 }] }
   ];
-  const existing = { ...payload, Status: 'Draft', TeacherUsername: 'teacher', AssessmentRevisionId: 'old', __updateTime: 'sheet-before' };
+  const existing = { ...payload, Status: status, TeacherUsername: 'teacher', AssessmentRevisionId: 'old', __updateTime: 'sheet-before' };
   let batches = [];
   const context = { ...payload, existing, scheme: old, snapshotScheme: old, state: { studentScores: scores },
     scope: { branchId: 'main', section: 'secondary' }, session: { SessionId: 'session' }, term: { TermId: 'term' },
@@ -118,7 +119,14 @@ function migration({ conflict = false, excessive = false } = {}) {
     allocation: { TeacherUsername: 'teacher' }, roster: [{ StudentRef: 'one' }, { StudentRef: 'two' }] };
   const runtime = vm.createContext({ clean, lower, migrateAcademicScoreLayout,
     failure: (message, status, code) => Object.assign(new Error(message), { status, code }),
-    academicScoreSheetContext: async () => context, academicAssessmentForPeriod: async () => active,
+    academicScoreSheetContext: async (_env, user, input, capability) => {
+      const permissions = academicManagementCapabilities(user);
+      if (!permissions[capability]) throw new Error('Permission denied');
+      assertAcademicScoreSheetAuthority(user, permissions, {teacherAllocations: [
+        {...payload, TeacherUsername: 'teacher', AllocationRole: 'Subject Teacher', Status: 'Active'}
+      ]}, input, existing);
+      return context;
+    }, academicAssessmentForPeriod: async () => active,
     nowIso: () => '2026-10-26T01:00:00Z', actorName: () => 'Officer', actorUsername: () => 'officer',
     academicRecordedScoreComponentIds: () => ['ca1'], academicRecordedScoreCellIds: rows => rows.flatMap(row => row.Parts
       .filter(part => part.State === 'Numeric').map(part => `${row.ComponentId}:${part.PartId}`)),
@@ -139,10 +147,13 @@ function migration({ conflict = false, excessive = false } = {}) {
   return { runtime, scores, batches };
 }
 
-test('layout action commits sheet and migrated marks together, preserving zero, CBT evidence and locked cells', async () => {
+const teacher = {role: 'Teacher', username: 'teacher', edition: 'school', allowedSections: ['academics']};
+
+test('assigned teacher applies the layout while preserving zero, CBT evidence and locked cells', async () => {
   const { runtime, scores, batches } = migration();
   const before = structuredClone(scores);
-  const result = await runtime.applyActiveAcademicScoreLayout({}, {}, { ...payload, RevisionToken: 'sheet-before' });
+  assert.equal(academicManagementCapabilities(teacher).canManageScoreCorrections, false);
+  const result = await runtime.applyActiveAcademicScoreLayout({}, teacher, { ...payload, RevisionToken: 'sheet-before' });
   assert.equal(result.ok, true); assert.equal(batches.length, 1);
   const marks = batches[0].filter(write => write.collectionPath === 'scores');
   assert.equal(marks.length, 2);
@@ -160,7 +171,19 @@ test('unsafe layout changes and concurrent edits cannot report success or partia
   for (const options of [{ excessive: true }, { conflict: true }]) {
     const { runtime, scores, batches } = migration(options);
     const before = structuredClone(scores);
-    await assert.rejects(runtime.applyActiveAcademicScoreLayout({}, {}, payload));
+    await assert.rejects(runtime.applyActiveAcademicScoreLayout({}, teacher, payload));
     assert.equal(batches.length, 0); assert.deepEqual(scores, before);
+  }
+});
+
+test('unassigned teachers and non-draft sheets cannot apply a layout', async () => {
+  for (const [actor, status, reason] of [
+    [{...teacher, username: 'another'}, 'Draft', /not allocated/],
+    [teacher, 'Submitted', /Only a Draft/],
+    [teacher, 'Approved', /Only a Draft/]
+  ]) {
+    const {runtime, batches} = migration({status});
+    await assert.rejects(runtime.applyActiveAcademicScoreLayout({}, actor, {...payload, TeacherUsername: 'teacher'}), reason);
+    assert.equal(batches.length, 0);
   }
 });

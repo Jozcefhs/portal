@@ -694,6 +694,7 @@ export function academicManagementCapabilities(user = {}) {
     canPublishTimetables: enabled && TIMETABLE_PUBLISHERS.has(role),
     canMarkAttendance: enabled && (TIMETABLE_MANAGERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
     canEnterScores: enabled && (SCORE_REVIEWERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
+    canApplyScoreLayout: enabled && (STRUCTURE_MANAGERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
     canCreateCbt: enabled && (SCORE_REVIEWERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
     canReviewScores: enabled && SCORE_REVIEWERS.has(role),
     // Viewing a register does not confer score review, editing or publication.
@@ -6884,7 +6885,7 @@ function academicTermResultId(scope, sessionId, termId, classId, armId, studentR
 }
 
 export async function applyActiveAcademicScoreLayout(env, user = {}, input = {}) {
-  const context = await academicScoreSheetContext(env, user, input, 'canManageScoreCorrections');
+  const context = await academicScoreSheetContext(env, user, input, 'canApplyScoreLayout');
   const { scope, state, existing } = context;
   if (!existing) throw failure('Create the Draft score sheet before applying an updated assessment layout.', 409, 'ACADEMIC_SCORE_SHEET_EMPTY');
   if (lower(existing.Status) !== 'draft') {
