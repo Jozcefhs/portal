@@ -22377,6 +22377,7 @@ function renderDataBackup() {
           <p>Both modes restore eligible entries from the file. Exact match also removes previewed branch records absent from the file in those collections.</p>
           <label>Backup file<input id="restoreBackupFile" type="file" accept=".json,.dynamax-backup,application/json"></label>
           <label>Backup password<input id="restoreBackupPassword" type="password" autocomplete="off"></label>
+          <label><input type="checkbox" id="restoreUploadedDocuments"> Restore uploaded documents for the selected branch</label>
           <button type="button" id="openBackupDocuments">Browse documents in backup</button>
           <div id="backupDocumentList" aria-live="polite"></div>
           <button type="button" id="previewBranchRestore" disabled>Preview branch restore</button>
@@ -22477,9 +22478,9 @@ function renderDataBackup() {
     }
   });
   const restoreCard = document.getElementById('restoreBranch');
-  import('/js/branch-restore.js?v=20261120-documents').then(({ mountBranchRestore }) => {
+  import('/js/branch-restore.js?v=20261120-restore-files').then(({ mountBranchRestore }) => {
     if (!restoreCard.isConnected) return;
-    mountBranchRestore({ request: dataBackupRequest, decrypt: decryptOrganizationBackup, chunks: chunkRestoreRows,
+    mountBranchRestore({ request: dataBackupRequest, staffFetch, decrypt: decryptOrganizationBackup, chunks: chunkRestoreRows,
       status: setDataBackupStatus, dialogs: window.DynamaxDialogs, derive: deriveBackupEncryptionKey, safetyBackup: async password => {
         const payload = await collectOrganizationBackup('Safety backup');
         downloadBackupFile(await encryptOrganizationBackup(payload, password), 'pre-restore-safety-backup');

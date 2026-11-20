@@ -3,6 +3,7 @@ import { requiredDeploymentIdentity } from './deployment-identity.js';
 import { batchCommitLiteralDocuments, getDocument, getDocuments, queryCollection } from './firestore.js';
 import { validateManifest } from './organization-backup.js';
 import { normalizeSchoolStructure } from './school-scope.js';
+import { branchResetFilePrefixes, containsReference } from './document-storage.js';
 
 const database = { getDocument, getDocuments, queryCollection, commit: batchCommitLiteralDocuments };
 const jobs = 'systemRestoreJobs';
@@ -111,7 +112,8 @@ export async function branchRestoreRequest(env, user, action, body, db = databas
   const mode = body.mode;
   if (!['merge', 'exact'].includes(mode)) throw fail('Select a restore mode.');
   const phrase = `RESTORE ${branch} ${mode}`.toUpperCase();
-  if (action !== 'apply-branch-restore') {
+  const applyFile = action === 'apply-branch-restore-document';
+  if (action !== 'apply-branch-restore' && !applyFile) {
     validateManifest(identity, body.manifest);
     if (body.manifest?.branchId && body.manifest.branchId !== branch) throw fail('This backup belongs to a different branch.');
   }
@@ -120,6 +122,17 @@ export async function branchRestoreRequest(env, user, action, body, db = databas
     return { ok: true, branchId: branch, name: selected.Name, phrase, paths: body.paths.filter(path => collectionKind(path, identity, branch)) };
   }
   const path = body.collectionPath;
+  const inspectFile = file => inspectRestoreFile(env, identity, branch, structure, file);
+  const fileHash = file => digest(['uploaded-document', identity, branch, mode, file]);
+  if (action === 'preview-branch-restore-documents') {
+    if (!Array.isArray(body.files) || body.files.length > 40) throw fail('Compare up to 40 files at a time.');
+    const details = [];
+    for (const file of body.files) {
+      const state = await inspectFile(file);
+      details.push({ key: file.key, state, hash: state === 'create' ? await fileHash(file) : '' });
+    }
+    return { ok: true, details };
+  }
   if (action === 'preview-branch-restore-live') {
     const kind = collectionKind(path, identity, branch);
     if (mode !== 'exact' || !kind) throw fail('This collection is outside the exact-match preview.');
@@ -144,20 +157,64 @@ export async function branchRestoreRequest(env, user, action, body, db = databas
     } }]);
     return { ok: true, jobId };
   }
-  if (action !== 'apply-branch-restore' || !/^BR-[a-f0-9-]{36}$/.test(body.jobId || '')) throw fail('Unknown branch restore session.');
+  if ((!applyFile && action !== 'apply-branch-restore') || !/^BR-[a-f0-9-]{36}$/.test(body.jobId || '')) throw fail('Unknown branch restore session.');
   const job = await db.getDocument(env, jobs, body.jobId);
   if (!job || job.JobType !== 'BranchRestore' || job.ActorUsername !== actor || job.WorkspaceId !== identity.workspaceId ||
       job.Edition !== identity.edition || job.BranchId !== branch || job.Mode !== mode || !job.__updateTime || Date.parse(job.ExpiresAt) <= Date.now()) throw fail('The restore session expired or belongs to another branch or administrator.');
   const i = body.index;
   if (!Number.isInteger(i) || i < 0 || i >= job.Hashes.length || body.hash !== job.Hashes[i] || i > job.NextChunk) throw fail('This batch does not match the confirmed preview.');
   if (i < job.NextChunk) return { ok: true, restored: job.Restored, complete: job.Status === 'Completed' };
-  const { changes } = await inspect(env, db, identity, branch, path, body.documents, remove);
-  if (await digest([identity, branch, mode, path, changes]) !== job.Hashes[i]) throw fail('The backup or live records changed. Preview the backup again.');
-  const writes = changes.map(({ id, version, data }) => ({ collectionPath: path, documentId: id, ...(remove ? { operation: 'delete' } : { data, restoreJsonTypes: true }),
-    ...(version ? { updateTime: version } : { exists: false }) }));
+  const writes = [];
+  if (applyFile) {
+    const file = body.file;
+    if (await fileHash(file) !== job.Hashes[i] || file.size !== body.byteLength || !body.binary) throw fail('File does not match the confirmed preview.');
+    const state = await inspectFile(file);
+    if (state !== 'create' && state !== 'unchanged') throw fail('The live file changed. Preview again.');
+    if (file.owner) {
+      const [row] = await db.getDocuments(env, file.owner.path, [file.owner.id]);
+      if (!row || !owns(file.owner.path, row, identity, branch) || !containsReference(row, file.key)) throw fail('The linked branch record changed. Preview again.');
+    }
+    if (state === 'create') {
+      const [, edition, workspaceId, category, branchId, schoolSection, ownerId, documentType] = file.key.split('/');
+      const result = await env.DYNAMAX_DOCUMENTS.put(file.key, body.binary, {
+        onlyIf: new Headers({ 'If-None-Match': '*' }), sha256: file.sha256, httpMetadata: { contentType: file.type },
+        customMetadata: { edition, workspaceId, category, branchId, schoolSection, ownerId, documentType, fileName: file.name, mimeType: file.type }
+      });
+      if (!result && await inspectFile(file) !== 'unchanged') throw fail('Another file now uses this location. Preview again.');
+    }
+  } else {
+    const { changes } = await inspect(env, db, identity, branch, path, body.documents, remove);
+    if (await digest([identity, branch, mode, path, changes]) !== job.Hashes[i]) throw fail('The backup or live records changed. Preview the backup again.');
+    for (const { id, version, data } of changes) writes.push({ collectionPath: path, documentId: id,
+      ...(remove ? { operation: 'delete' } : { data, restoreJsonTypes: true }), ...(version ? { updateTime: version } : { exists: false }) });
+  }
   const complete = i + 1 === job.Hashes.length;
-  const progress = { NextChunk: i + 1, Restored: job.Restored + changes.length, Status: complete ? 'Completed' : 'Restoring', UpdatedAt: new Date().toISOString() };
+  const progress = { NextChunk: i + 1, Restored: job.Restored + writes.length, Status: complete ? 'Completed' : 'Restoring', UpdatedAt: new Date().toISOString() };
+  if (applyFile) progress.DocumentsProcessed = (job.DocumentsProcessed || 0) + 1;
   writes.push({ collectionPath: jobs, documentId: body.jobId, data: progress, updateMask: Object.keys(progress), updateTime: job.__updateTime });
   await db.commit(env, writes);
   return { ok: true, restored: progress.Restored, complete };
+}
+
+async function inspectRestoreFile(env, identity, branch, structure, file) {
+  const prefixes = branchResetFilePrefixes(identity, branch);
+  const key = file?.key;
+  if (structure.Branches.some(row => row.Id !== branch && row.Id.replace(/^[._-]+|[._-]+$/g, '') === branch)) return 'unverified';
+  if (typeof key !== 'string' || !prefixes.some(prefix => key.startsWith(prefix)) || key.split('/').length !== 9 ||
+      key.split('/').some(segment => !/^[a-z0-9][a-z0-9._-]*$/i.test(segment)) || key.length > 1024) return 'unverified';
+  if (branch === 'main' && !file.owner || file.owner && (!collectionKind(file.owner.path, identity, branch) ||
+      typeof file.owner.id !== 'string' || !file.owner.id || /[/]/.test(file.owner.id) || ['.', '..'].includes(file.owner.id))) return 'unverified';
+  if (typeof file.name !== 'string' || file.name.length > 256 || typeof file.type !== 'string' || file.type.length > 160 ||
+      /[\x00-\x1f\x7f]/.test(file.name + file.type) || !Number.isSafeInteger(file.size) || file.size < 0 ||
+      !/^[a-f0-9]{64}$/.test(file.sha256)) throw fail('Invalid archived document details.');
+  const bucket = env.DYNAMAX_DOCUMENTS;
+  if (!bucket?.head || !bucket?.put) throw fail('Private document storage is unavailable.');
+  const current = await bucket.head(key);
+  if (!current) return 'create';
+  const meta = current.customMetadata || {};
+  if (meta.workspaceId && meta.workspaceId !== identity.workspaceId || meta.edition && meta.edition !== identity.edition ||
+      meta.branchId && meta.branchId !== branch) return 'unverified';
+  const sha256 = current.checksums?.toJSON?.().sha256;
+  return current.size === file.size && (sha256 ? sha256 === file.sha256 :
+    (current.etag && current.etag === file.etag || current.version && current.version === file.version)) ? 'unchanged' : 'conflict';
 }

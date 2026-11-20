@@ -1,4 +1,4 @@
-import { identityPrefix, branchResetFilePrefixes } from './document-storage.js';
+import { identityPrefix, branchResetFilePrefixes, containsReference } from './document-storage.js';
 import { requiredDeploymentIdentity } from './deployment-identity.js';
 import { resetBranchId } from './branch-reset.js';
 import { collectionKind, owns } from './branch-restore.js';
@@ -7,13 +7,7 @@ import { normalizeSchoolStructure } from './school-scope.js';
 
 const fail = (message, status = 409) => Object.assign(new Error(message), { status });
 const maxPage = 100;
-const ref = 'r2://dynamax-documents/';
 const db = { getDocument, getDocuments };
-
-function containsReference(value, key) {
-  if (typeof value === 'string') return value === ref + key || value === key;
-  return !!value && typeof value === 'object' && Object.values(value).some(item => containsReference(item, key));
-}
 
 function describe(object) {
   return { key: object.key, version: object.version, etag: object.etag, size: object.size,

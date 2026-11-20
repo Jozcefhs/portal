@@ -94,6 +94,11 @@ export function branchResetFilePrefixes(identity, branch) {
     .map(category => identityPrefix(identity) + category + '/' + branch + '/');
 }
 
+export function containsReference(value, key) {
+  if (typeof value === 'string') return value === storedDocumentReference(key) || value === key;
+  return !!value && typeof value === 'object' && Object.values(value).some(item => containsReference(item, key));
+}
+
 export function storedDocumentReference(key) {
   const normalized = clean(key).replace(/^\/+/, '');
   if (!normalized) throw storageError('The stored document key is missing.', 500, 'DOCUMENT_STORAGE_KEY_MISSING');
