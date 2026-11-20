@@ -23176,7 +23176,7 @@ function renderDataBackup() {
         <div><p class="eyebrow">Data protection</p><h2>Backup &amp; Restore</h2><p class="muted">Download an encrypted copy of the organisation database or return operational records to a previous backup.</p></div>
         <span class="data-backup-admin-badge">Super Administrator only</span>
       </div>
-      <div class="data-backup-warning"><strong>Keep backup files and passwords secure.</strong><span>They contain personal and financial records. Uploaded R2 documents remain in private storage; their database records and object references are backed up.</span></div>
+      <div class="data-backup-warning"><strong>Keep backup files and passwords secure.</strong><span>Backups may contain personal and financial records.</span></div>
       <div class="data-backup-grid">
         <article class="data-backup-card">
           <span class="data-backup-card-icon" aria-hidden="true">&#8681;</span>
@@ -23184,6 +23184,8 @@ function renderDataBackup() {
           <label>Backup scope<select id="backupScope"><option value="branch">One branch</option><option value="organisation">Whole organisation</option></select></label>
           <label id="backupBranchLabel">Branch to back up<select id="backupBranch"><option value="">Choose one branch</option>${availableBranches.filter(row => row.id && row.id !== 'all' && (selectedBranchId === 'all' || row.id === selectedBranchId)).map(row => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.name || row.id)}</option>`).join('')}</select></label>
           <p id="backupScopeHint" aria-live="polite"></p>
+          <label><input type="checkbox" id="backupIncludeDocuments"> Include uploaded documents in the encrypted backup</label>
+          <small>Includes private files stored in Dynamax. A Main Branch backup includes files linked to its eligible records, because older unassigned uploads share its storage location.</small>
           <label>Backup password <input id="newBackupPassword" type="password" minlength="10" autocomplete="new-password" placeholder="At least 10 characters"></label>
           <label>Confirm password <input id="confirmBackupPassword" type="password" minlength="10" autocomplete="new-password" placeholder="Repeat the password"></label>
           <button type="button" id="downloadDataBackup">Download backup</button>
@@ -23194,8 +23196,10 @@ function renderDataBackup() {
           <label>Branch to restore<select id="restoreBranch"><option value="">Choose one branch</option>${availableBranches.filter(row => row.id && row.id !== 'all' && (selectedBranchId === 'all' || selectedBranchId === row.id)).map(row => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.name || row.id)}</option>`).join('')}</select></label>
           <label>Restore mode<select id="restoreMode"><option value="merge">Keep newer records</option><option value="exact">Match the backup exactly</option></select></label>
           <p>Both modes restore eligible entries from the file. Exact match also removes previewed branch records absent from the file in those collections.</p>
-          <label>Backup file<input id="restoreBackupFile" type="file" accept=".json,.dynamax-backup.json,application/json"></label>
+          <label>Backup file<input id="restoreBackupFile" type="file" accept=".json,.dynamax-backup,application/json"></label>
           <label>Backup password<input id="restoreBackupPassword" type="password" autocomplete="off"></label>
+          <button type="button" id="openBackupDocuments">Browse documents in backup</button>
+          <div id="backupDocumentList" aria-live="polite"></div>
           <button type="button" id="previewBranchRestore" disabled>Preview branch restore</button>
           <div id="branchRestoreSummary" aria-live="polite"></div>
           <button type="button" id="restoreDataBackup" class="danger" disabled>Apply previewed changes</button>
@@ -23222,6 +23226,7 @@ function renderDataBackup() {
   const backupScope = document.getElementById('backupScope');
   const backupBranch = document.getElementById('backupBranch');
   const downloadButton = document.getElementById('downloadDataBackup');
+  const includeDocuments = document.getElementById('backupIncludeDocuments');
   if (selectedBranchId !== 'all') backupBranch.value = selectedBranchId;
   function showBackupScope() {
     const single = backupScope.value === 'branch';
@@ -23248,22 +23253,44 @@ function renderDataBackup() {
     setButtonLoading(button, true, 'Preparing...', 'Download backup');
     dataBackupState.busy = true;
     backupScope.disabled = backupBranch.disabled = true;
+    includeDocuments.disabled = true;
     try {
+      const withFiles = includeDocuments.checked;
+      const filename = (single ? 'branch-' + branchId : 'organisation') + '-' + new Date().toISOString().replace(/[:.]/g,'-') + '.dynamax-backup';
+      const handle = withFiles && window.showSaveFilePicker ? await window.showSaveFilePicker({suggestedName:filename}) : null;
       setDataBackupStatus(single ? 'Collecting selected branch records...' : 'Collecting organisation records...');
       const payload = single
         ? await (await import('/js/branch-backup.js?v=1')).collectBranchBackup(branchId, dataBackupRequest,
             (current, total) => dataBackupProgress('Backing up branch', current, total))
         : await collectOrganizationBackup();
+      if (withFiles) {
+        const {collectDocumentIndex,writeDocumentArchive} = await import('/js/document-backup.js?v=1');
+        setDataBackupStatus('Checking uploaded documents…');
+        const index = await collectDocumentIndex(payload,dataBackupRequest,count=>setDataBackupStatus(count+' documents to encrypt.'));
+        await writeDocumentArchive({payload,password,index,handle,filename,encrypt:encryptOrganizationBackup,derive:deriveBackupEncryptionKey,
+          progress:(n,total)=>dataBackupProgress('Encrypting documents',n,total),
+          read:async selection=>{
+            const response = await staffFetch('/api/data-backup',{method:'POST',credentials:'same-origin',cache:'no-store',
+              headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'read-backup-document',...selection})});
+            if (!response.ok) throw new Error((await response.json().catch(()=>({}))).message || 'Could not download the document.');
+            if (response.headers.get('Content-Type') !== 'application/octet-stream') throw new Error('The document service returned an invalid response.');
+            return response.blob();
+          }});
+        setDataBackupStatus(`Encrypted backup saved with ${backupDocumentCount(payload).toLocaleString()} records and ${index.files.length.toLocaleString()} documents. Missing referenced files: ${index.missing.length}. Out-of-scope entries skipped: ${index.skipped}.`,'good');
+        return;
+      }
       setDataBackupStatus('Encrypting the backup on this device...');
       const envelope = await encryptOrganizationBackup(payload, password);
       downloadBackupFile(envelope, single ? 'branch-' + branchId : 'organisation-backup');
       setDataBackupStatus(`Backup downloaded: ${Object.keys(payload.collections).length.toLocaleString()} collections and ${backupDocumentCount(payload).toLocaleString()} records.`, 'good');
     } catch (error) {
-      setDataBackupStatus(error.message || String(error), 'bad');
+      if (error.name === 'AbortError') setDataBackupStatus('Backup cancelled.');
+      else setDataBackupStatus(error.message || String(error), 'bad');
     } finally {
       dataBackupState.busy = false;
       hideDataBackupProgress();
       if (button.isConnected) {
+        includeDocuments.disabled = false;
         setButtonLoading(button, false, 'Preparing...', 'Download backup');
         backupScope.disabled = false;
         showBackupScope();
@@ -23271,10 +23298,10 @@ function renderDataBackup() {
     }
   });
   const restoreCard = document.getElementById('restoreBranch');
-  import('/js/branch-restore.js?v=20261120').then(({ mountBranchRestore }) => {
+  import('/js/branch-restore.js?v=20261120-documents').then(({ mountBranchRestore }) => {
     if (!restoreCard.isConnected) return;
     mountBranchRestore({ request: dataBackupRequest, decrypt: decryptOrganizationBackup, chunks: chunkRestoreRows,
-      status: setDataBackupStatus, dialogs: window.DynamaxDialogs, safetyBackup: async password => {
+      status: setDataBackupStatus, dialogs: window.DynamaxDialogs, derive: deriveBackupEncryptionKey, safetyBackup: async password => {
         const payload = await collectOrganizationBackup('Safety backup');
         downloadBackupFile(await encryptOrganizationBackup(payload, password), 'pre-restore-safety-backup');
       } });

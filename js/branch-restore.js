@@ -59,17 +59,52 @@ export function restoreSummary(plan) {
   return `${plan.name} · ${plan.scope.mode === 'exact' ? 'Match the backup exactly' : 'Keep newer records'}. Add ${t.create}, update ${t.update}, remove ${t.remove}, unchanged ${t.unchanged}. Ownership conflicts skipped: ${t.conflict}. Other excluded rows in eligible collections: ${t.skipped}. Excluded collections: ${plan.excludedCollections}.`;
 }
 
-export function mountBranchRestore({ request, decrypt, safetyBackup, chunks, status, dialogs }) {
+export function mountBranchRestore({ request, decrypt, safetyBackup, chunks, status, dialogs, derive }) {
   const el = id => document.getElementById(id);
   const branch = el('restoreBranch'), mode = el('restoreMode'), file = el('restoreBackupFile'), password = el('restoreBackupPassword');
   const preview = el('previewBranchRestore'), apply = el('restoreDataBackup'), summary = el('branchRestoreSummary');
   let plan, busy = false;
+  const browse = el('openBackupDocuments'), documentList = el('backupDocumentList');
+  let revision = 0;
+  if (browse) browse.addEventListener('click', async () => {
+    const selected = file.files[0], secret = password.value, current = ++revision;
+    documentList.replaceChildren();
+    if (!selected || !secret) return status('Choose an encrypted backup and enter its password.', 'bad');
+    browse.disabled = true;
+    try {
+      const {readBackupFile,extractDocument,saveArchiveBlob} = await import('./document-backup.js?v=1');
+      const opened = await readBackupFile(selected,secret,decrypt);
+      if (current !== revision || !browse.isConnected) return;
+      const files = opened.payload.documentArchive?.files || [];
+      const missing = opened.offsets && opened.payload.documentArchive.missing;
+      if (missing?.length) {
+        const details = document.createElement('details'), label = document.createElement('summary'), entries = document.createElement('pre');
+        label.textContent = missing.length+' referenced files were missing when this backup was made';
+        entries.textContent = missing.join('\n'); details.append(label,entries); documentList.append(details);
+      }
+      if (!files.length || !opened.offsets) { documentList.append('This backup contains no embedded documents.'); return; }
+      const select = document.createElement('select'), button = document.createElement('button');
+      select.setAttribute('aria-label','Document in backup');
+      files.forEach((entry,i)=>select.add(new Option(entry.name+' · '+entry.key,String(i))));
+      button.type = 'button'; button.textContent = 'Download selected document';
+      button.addEventListener('click',async ()=>{
+        button.disabled = true;
+        try {
+          const i = Number(select.value), blob = await extractDocument(selected,opened,i,secret,derive);
+          if (current === revision && button.isConnected) saveArchiveBlob(blob,files[i].name.replace(/[\\/:*?"<>|]/g,'_'));
+        } catch { status('Could not verify or decrypt the selected document.', 'bad'); }
+        finally { button.disabled = false; }
+      });
+      documentList.append(select,button);
+    } catch (error) { if (current===revision) status(error.message,'bad'); }
+    finally { browse.disabled = false; }
+  });
   function controls() {
     for (const input of [branch, mode, file, password]) input.disabled = busy;
     preview.disabled = busy || !branch.value || !file.files.length;
     apply.disabled = busy || !plan?.batches.length;
   }
-  function invalidate() { plan = null; summary.replaceChildren(); controls(); }
+  function invalidate() { revision++; documentList?.replaceChildren(); plan = null; summary.replaceChildren(); controls(); }
   for (const input of [branch, mode, file, password]) input.addEventListener('input', invalidate);
   invalidate();
   preview.addEventListener('click', async () => {
@@ -77,11 +112,12 @@ export function mountBranchRestore({ request, decrypt, safetyBackup, chunks, sta
     busy = true; controls();
     try {
       const backup = file.files[0];
-      if (backup.size > 250 * 1024 * 1024) throw new Error('The backup exceeds the 250 MB browser limit.');
-      const payload = await decrypt(JSON.parse(await backup.text()), password.value);
+      const {readBackupFile} = await import('./document-backup.js?v=1');
+      const {payload} = await readBackupFile(backup,password.value,decrypt);
       plan = await previewBranchBackup(payload, branch.value, mode.value, request, chunks, path => status('Comparing ' + path + '…'));
       const headline = document.createElement('p');
       headline.textContent = restoreSummary(plan);
+      if (payload.documentArchive) headline.textContent += ' This restore applies database records. Use Browse documents in backup to download individual files.';
       summary.append(headline);
       for (const group of plan.groups) {
         const details = document.createElement('details'), title = document.createElement('summary');
