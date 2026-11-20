@@ -42,6 +42,7 @@
     '/api/staff-payment-corrections': ['search', 'lookup', 'preview'],
     '/api/staff-wallet': ['lookup'],
     '/api/fee-collection-summary': [''],
+    '/api/staff-storekeeping': ['access','stock','handovers','mine','sent','card','requests','purchases'],
     '/api/staff-procurement': ['list', 'records', 'recorddetail', 'lookupinventory', 'previewitemimport'],
     '/api/staff-vendor-settlements': ['bootstrap', 'statement', 'requesthistory', 'requestreport', 'previewhistorical', 'previewsale', 'previewproductimport', 'previewcardrefundbatch'],
     '/api/staff-students': ['previewgrade7intake', 'previewintakecorrection', 'previewprofiledefaults'],

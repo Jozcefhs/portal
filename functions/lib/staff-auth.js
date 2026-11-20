@@ -470,12 +470,18 @@ export function staffUserForAccess(user = {}, access = {}) {
     lower(user.biometricLookupEnabled ?? user.BiometricLookupEnabled ?? false)
   );
   const allowedSections = list(access.allowedSections);
+  const storekeepingManager = allowedSections.includes('storekeeping');
+  // A named recipient can acknowledge a handover without gaining inventory management.
+  if (!storekeepingManager && access.featureFlags?.procurement === true && access.subscriptionActive !== false
+      && !['Vendor User','Auditor','External Auditor'].includes(clean(user.role || user.Role))
+      && (allowedSections.includes('payroll') || allowedSections.includes('financeRequests'))) allowedSections.push('storekeeping');
   if (biometricLookupEnabled && !allowedSections.includes('recordsDesk')) {
     allowedSections.push('recordsDesk');
   }
   return {
     ...user,
     ...access,
+    storekeepingManager,
     allowedSections,
     approvalEnabled: externalAuditor ? false : user.approvalEnabled,
     requisitionEditEnabled: externalAuditor ? false : user.requisitionEditEnabled,

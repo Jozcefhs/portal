@@ -20,16 +20,16 @@ export const DEPARTMENTS = Object.freeze({
 });
 const managers = new Set(['Super Admin', 'Director', 'Admin', 'Management', 'Procurement Officer', 'Church Administrator', 'Executive Director', 'Organisation Administrator', 'Operations Manager']);
 const approvers = new Set(['Super Admin', 'Director', 'Accounts Officer', 'Treasurer', 'Church Administrator', 'Executive Director', 'Organisation Administrator']);
-export function scopeFor(user) {
-  if (!actor(user) || ['Vendor User', 'External Auditor', 'Auditor'].includes(role(user)) || !(user.allowedSections || []).includes('procurement')) fail('Procurement is not available for this account.', 403);
+export function scopeFor(user, module = 'procurement') {
+  if (!actor(user) || ['Vendor User', 'External Auditor', 'Auditor'].includes(role(user)) || !(user.allowedSections || []).includes(module)) fail('This stock workspace is not available for this account.', 403);
   const BranchId = lower(user.branchId || user.BranchId);
   if (!/^[a-z0-9._-]{1,80}$/.test(BranchId) || ['all', 'global'].includes(BranchId)) fail('Select a single working branch before opening Procurement.', 403);
   const OrganisationEdition = normalizeOrganizationEdition(user.edition || user.OrganisationEdition || 'school');
   return { BranchId, OrganisationEdition, ScopeKey: `${OrganisationEdition}--${BranchId}` };
 }
-export function capabilitiesFor(user, scope) {
+export function capabilitiesFor(user, scope, stockIssuer = false) {
   const full = hasFullModuleAccess(user, 'procurement');
-  const canManage = full || managers.has(role(user));
+  const canManage = stockIssuer || full || managers.has(role(user));
   const approvalDisabled = user.approvalEnabled === false || ['no', 'false', '0'].includes(lower(user.ApprovalEnabled));
   const approvalGranted = user.approvalEnabled === true || ['yes', 'true', '1', 'on'].includes(lower(user.ApprovalEnabled));
   const canApprove = full || approvers.has(role(user)) && (role(user) === 'Super Admin' || (approvalGranted && !approvalDisabled));

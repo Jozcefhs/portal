@@ -29,6 +29,7 @@ export const WEB_SECTION_CATALOG = Object.freeze([
   Object.freeze({ key: 'financeRequests', label: 'Finance Requests & Imprest' }),
   Object.freeze({ key: 'vendorSettlements', label: 'Vendor Sales & Settlements' }),
   Object.freeze({ key: 'procurement', label: 'Procurement' }),
+  Object.freeze({ key: 'storekeeping', label: 'Storekeeping' }),
   Object.freeze({ key: 'payroll', label: 'My Payroll' }),
   Object.freeze({ key: 'clinic', label: 'Clinic' }),
   Object.freeze({ key: 'kitchen', label: 'Kitchen' }),
@@ -79,7 +80,7 @@ export const STAFF_ROLE_OPTIONS = Object.freeze([
   'Compensation & Benefits Officer', 'Payroll Officer',
   'Health & Safety Officer', 'Line Manager',
   'Executive Director', 'Organisation Administrator', 'Operations Manager',
-  'Procurement Officer', 'Records Officer'
+  'Procurement Officer', 'Storekeeper', 'Records Officer'
 ]);
 
 const LEGACY_ROLE_DEFAULTS = Object.freeze({
@@ -185,6 +186,7 @@ export function defaultModulesForRole(role, { edition = 'school', featureFlags =
     ? departmentUserDefaults(department)
     : [...(LEGACY_ROLE_DEFAULTS[name] || []), ...(name ? ['humanResources'] : [])];
   if (name) base.push('staffAttendance');
+  if (['Storekeeper','Super Admin','Director','Admin','Management','Operations Manager','Procurement Officer','Organisation Administrator','Church Administrator','Executive Director'].includes(name)) base.push('storekeeping');
   if (['Super Admin', 'Director', 'Admin', 'Management', 'Accounts Officer', 'Tuck Shop User', 'Store User', 'Restaurant User', 'Operations Manager'].includes(name)) base.push('vendorSettlements');
   if (['Super Admin', 'Director', 'Admin', 'Management', 'Accounts Officer', 'Procurement Officer',
     'Church Administrator', 'Executive Director', 'Organisation Administrator', 'Operations Manager',
@@ -204,6 +206,7 @@ export function withRequiredRoleModules(role, modules = [], edition = 'school', 
   }
   if (role === 'External Auditor') return normalizeModuleList(['externalAudit'], edition, featureFlags);
   const normalized = [...modules, ...STAFF_SELF_SERVICE_MODULES];
+  if (role === 'Storekeeper') normalized.push('storekeeping');
   // Older saved policies may predate Procurement. Its named officer must retain
   // the workspace, subject to the same edition/subscription gates as any module.
   if (role === 'Procurement Officer' && !normalized.includes('procurement')) normalized.push('procurement');

@@ -43,8 +43,10 @@ function publicInventory(row, department, scope) {
     ProcurementManaged: row.ProcurementManaged || '', ProcurementItemId: row.ProcurementItemId || '' };
 }
 
-export async function handleProcurementAction(env, user, body = {}, dependencies = {}) {
-  const db = { ...defaults, ...dependencies }, scope = scopeFor(user), cap = capabilitiesFor(user, scope);
+export async function handleProcurementAction(env, user, body = {}, dependencies = {}, workspace = 'procurement') {
+  const db = { ...defaults, ...dependencies }, scope = scopeFor(user, workspace), cap = capabilitiesFor(user, scope, workspace === 'storekeeping');
+  if (workspace === 'storekeeping' && !(body.action === 'issue' || (body.action === 'records' && body.Kind === 'requests')))
+    fail('Choose a Storekeeping requisition action.',403);
   const action = lower(body.action || 'list'), C = PROCUREMENT_COLLECTIONS;
   const readOnly = user.subscriptionActive === false || user.subscriptionReadOnly === true;
   if (!['list', 'lookupinventory', 'records', 'recorddetail'].includes(action) && readOnly) fail('This workspace is read-only. Stock and Procurement records cannot be changed.', 403);

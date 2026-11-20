@@ -317,6 +317,7 @@ const tabConfig = [
   ['externalAudit', 'External Audit'],
   ['financeRequests', 'Finance Requests & Imprest'],
   ['procurement', 'Procurement'],
+  ['storekeeping', 'Storekeeping'],
   ['vendorSettlements', 'Vendor Sales & Settlements'],
   ['payroll', 'My Payroll'],
   ['clinic', 'Clinic'],
@@ -355,6 +356,7 @@ const tutorialStorageKeys = Object.freeze({
   externalAudit: 'External Audit',
   financeRequests: 'Finance & Accounting',
   procurement: 'Procurement',
+  storekeeping: 'Storekeeping',
   vendorSettlements: 'Vendor Sales & Settlements',
   payroll: 'Payroll',
   clinic: 'Clinic',
@@ -397,7 +399,7 @@ const staffRoleOptions = [
   'Employee Relations Officer', 'Performance Management Officer',
   'Compensation & Benefits Officer', 'Payroll Officer',
   'Health & Safety Officer', 'Line Manager', 'Executive Director',
-  'Organisation Administrator', 'Operations Manager', 'Procurement Officer',
+  'Organisation Administrator', 'Operations Manager', 'Procurement Officer', 'Storekeeper',
   'Records Officer'
 ];
 
@@ -21321,6 +21323,22 @@ function renderSection(active) {
   } else if (active === 'library') {
     panelEl.innerHTML = '<p class="muted">Loading School Library...</p>';
     loadSchoolLibrary();
+  } else if (active === 'storekeeping') {
+    summaryEl.replaceChildren();
+    const branch = clean(selectedBranchId) || clean(currentUser?.activeBranchId || currentUser?.branchId);
+    if (!branch || ['all','global'].includes(branch.toLowerCase())) {
+      panelEl.textContent = 'Choose one branch to open Storekeeping.';
+      return;
+    }
+    const host = document.createElement('div');
+    panelEl.replaceChildren(host);
+    import('/js/storekeeping.js?v=1').then(({ mountStorekeeping }) => {
+      if (!host.isConnected) return;
+      return mountStorekeeping(host,{ branch, procurement:currentUser.allowedSections.includes('procurement') ? () => selectSection('procurement') : null,
+        request:async (action,payload) => procurementResponseResult(await staffFetch('/api/staff-storekeeping',{
+          method:'POST',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify({ ...payload,action,BranchId:branch })
+        })) });
+    }).catch(error => { host.textContent = error.message; });
   } else if (active === 'procurement') {
     summaryEl.replaceChildren();
     if (!window.DynamaxProcurement) {
@@ -21335,6 +21353,7 @@ function renderSection(active) {
     window.DynamaxProcurement.mount(panelEl, {
       branchId: procurementBranchId,
       department: procurementDepartmentHandoff,
+      openStorekeeping: currentUser.allowedSections.includes('storekeeping') ? () => selectSection('storekeeping') : null,
       readOnly: currentUser?.subscriptionReadOnly === true,
       request: async (action, payload = {}, signal) => {
         const response = await staffFetch('/api/staff-procurement', { method: 'POST', signal,
