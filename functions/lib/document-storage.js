@@ -84,6 +84,16 @@ function identityPrefix(identity) {
   return `v1/${safeSegment(identity.edition)}/${safeSegment(identity.workspaceId)}/`;
 }
 
+// Keep reset discovery on the same key layout and normalisation as uploads.
+// Decline ambiguous slugs instead of enumerating a wider storage prefix.
+export function branchResetFilePrefixes(identity, branch) {
+  if (safeSegment(branch, '') !== branch || safeSegment(identity.workspaceId, '') !== identity.workspaceId) {
+    throw storageError('The storage identity cannot be isolated unambiguously. Keep uploaded files for this reset.', 409);
+  }
+  return ['admissions', 'generated-admissions', 'academic-cbt', 'hotel-room-media', 'financial-audit', 'human-resources', 'finance']
+    .map(category => identityPrefix(identity) + category + '/' + branch + '/');
+}
+
 export function storedDocumentReference(key) {
   const normalized = clean(key).replace(/^\/+/, '');
   if (!normalized) throw storageError('The stored document key is missing.', 500, 'DOCUMENT_STORAGE_KEY_MISSING');

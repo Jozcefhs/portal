@@ -74,7 +74,7 @@ function harness(edition = 'school', options = {}) {
   };
 }
 
-for (const edition of ['school', 'faith', 'organization']) {
+for (const edition of ['school', 'faith', 'organization', 'hospital']) {
   test(`${edition}: staff restore protects actual actor document ID even when backup Username is different`, async () => {
     const h = harness(edition);
     const original = h.get('staffUsers', h.actorId);
@@ -97,8 +97,18 @@ for (const edition of ['school', 'faith', 'organization']) {
     assert.equal(h.batches[0].some((write) => write.documentId === 'staffAccountIntegrity'), true);
   });
 
-  test(`${edition}: clear/reset preserves the verified destination ID and deletes other literal staff IDs`, async () => {
+  test(`${edition}: a legacy reset cannot clear the staff directory`, async () => {
     const h = harness(edition, { job: { JobType: 'Reset' } });
+    h.seed('staffUsers', 'other@literal', { Username: 'other', BranchId: 'main' });
+    const before = new Map(h.docs);
+    await assert.rejects(h.context.clearOrganizationRestoreCollection(h.env, h.actor, 'JOB', 'staffUsers'),
+      { code: 'RESET_BRANCH_REQUIRED' });
+    assert.deepEqual(h.docs, before);
+    assert.equal(h.batches.length, 0);
+  });
+
+  test(`${edition}: restore preserves the verified destination ID and deletes other literal staff IDs`, async () => {
+    const h = harness(edition);
     h.seed('staffUsers', 'other@literal', { Username: 'other', Role: 'Front Desk', Active: true });
     const original = h.get('staffUsers', h.actorId);
     // The clear page must not decide actor identity from its mutable Username.
