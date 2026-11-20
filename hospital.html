@@ -29,7 +29,7 @@
   <script src="/js/hospital-clinic-queues.js?v=540" defer></script>
   <script src="/js/hospital-portal-access.js?v=541" defer></script>
   <script src="/js/hospital-messages-ui.js?v=544" defer></script>
-  <script src="/js/hospital.js?v=543" defer></script>
+  <script src="/js/hospital.js?v=555-emergency" defer></script>
 </head>
 <body>
   <main>
@@ -98,6 +98,21 @@
       </section>
       <section id="reception" hidden>
         <h2>Reception visits</h2><p>Choose dates before loading. Reception status records the administrative visit; clinical discharge is recorded separately.</p>
+        <details id="emergencyPanel">
+          <summary>Emergency reception</summary>
+          <form id="emergencyIntake" data-write="visits.write">
+            <h3>Record an arrival</h3>
+            <label>Wristband or arrival reference<input name="Reference" required minlength="3" maxlength="40" placeholder="Use a unique reference for this arrival"></label>
+            <label>Arrival description<input name="ArrivalNote" required maxlength="300" placeholder="For example, accompanied by ambulance crew"></label>
+            <button>Record arrival</button>
+          </form>
+          <h3>Identify an arrival</h3>
+          <p>Open the verified patient in Patients and NFC cards, then return here to link their wristband. An existing open visit is reused.</p>
+          <form id="emergencyFind" class="toolbar"><label>Wristband reference<input name="Reference" required maxlength="40"></label><button>Find arrival</button></form>
+          <button type="button" id="emergencyPending">Load awaiting identification</button>
+          <div id="emergencyRows"></div>
+          <button type="button" hidden id="emergencyNext">Next arrivals</button>
+        </details>
         <form id="visitForm" class="toolbar"><label>From<input id="visitFrom" type="date" required></label><label>To<input id="visitTo" type="date" required></label><button type="submit">Load visits</button></form>
         <div id="visitRows" class="table-wrap"></div><button id="moreVisits" type="button" hidden>Next visits</button>
       </section>

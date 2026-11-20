@@ -11,6 +11,10 @@
   const formValues = form => Object.fromEntries([...form.elements].filter(field => field.name).map(field => [field.name,field.value]));
   const writable = name => can(name) && !state.readOnly;
   function clearRecords() {
+    $('emergencyPanel').open = false;
+    $('emergencyIntake').reset();
+    $('emergencyFind').reset();
+    renderArrivals([], null);
     messages?.clear();
     recordEpoch++; scanController?.abort(); selected = null;
     portalAccess?.clear();
@@ -204,6 +208,62 @@
       await loadVisits(); status('Reception visit updated.');
     });}); status('Selected visit period loaded.');
   }
+  let emergencyCursor = null;
+  function renderArrivals(rows, next) {
+    emergencyCursor = next;
+    $('emergencyNext').hidden = !next;
+    const host = $('emergencyRows');
+    host.replaceChildren();
+    for (const row of rows) {
+      const card = document.createElement('section');
+      const label = document.createElement('p');
+      label.textContent = [row.Reference, row.ArrivalNote, new Date(row.CreatedAt).toLocaleString('en-GB',{timeZone:'Africa/Lagos'}),
+        row.Status, row.HospitalNumber].filter(Boolean).join(' · ');
+      card.append(label);
+      if (row.Status === 'Awaiting identification' && writable('patients.write') && writable('visits.write')) {
+        const form = document.createElement('form');
+        form.innerHTML = '<label>How was identity verified?<input name="IdentityEvidence" minlength="5" maxlength="300" required></label><button>Review patient link</button>';
+        form.onsubmit = event => {
+          event.preventDefault();
+          run(async () => {
+            const person = selected;
+            if (!person) throw new Error('Open the verified patient in Patients and NFC cards first.');
+            const epoch = recordEpoch;
+            const evidence = form.elements.IdentityEvidence.value;
+            const confirmed = await window.DynamaxDialogs.confirm({title:'Confirm emergency patient identity',
+              message:'Link '+row.Reference+' to '+person.DisplayName+' ('+person.HospitalNumber+', date of birth '+(person.DateOfBirth || 'unrecorded')+')? This identifies the arrival and opens or reuses a visit.',
+              confirmText:'Confirm identity and link'});
+            if (!confirmed || epoch !== recordEpoch) return;
+            const result = await api('identifyEmergencyArrival',{Reference:row.Reference,Revision:row.Revision,PatientId:person.PatientId,
+              PatientRevision:person.Revision,HospitalNumber:person.HospitalNumber,IdentityEvidence:evidence},true);
+            form.remove();
+            label.textContent = row.Reference+' · Identified · '+result.HospitalNumber;
+            queues?.invalidate();
+            status('Arrival linked to '+result.HospitalNumber+'. Open the visit in Reception visits.');
+          });
+        };
+        card.append(form);
+      }
+      host.append(card);
+    }
+  }
+  async function loadEmergency(filter = {}) {
+    const data = await api('emergencyArrivals',filter);
+    renderArrivals(data.arrivals,data.next);
+    status(data.arrivals.length ? 'Emergency arrivals loaded.' : 'No matching emergency arrivals.');
+  }
+  $('emergencyIntake').onsubmit = event => {
+    event.preventDefault();
+    run(async () => {
+      const result = await api('recordEmergencyArrival',formValues($('emergencyIntake')),true);
+      $('emergencyIntake').reset();
+      $('emergencyFind').elements.Reference.value = result.Reference;
+      status(result.Reference+' · '+result.Status);
+    });
+  };
+  $('emergencyFind').onsubmit = event => { event.preventDefault(); run(()=>loadEmergency(formValues($('emergencyFind')))); };
+  $('emergencyPending').onclick = () => run(()=>loadEmergency());
+  $('emergencyNext').onclick = () => run(()=>loadEmergency({Cursor:emergencyCursor}));
   $('visitForm').onsubmit = event => {event.preventDefault();run(() => loadVisits());}; $('moreVisits').onclick = () => run(() => loadVisits(visitCursor));
   $('printCard').onclick = () => {
     if (!selected) return;

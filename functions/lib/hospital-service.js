@@ -1,3 +1,4 @@
+import { createEmergencyReception } from './hospital-emergency.js';
 import {createHospitalPortalClinical} from './hospital-portal-clinical.js';
 import {createHospitalPortalAccess} from './hospital-portal-access.js';
 import {createHospitalClinicQueues,queueSnapshot} from './hospital-clinic-queues.js';
@@ -142,6 +143,7 @@ export function createHospitalService(env, user, overrides = {}) {
       condition,strip,eq,auditWrite,auditRead,operation,page}),
     ...createHospitalClinicalService({env,user,db,collection,capabilities,requireCapability,branch,patient,clock,actor,
       condition,strip,eq,auditWrite,auditRead,operation,page}),
+    ...createEmergencyReception({env,db,collection,branch,requireCapability,operation,auditWrite,clock,actor,patient,strip,condition,page}),
     async state() {
       if (!capabilities.length) fail('Your role does not have Hospital workspace access.', 403);
       branches = configuredStaffBranches(await db.getSchoolStructure(env));
