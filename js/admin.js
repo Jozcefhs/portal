@@ -1449,7 +1449,7 @@ async function attendancePasskeyProof(siteId, direction) {
 
 function attendanceFaceModule() {
   if (!attendanceFaceModulePromise) {
-    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions-quick-lookup-auto-start-camera-defaults-vendor-pos-lookup').catch((error) => {
+    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions-quick-lookup-auto-start-camera-defaults-vendor-pos-lookup-bounded-camera').catch((error) => {
       attendanceFaceModulePromise = null;
       throw error;
     });
@@ -2315,6 +2315,7 @@ function showLogin(message = '', type = '') {
   syncSidebarNavigation();
   approvalSettingsButton.hidden = true;
   desktopSetupButton.hidden = true;
+  document.getElementById('schoolStructureSettings').hidden = true;
   mobileNav.hidden = true;
   loginCard.hidden = false;
   setStatus(loginStatus, message, type);
@@ -2564,6 +2565,7 @@ function showDashboard(user, options = {}) {
   paymentSettingsButton.hidden = user.role !== 'Super Admin';
   subscriptionButton.hidden = !canManageOrganisationSettings(user);
   desktopSetupButton.hidden = !canManageOrganisationSettings(user);
+  document.getElementById('schoolStructureSettings').hidden = user.edition !== 'school' || !canManageOrganisationSettings(user);
   if (subscriptionAccessBanner) {
     const readOnly = user.subscriptionReadOnly === true;
     subscriptionAccessBanner.hidden = !readOnly;
@@ -2585,6 +2587,9 @@ async function continueAfterAuthentication(user) {
     return;
   }
   await loadDashboard({ mode: 'shell' });
+  if (new URLSearchParams(location.search).get('settings') === 'school-structure') {
+    await openSchoolStructureSettings();
+  }
 }
 
 async function sessionRequest(method = 'GET', body = null, { employment = false, signal } = {}) {
@@ -11620,7 +11625,7 @@ function preloadRecordsDeskFaceRecognition() {
   recordsDeskFacePreloadScheduled = true;
   const preload = () => {
     recordsDeskFacePreloadScheduled = false;
-    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions-quick-lookup-auto-start-camera-defaults-vendor-pos-lookup')
+    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions-quick-lookup-auto-start-camera-defaults-vendor-pos-lookup-bounded-camera')
       .then((module) => module.preloadFaceRecognitionModel())
       .catch(() => {
         recordsDeskFacePreloadPromise = null;
@@ -11634,7 +11639,7 @@ function preloadRecordsDeskFaceRecognition() {
 }
 
 async function openStudentFaceLookupDialog(options = {}) {
-  const module = await import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions-quick-lookup-auto-start-camera-defaults-vendor-pos-lookup');
+  const module = await import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions-quick-lookup-auto-start-camera-defaults-vendor-pos-lookup-bounded-camera');
   return module.openStudentFaceLookup(options);
 }
 
@@ -25105,6 +25110,16 @@ passkeySetupButton.addEventListener('click', async () => {
 approvalSettingsButton.addEventListener('click', openApprovalSettings);
 subscriptionButton.addEventListener('click', openStaffSubscription);
 desktopSetupButton.addEventListener('click', openDesktopSetup);
+async function openSchoolStructureSettings() {
+  const session = staffSessionAbortController.signal;
+  try {
+    const { openSettings } = await import('./school-structure-settings.js');
+    if (!session.aborted) await openSettings(staffFetch, session);
+  } catch (error) {
+    if (!session.aborted) window.alert(error.message || 'School settings could not be opened.');
+  }
+}
+document.getElementById('schoolStructureSettings').addEventListener('click', openSchoolStructureSettings);
 document.getElementById('staffDesktopSetupClose').addEventListener('click', () => desktopSetupDialog.close());
 desktopSetupDialog.addEventListener('close', stopDesktopSetupRefresh);
 document.getElementById('staffDesktopPortalCopy').addEventListener('click', async () => {

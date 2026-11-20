@@ -381,11 +381,34 @@ export async function waitForCameraFrames(video, stream) {
   });
 }
 
+const cameraCanvases = new WeakMap();
+
+function sampleCameraFrame(video) {
+  if (video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
+    throw new Error('The camera has stopped supplying frames. Restart the camera.');
+  }
+  let canvas = cameraCanvases.get(video);
+  if (!canvas) {
+    canvas = video.ownerDocument.createElement('canvas');
+    cameraCanvases.set(video, canvas);
+  }
+  const scale = Math.min(1, 640 / Math.max(video.videoWidth, video.videoHeight));
+  const width = Math.max(1, Math.round(video.videoWidth * scale));
+  const height = Math.max(1, Math.round(video.videoHeight * scale));
+  if (canvas.width !== width) canvas.width = width;
+  if (canvas.height !== height) canvas.height = height;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('The browser could not read the camera frame.');
+  context.drawImage(video, 0, 0, width, height);
+  return canvas;
+}
+
 function detectFrame(human, video, options) {
   // Human owns reusable tensors; overlapping preview/capture calls can corrupt
   // results, especially when a dialog is closed and immediately reopened.
   const detection = detectionQueue.then(async () => {
-    const result = await human.detect(video, options);
+    const frame = sampleCameraFrame(video);
+    const result = await human.detect(frame, options);
     // Human can return an error result rather than reject. Treating that as
     // "no face" used to repeat positioning instructions until capture timed out.
     if (result?.error) throw new Error(`Face detection could not run. ${clean(result.error)}`);
@@ -462,7 +485,9 @@ function bindCameraSelector(dialog, captureButton, { quickLookup = false, onCame
 }
 
 function faceGeometry(face, video) {
-  const box = Array.isArray(face?.box) ? face.box : [];
+  const box = face?.boxRaw?.length === 4
+    ? face.boxRaw.map((coordinate, index) => coordinate * (index % 2 ? video.videoHeight : video.videoWidth))
+    : face?.box || [];
   if (box.length < 4 || !video.videoWidth || !video.videoHeight) return null;
   const width = Number(box[2]) || 0;
   const height = Number(box[3]) || 0;
@@ -1207,15 +1232,7 @@ export function captureStaffAttendanceFace(options = {}) {
       setBusy(startButton, true, 'Preparing camera...');
       dialog.querySelector('[data-face-camera-select]').disabled = true;
       try {
-        const challengePromise = mode === 'verify'
-          ? staffAttendanceFaceRequest('challenge', {
-              SiteId: options.siteId,
-              Direction: options.direction
-            })
-          : Promise.resolve(null);
-        const [, human, challengeResult] = await Promise.all([startCamera(dialog), loadHuman(dialog), challengePromise]);
-        activeChallenge = challengeResult;
-        setLivenessChallenge(dialog, activeChallenge);
+        const [, human] = await Promise.all([startCamera(dialog), loadHuman(dialog)]);
         if (!dialog.isConnected || !dialog.open) {
           stopCamera(video);
           return;
