@@ -31,8 +31,18 @@ export async function onRequestPost({ request, env }) {
     requireFirestoreEnv(env);
     const user = await requireStaffSession(env, request);
     requireBackupAdministrator(user);
-    const body = await readJsonBody(request, { maxBytes: 8 * 1024 * 1024 });
-    const action = lower(body.action || 'export');
+    const binary = request.headers.get('content-type') === 'application/octet-stream';
+    let body;
+    if (binary) {
+      const header = request.headers.get('X-Restore-Document') || '';
+      if (!header || header.length > 16000 || !request.headers.has('content-length')) throw new Error('Missing restore file details.');
+      body = JSON.parse(decodeURIComponent(header));
+      body.byteLength = Number(request.headers.get('content-length'));
+      body.binary = request.body || (body.byteLength === 0 ? new Uint8Array() : null);
+    } else {
+      body = await readJsonBody(request, { maxBytes: 8 * 1024 * 1024 });
+    }
+    const action = binary ? 'apply-branch-restore-document' : lower(body.action || 'export');
     let result;
     if (['list-backup-documents', 'inspect-backup-document', 'read-backup-document'].includes(action)) {
       result = await backupDocuments(env, user, action, body);
@@ -46,7 +56,7 @@ export async function onRequestPost({ request, env }) {
         pageToken: body.pageToken,
         pageSize: 200
       });
-    } else if (['preview-branch-restore', 'preview-branch-restore-rows', 'preview-branch-restore-live', 'prepare-branch-restore', 'apply-branch-restore'].includes(action)) {
+    } else if (binary || ['preview-branch-restore', 'preview-branch-restore-documents', 'preview-branch-restore-rows', 'preview-branch-restore-live', 'prepare-branch-restore', 'apply-branch-restore'].includes(action)) {
       result = await branchRestoreRequest(env, user, action, body);
     } else if (['prepare-restore', 'clear-collection', 'write-collection', 'complete-restore'].includes(action)) {
       throw Object.assign(new Error('Refresh Backup & Restore and select one branch to preview the backup.'), { status: 409 });

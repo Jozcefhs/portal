@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { branchRestoreRequest } from '../functions/lib/branch-restore.js';
 import { requiredDeploymentIdentity } from '../functions/lib/deployment-identity.js';
-import { previewBranchBackup } from '../js/branch-restore.js';
+import { previewBranchBackup, previewRestoreFiles } from '../js/branch-restore.js';
 import { backupJsonValue } from '../functions/lib/firestore.js';
 
 function fixture(edition) {
@@ -54,7 +54,67 @@ function fixture(edition) {
   const call = (action, body) => branchRestoreRequest(env, user, action, body, db);
   const preview = mode => previewBranchBackup(payload, 'west', mode, call, rows => rows.length ? [rows] : [], () => {});
   const prepare = (plan, extra) => call('prepare-branch-restore', { ...plan.scope, confirmation: plan.phrase, safetyBackupCreated: true, hashes: plan.batches.map(batch => batch.hash), ...extra });
-  return { preview, prepare, get, put, store, payload, path, call, nested };
+  return { env, db, user, preview, prepare, get, put, store, payload, path, call, nested };
+}
+
+for (const edition of ['school','faith','organization','hospital']) {
+  test(edition + ' restores selected files once, keeps conflicts, and resumes an interrupted write', async t => {
+    try { requiredDeploymentIdentity({ORGANISATION_EDITION:edition, DYNAMAX_WORKSPACE_ID:'test-org'}); } catch { return t.skip(); }
+    const f = fixture(edition);
+    const objects = new Map(), reads = [], writes = [];
+    const base = 'v1/' + edition + '/test-org/finance/';
+    const entry = (id, branch = 'west') => ({key:base + branch + '/all/person/receipt/' + id,
+      size:4, name:id, type:'application/pdf', version:'original', etag:'original'});
+    const missing = entry('missing.pdf'), same = entry('same.pdf'), conflict = entry('conflict.pdf'), sibling = entry('sibling.pdf','east');
+    const files = [missing, same, conflict, sibling, missing];
+    const payload = {...f.payload, documentArchive:{files, missing:[entry('missing-at-export.pdf').key]}};
+    objects.set(same.key, same);
+    objects.set(conflict.key, {...conflict, etag:'changed', version:'changed'});
+    objects.set(sibling.key, sibling);
+    f.env.DYNAMAX_DOCUMENTS = {
+      head: async key => { reads.push(key); return objects.get(key); },
+      put: async (key, bytes, options) => {
+        assert.equal(options.onlyIf.get('If-None-Match'), '*');
+        if (objects.has(key)) return null;
+        assert.equal(options.sha256, Buffer.from(await crypto.subtle.digest('SHA-256', bytes)).toString('hex'));
+        writes.push(key);
+        const object = {size:4, customMetadata:options.customMetadata, checksums:{toJSON:()=>({sha256:options.sha256})}};
+        objects.set(key,object); return object;
+      }
+    };
+    const plan = await f.preview('merge');
+    const before = new Map(f.store);
+    const read = async n => { assert.notEqual(n,3); return new Blob(['data']); };
+    const summary = await previewRestoreFiles(plan,{payload,offsets:[]},new Set(),f.call,read);
+    assert.match(summary,/to restore: 1.*Already present: 1.*missing: 2/);
+    assert.deepEqual(reads,[missing.key,same.key,conflict.key]); assert.equal(writes.length,0); assert.deepEqual(f.store,before);
+    const {jobId} = await f.prepare(plan);
+    for (const [index,batch] of plan.batches.entries()) {
+      const body = {...plan.scope, ...batch, jobId,index};
+      if (!batch.file) { await f.call('apply-branch-restore',body); continue; }
+      Object.assign(body,{binary:new TextEncoder().encode('data'),byteLength:4});
+      for (const change of [{branchId:'east'},{byteLength:3},{file:{...body.file,key:sibling.key}}]) {
+        await assert.rejects(f.call('apply-branch-restore-document',{...body,...change}));
+      }
+      const commit = f.db.commit;
+      f.db.commit = async () => { throw Error('interrupted'); };
+      await assert.rejects(f.call('apply-branch-restore-document',body),/interrupted/);
+      f.db.commit = commit;
+      assert.ok((await f.call('apply-branch-restore-document',body)).complete);
+      assert.ok((await f.call('apply-branch-restore-document',body)).complete);
+    }
+    assert.deepEqual(writes,[missing.key]); assert.equal(objects.get(sibling.key),sibling);
+    const again = await f.preview('merge');
+    await previewRestoreFiles(again,{payload,offsets:[]},new Set(),f.call,read);
+    assert.equal(again.batches.length,0);
+    const main = {...plan.scope,branchId:'main'};
+    f.user.branchId = 'main'; f.put('settings','schoolStructure',{Branches:['main','east','west']});
+    const [candidate] = plan.batches.filter(b=>b.file);
+    const forged = {...candidate.file, key:entry('x.pdf','main').key};
+    const check = await f.call('preview-branch-restore-documents',{...main,files:[forged, {...forged,key:sibling.key}]});
+    assert.deepEqual(check.details.map(d=>d.state),['unverified','unverified']);
+    assert.ok(!reads.includes(sibling.key));
+  });
 }
 
 for (const edition of ['school','faith','organization','hospital']) {

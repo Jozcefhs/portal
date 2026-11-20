@@ -1,6 +1,6 @@
 // The encrypted backup stays in this browser. The backend verifies ownership
 // and current versions for every candidate before it can become a write.
-export async function previewBranchBackup(payload, branchId, mode, request, chunks, progress) {
+export async function previewBranchBackup(payload, branchId, mode, request, chunks, progress, eligibleOwners) {
   if (!payload.collections || typeof payload.collections !== 'object' || Array.isArray(payload.collections)) throw new Error('This backup has no collection map.');
   const { format, formatVersion, createdAt, workspaceId, edition } = payload;
   const manifest = { format, formatVersion, createdAt, workspaceId, edition };
@@ -30,6 +30,7 @@ export async function previewBranchBackup(payload, branchId, mode, request, chun
         for (const { id, action } of part.details) {
           totals[action]++;
           items.push(labels[action] + ' · ' + id);
+          if (eligibleOwners && ['create','update','unchanged'].includes(action)) eligibleOwners.add(collectionPath + '/' + id);
         }
         totals.skipped += part.skipped;
         if (part.hash) batches.push({ collectionPath, documents, remove, hash: part.hash });
@@ -56,15 +57,85 @@ export async function previewBranchBackup(payload, branchId, mode, request, chun
 
 export function restoreSummary(plan) {
   const t = plan.totals;
-  return `${plan.name} · ${plan.scope.mode === 'exact' ? 'Match the backup exactly' : 'Keep newer records'}. Add ${t.create}, update ${t.update}, remove ${t.remove}, unchanged ${t.unchanged}. Ownership conflicts skipped: ${t.conflict}. Other excluded rows in eligible collections: ${t.skipped}. Excluded collections: ${plan.excludedCollections}.`;
+  return `${plan.name} · ${plan.scope.mode === 'exact' ? 'Match the backup exactly' : 'Keep newer records'}. Add ${t.create}, update ${t.update}, remove ${t.remove}, unchanged ${t.unchanged}. Ownership conflicts skipped: ${t.conflict}. Other excluded rows in eligible collections: ${t.skipped}. Excluded collections: ${plan.excludedCollections}.${plan.fileSummary ? ' ' + plan.fileSummary : ''}`;
 }
 
-export function mountBranchRestore({ request, decrypt, safetyBackup, chunks, status, dialogs, derive }) {
+export async function previewRestoreFiles(plan, opened, eligibleOwners, request, read) {
+  const { branchId, manifest } = plan.scope;
+  const archive = opened.payload.documentArchive;
+  if (!opened.offsets || !archive) return 'This backup contains database records only.';
+  const root = 'v1/' + manifest.edition + '/' + manifest.workspaceId + '/';
+  const inBranch = key => typeof key === 'string' && key.startsWith(root) && key.slice(root.length).split('/')[1] === branchId;
+  const keys = new Set([...archive.files.map(file => file.key), ...(archive.missing || [])]);
+  const owners = new Map(), shared = new Set();
+  function links(value, owner, eligible) {
+    if (typeof value === 'string') {
+      const key = value.replace(/^r2:\/\/dynamax-documents\//, '');
+      if (keys.has(key)) {
+        if (!eligible) shared.add(key);
+        else if (!owners.has(key)) owners.set(key, owner);
+      }
+    } else if (value && typeof value === 'object') {
+      for (const child of Object.values(value)) links(child, owner, eligible);
+    }
+  }
+  for (const [path, rows] of Object.entries(opened.payload.collections)) {
+    for (const row of rows) links(row, { path, id: row.__id }, eligibleOwners.has(path + '/' + row.__id));
+  }
+  const seen = new Map(), items = [], pending = [];
+  let create = 0, unchanged = 0, blocked = 0, excluded = 0;
+  async function compare() {
+    if (!pending.length) return;
+    const { details } = await request('preview-branch-restore-documents', { ...plan.scope, files: pending.map(item => item.file) });
+    if (details.length !== pending.length) throw new Error('Incomplete file preview.');
+    for (const [i, detail] of details.entries()) {
+      const {file, number} = pending[i];
+      if (detail.key !== file.key) throw new Error('File preview did not match the archive.');
+      let label;
+      if (detail.state === 'create' && detail.hash) {
+        create++;
+        plan.batches.push({file, number, hash: detail.hash});
+        label = 'Restore';
+      } else if (detail.state === 'unchanged') { unchanged++; label = 'Already present'; }
+      else { blocked++; label = detail.state === 'conflict' ? 'Keep differing live file' : 'Unverified ownership'; }
+      items.push(label + ' · ' + file.name + ' · ' + file.key);
+    }
+    pending.length = 0;
+  }
+  for (const [number, entry] of archive.files.entries()) {
+    if (!inBranch(entry.key)) { excluded++; continue; }
+    if (seen.has(entry.key)) {
+      const earlier = seen.get(entry.key);
+      if (earlier.version !== entry.version || earlier.etag !== entry.etag || earlier.size !== entry.size) throw new Error('Conflicting archive entries for ' + entry.key);
+      continue;
+    }
+    seen.set(entry.key, entry);
+    const owner = owners.get(entry.key);
+    if (shared.has(entry.key) || branchId === 'main' && !owner) {
+      blocked++; items.push('Unverified ownership · ' + entry.name + ' · ' + entry.key); continue;
+    }
+    const blob = await read(number);
+    const bytes = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+    const sha256 = Array.from(new Uint8Array(bytes), n => n.toString(16).padStart(2,'0')).join('');
+    const {key, size, version, etag, name, type} = entry;
+    pending.push({number, file: {key, size, version, etag, name, type, sha256, ...(owner ? {owner} : {})}});
+    if (pending.length === 40) await compare();
+  }
+  await compare();
+  for (const key of new Set(archive.missing || [])) {
+    if (inBranch(key)) { blocked++; items.push('Missing from backup · ' + key); }
+  }
+  if (items.length) plan.groups.push({ path: 'Uploaded documents', items });
+  return 'Documents to restore: ' + create + '. Already present: ' + unchanged + '. Conflicts, unverified or missing: ' + blocked + '. Outside the branch or without a branch location: ' + excluded + '.';
+}
+
+export function mountBranchRestore({ request, staffFetch, decrypt, safetyBackup, chunks, status, dialogs, derive }) {
   const el = id => document.getElementById(id);
   const branch = el('restoreBranch'), mode = el('restoreMode'), file = el('restoreBackupFile'), password = el('restoreBackupPassword');
   const preview = el('previewBranchRestore'), apply = el('restoreDataBackup'), summary = el('branchRestoreSummary');
   let plan, busy = false;
   const browse = el('openBackupDocuments'), documentList = el('backupDocumentList');
+  const include = el('restoreUploadedDocuments');
   let revision = 0;
   if (browse) browse.addEventListener('click', async () => {
     const selected = file.files[0], secret = password.value, current = ++revision;
@@ -101,23 +172,33 @@ export function mountBranchRestore({ request, decrypt, safetyBackup, chunks, sta
   });
   function controls() {
     for (const input of [branch, mode, file, password]) input.disabled = busy;
+    if (include) include.disabled = busy;
     preview.disabled = busy || !branch.value || !file.files.length;
     apply.disabled = busy || !plan?.batches.length;
   }
   function invalidate() { revision++; documentList?.replaceChildren(); plan = null; summary.replaceChildren(); controls(); }
   for (const input of [branch, mode, file, password]) input.addEventListener('input', invalidate);
+  include?.addEventListener('change', invalidate);
   invalidate();
   preview.addEventListener('click', async () => {
     invalidate();
     busy = true; controls();
     try {
       const backup = file.files[0];
-      const {readBackupFile} = await import('./document-backup.js?v=1');
-      const {payload} = await readBackupFile(backup,password.value,decrypt);
-      plan = await previewBranchBackup(payload, branch.value, mode.value, request, chunks, path => status('Comparing ' + path + '…'));
+      const {readBackupFile, extractDocument} = await import('./document-backup.js?v=1');
+      const opened = await readBackupFile(backup,password.value,decrypt);
+      const {payload} = opened;
+      const eligibleOwners = include?.checked ? new Set() : null;
+      plan = await previewBranchBackup(payload, branch.value, mode.value, request, chunks, path => status('Comparing ' + path + '…'), eligibleOwners);
+      if (eligibleOwners) {
+        status('Comparing archived documents with branch storage…');
+        const key = opened.offsets && await derive(password.value, Uint8Array.from(payload.documentArchive.salt));
+        plan.readFile = number => extractDocument(backup, opened, number, '', () => key);
+        plan.fileSummary = await previewRestoreFiles(plan, opened, eligibleOwners, request, plan.readFile);
+      }
       const headline = document.createElement('p');
       headline.textContent = restoreSummary(plan);
-      if (payload.documentArchive) headline.textContent += ' This restore applies database records. Use Browse documents in backup to download individual files.';
+      if (!eligibleOwners && payload.documentArchive) headline.textContent += ' This restore applies database records. Use Browse documents in backup to download individual files.';
       summary.append(headline);
       for (const group of plan.groups) {
         const details = document.createElement('details'), title = document.createElement('summary');
@@ -148,6 +229,18 @@ export function mountBranchRestore({ request, decrypt, safetyBackup, chunks, sta
       if (!apply.isConnected) return;
       const { jobId } = await request('prepare-branch-restore', { ...plan.scope, hashes: plan.batches.map(batch => batch.hash), confirmation, safetyBackupCreated: true });
       for (const [index, batch] of plan.batches.entries()) {
+        if (!apply.isConnected) throw new Error('The restore screen changed.');
+        if (batch.file) {
+          status('Restoring ' + batch.file.name + '…');
+          const {branchId, mode} = plan.scope;
+          const metadata = {branchId, mode, jobId, index, file: batch.file, hash: batch.hash};
+          const response = await staffFetch('/api/data-backup', {method:'POST', credentials:'same-origin', cache:'no-store',
+            headers:{'Content-Type':'application/octet-stream', 'X-Restore-Document':encodeURIComponent(JSON.stringify(metadata))},
+            body:await plan.readFile(batch.number)});
+          const result = await response.json();
+          if (!response.ok || !result.ok) throw new Error(result.message || 'Document restore failed.');
+          continue;
+        }
         status('Restoring ' + batch.collectionPath + ' (' + (index + 1) + ' of ' + plan.batches.length + ')…');
         await request('apply-branch-restore', { ...plan.scope, ...batch, jobId, index });
       }
