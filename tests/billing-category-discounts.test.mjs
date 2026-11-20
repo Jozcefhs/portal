@@ -33,21 +33,21 @@ for (const category of ['School Staff Child', 'Church Staff Child', 'Sibling Dis
   });
 }
 
-test('component category override precedes one total fixed discount', () => {
+test('one fixed discount starts from the regular component prices', () => {
   const rules = [...fees, fee('TUITION', 50000, { BillingCategory: 'School Staff Child' })];
   const result = discounted(rules, { DiscountType: 'Fixed amount', DiscountValue: 20000 });
   assert.equal(result.length, 3);
-  assert.deepEqual(result.map(row => row.Amount), [40000, 24000, 16000]);
+  assert.deepEqual(result.map(row => row.Amount), [86666.67, 26000, 17333.33]);
   assert.deepEqual(discounted(result, { DiscountType: 'Fixed amount', DiscountValue: 20000 }), result, 'recalculation must not compound');
 });
 
-test('a staff-child price covering all classes replaces a matching class-specific textbook charge', async () => {
-  const standard = fee('BOOKS_G7', 148060, { FeeName: 'Textbooks (All Subjects)', ClassName: 'Grade 7', EnrollmentCategory: 'Returning' });
+test('a staff child inherits regular textbooks before any total discount', async () => {
+  const standard = fee('BOOKS_G7', 148060, { FeeName: 'Textbooks (All Subjects)', BillingCategory: 'Regular', ClassName: 'Grade 7', EnrollmentCategory: 'Returning' });
   const special = fee('BOOKS_STAFF', 120065, { FeeName: standard.FeeName, BillingCategory: 'School Staff Child', ClassName: 'All', EnrollmentCategory: 'All', AcademicSession: 'All' });
-  assert.deepEqual(applyBillingCategoryOverrides([standard, special], account).map(row => row.FeeCode), ['BOOKS_STAFF']);
+  assert.deepEqual(applyBillingCategoryOverrides([standard, special], account).map(row => row.FeeCode), ['BOOKS_G7']);
   const preview = await buildStudentBillingPreview(account, { schoolProfile: {}, feeItems: [standard, special], invoices: [], payments: [], ledger: [], accountSummaries: [] });
-  assert.equal(preview.expectedTotal, 120065); assert.equal(preview.rows.length, 1);
-  assert.equal(preview.rows[0].code, 'BOOKS_STAFF');
+  assert.equal(preview.expectedTotal, 148060); assert.equal(preview.rows.length, 1);
+  assert.equal(preview.rows[0].code, 'BOOKS_G7');
 });
 
 test('all-section rates and category-specific section rates form one matching component', async () => {
@@ -59,9 +59,9 @@ test('all-section rates and category-specific section rates form one matching co
       const data = { schoolProfile: {}, feeItems: [standard, special], invoices: [], payments: [], ledger: [], accountSummaries: [] };
       const before = JSON.stringify(data);
       const preview = await buildStudentBillingPreview(student, data);
-      assert.equal(preview.expectedTotal, 60000, `${section}/${SchoolSection || 'legacy blank'}`);
-      assert.deepEqual(preview.rows.map(row => row.code), ['TUITION_STAFF']);
-      assert.deepEqual(applyBillingCategoryOverrides([special, standard], student).map(row => row.FeeCode), ['TUITION_STAFF']);
+      assert.equal(preview.expectedTotal, 100000, `${section}/${SchoolSection || 'legacy blank'}`);
+      assert.deepEqual(preview.rows.map(row => row.code), ['TUITION_STANDARD']);
+      assert.deepEqual(applyBillingCategoryOverrides([special, standard], student).map(row => row.FeeCode), ['TUITION_STANDARD']);
       assert.equal(JSON.stringify(data), before, 'preview must not mutate fee rules or recorded transactions');
     }
   }
@@ -73,16 +73,16 @@ test('effective section for legacy profiles uses the class before applying a tot
     const standard = fee('TUITION_STANDARD', 100000, { FeeName: 'Tuition', ClassName, SchoolSection: 'All' });
     const special = fee('TUITION_STAFF', 60000, { FeeName: 'Tuition', BillingCategory: student.BillingCategory, SchoolSection: section });
     const result = applyBillingCategoryOverrides([standard, special], student);
-    assert.deepEqual(result.map(row => row.FeeCode), ['TUITION_STAFF']);
-    assert.equal(result[0].Amount, 54000);
-    assert.equal(result[0].BillingDiscount.BaseTotal, 60000);
-    assert.equal(result[0].BillingDiscount.TotalDiscount, 6000);
+    assert.deepEqual(result.map(row => row.FeeCode), ['TUITION_STANDARD']);
+    assert.equal(result[0].Amount, 90000);
+    assert.equal(result[0].BillingDiscount.BaseTotal, 100000);
+    assert.equal(result[0].BillingDiscount.TotalDiscount, 10000);
   }
 });
 
 test('category overrides keep separate branches, periods, currencies and different named components distinct', () => {
   const original = fee('BOOKS_G7', 148060, { FeeName: 'Textbooks', ClassName: 'Grade 7' });
-  const special = fee('BOOKS_STAFF', 120065, { FeeName: 'Textbooks', BillingCategory: 'School Staff Child' });
+  const special = fee('BOOKS_STAFF', 120065, { FeeName: 'Textbooks', BillingCategory: 'Regular' });
   for (const change of [{BranchId:'area-1-primary'}, {SchoolSection:'primary'}, {Term:'Second Term'}, {AcademicSession:'2025/2026'}, {Currency:'USD'}, {FeeName:'Cambridge Textbooks'}]) {
     assert.equal(applyBillingCategoryOverrides([original, {...special,...change}], account).length, 2);
   }
@@ -223,6 +223,28 @@ test('save is atomic, optimistic and repeat-safe with one audit per actual chang
   for (const name of ['Church Staff Child', 'School Staff Child', 'Sibling Discount']) assert.ok(list.categories.includes(name));
   assert.equal(h.commits.length, 2, 'opening the settings is read-only');
 });
+
+test('intake-specific defaults and overrides save, reload and apply without overlapping or stacking', async () => {
+  const h = settings();
+  const save = (fields, version) => handleBillingDiscounts({}, h.user,
+    { ...rule, action: 'save', recordVersion: version, ...fields }, h.deps);
+  const def = await save({ EnrollmentCategories: ['Returning'] }, '');
+  const intakeOnly = { RateId: 'entrants', EnrollmentCategories: ['New Intake'], DiscountType: 'Fixed amount', DiscountValue: 2000 };
+  const added = await save(intakeOnly, def.rule.recordVersion);
+  assert.equal((await save(intakeOnly, added.rule.recordVersion)).changed, false);
+  await assert.rejects(save({ ...intakeOnly, RateId: 'overlap' }, added.rule.recordVersion), /overlaps/);
+  await assert.rejects(save({ EnrollmentCategories: [] }, added.rule.recordVersion), /Select New Intake/);
+  const { rules } = await handleBillingDiscounts({}, h.user, { action: 'list' }, h.deps);
+  for (const [EnrollmentCategory, expected] of [['Returning', 135000], ['New Intake', 148000]]) {
+    const learner = { ...account, EnrollmentCategory };
+    const quote = applyBillingCategoryOverrides(fees, { ...learner, BillingDiscount: selectBillingDiscount(rules, learner) });
+    assert.equal(quote.reduce((sum, row) => sum + row.Amount, 0), expected);
+  }
+  const reset = await save({ EnrollmentCategories: ['Returning', 'New Intake'] }, added.rule.recordVersion);
+  assert.equal(reset.changed, true);
+  assert.equal(reset.rule.EnrollmentCategories, undefined);
+  assert.deepEqual(reset.rule.Rates[0].EnrollmentCategories, ['New Intake']);
+});
 test('unauthorised roles, branches, devices and read-only subscriptions cannot save', async () => {
   const h = settings(), body = { ...rule, action: 'save' };
   for (const user of [{ ...h.user, role: 'Subject Teacher' }, { ...h.user, allowedSections: [] },
@@ -232,6 +254,30 @@ test('unauthorised roles, branches, devices and read-only subscriptions cannot s
   assert.equal(h.commits.length, 0); assert.equal(h.reads.length, 0);
   for (const action of ['getBillingDiscountSettings', 'saveBillingDiscountSettings'])
     assert.doesNotThrow(() => enforceDesktopDeviceActionScope({ type: 'device', branchId: 'main' }, action, {}));
+});
+
+test('shared and separate day and boarding rates use the applicable regular fees', async () => {
+  const h = settings();
+  const save = (fields, version) => handleBillingDiscounts({}, h.user,
+    { ...rule, action: 'save', recordVersion: version, ...fields }, h.deps);
+  const shared = await save({ StudentTypes: ['Day', 'Boarding'] }, '');
+  const day = await save({ RateId: 'day', StudentTypes: ['Day'], DiscountValue: 20 }, shared.rule.recordVersion);
+  const both = await save({ RateId: 'boarding', StudentTypes: ['Boarding'], EnrollmentCategories: ['New Intake'], DiscountValue: 30 }, day.rule.recordVersion);
+  await assert.rejects(save({ RateId: 'collision', StudentTypes: ['Day'], DiscountValue: 50 }, both.rule.recordVersion), /overlaps/);
+  await assert.rejects(save({ StudentTypes: [] }, both.rule.recordVersion), /Select Day/);
+  const prices = [fee('BOOKS', 148060, { BillingCategory: 'Regular' }),
+    fee('OLD', 120065, { FeeName: 'BOOKS', BillingCategory: account.BillingCategory }),
+    fee('BOARD', 50000, { StudentType: 'Boarding Student' })];
+  for (const [StudentType, EnrollmentCategory, expected] of [
+    ['Day Student', 'Returning', 118448], ['Boarding Student', 'New Intake', 138642], ['Boarding Student', 'Returning', 178254]
+  ]) {
+    const pupil = { ...account, StudentType, EnrollmentCategory, BillingDiscount: both.rule };
+    const quote = applyBillingCategoryOverrides(prices.filter(row => feeMatchesApplication(row, pupil)), pupil);
+    assert.equal(quote.reduce((total, row) => total + row.Amount, 0), expected);
+  }
+  const posted = { ...prices[1], Debit: 120065, Credit: 120065 };
+  const [checkout] = billingFeesWithPostedAmounts([prices[0]], account, [posted], isSchoolFeeInvoice);
+  assert.equal(checkout.FeeCode, 'OLD'); assert.equal(checkout.Amount, 120065);
 });
 test('editor catalogues are opt-in; legacy rules read as the default without any writes', async () => {
   const h = settings({ ...rule, __updateTime: 'v0' });

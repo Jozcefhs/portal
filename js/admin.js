@@ -21526,7 +21526,7 @@ function renderSection(active) {
         const isCurrent = () => currentUser === user && selectedBranchId === branch && activeSection === 'accounts' && !signal.aborted;
         button.disabled = true;
         try {
-          const { openBillingDiscounts } = await import('./billing-discounts.js?v=20261113-scholarship-billing');
+          const { openBillingDiscounts } = await import('./billing-discounts.js?v=20261120-billing-groups');
           if (!isCurrent()) return;
           await openBillingDiscounts(async payload => {
             if (!isCurrent()) throw new Error('The workspace changed. Reopen billing discounts.');

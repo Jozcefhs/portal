@@ -136,7 +136,7 @@ test('parent fee matching includes every component from a multi-class rule', () 
 test('one fee can apply to multiple selected billing categories', () => {
   const fee = {
     FeeCode: 'SHARED-DISCOUNT',
-    FeeName: 'Shared discounted tuition',
+    FeeName: 'Shared optional activity', FeeCategory: 'Optional',
     ClassName: 'All',
     StudentType: 'All',
     BillingCategories: ['School Staff Child', 'Church Staff Child'],
@@ -1046,13 +1046,13 @@ test('receivables card uses outstanding invoices when receivables ledger has no 
   assert.equal(report.dashboard.Receivables, 15000);
 });
 
-test('specific billing category replaces the All-category fee', () => {
+test('staff start from the same compulsory fee as Regular', () => {
   const fees = [
     { FeeCode: 'TUITION-ALL', FeeName: 'Tuition', FeeCategory: 'School Fee', BillingCategory: 'All', ClassName: 'JSS 1', Term: 'First Term', Amount: 100000 },
     { FeeCode: 'TUITION-STAFF', FeeName: 'Tuition', FeeCategory: 'School Fee', BillingCategory: 'Staff Child', ClassName: 'JSS 1', Term: 'First Term', Amount: 50000 }
   ];
   const selected = applyBillingCategoryOverrides(fees, { BillingCategory: 'Staff Child' });
-  assert.deepEqual(selected.map((row) => row.FeeCode), ['TUITION-STAFF']);
+  assert.deepEqual(selected.map((row) => row.FeeCode), ['TUITION-ALL']);
 });
 
 test('budget actuals remain scoped to department and latest financial year', () => {

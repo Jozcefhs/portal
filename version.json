@@ -1,8 +1,8 @@
 {
-  "version": "3.1.65",
+  "version": "3.1.66",
   "channel": "stable",
   "release_status": "published",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.65.exe",
-  "sha256": "d3ea49c6d934c98fb7c08974b9617405f56b67cc38ec64f78bd8073d38509fad",
-  "notes": "Save User, Delete User and Close are visible in the User Management window at smaller sizes and higher display scaling. School Documents & Structure explains branch restrictions and saves the document and school-section switches."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.66.exe",
+  "sha256": "baa1cff69d41d04613b16be6ad10e8e195f6024f550aee44b79791c1b3bda556",
+  "notes": "Total school-fee discounts use the applicable Regular fees and support separate rates for new intake, returning, day and boarding pupils. Full Scholarship pupils receive only explicitly assigned compulsory fees."
 }

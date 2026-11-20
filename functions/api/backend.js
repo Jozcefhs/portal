@@ -232,7 +232,7 @@ function feeBillingCategoryMatches(fee, app = {}) {
       feeMatchesBranch(fee, app) &&
       sameScope(fee.SchoolSection || fee.schoolSection, app.SchoolSection || app.schoolSection || schoolSectionFor(app));
   }
-  return feeFieldMatches(categories, category, true);
+  return feeFieldMatches(categories, isSchoolFeeInvoice(fee) && !isAcceptanceFeeLike(fee) ? 'Regular' : category, true);
 }
 
 function accountingEditionForRequest(env, body = {}) {
@@ -1395,7 +1395,8 @@ function feeMatchesAccountPeriod(fee, app, { enrollmentCategoryOverride = '' } =
 
 function feeBillingSpecificity(fee, app) {
   const rules = feeBillingCategories(fee);
-  const actual = normalizeMatchText(app.BillingCategory || 'Regular');
+  const actual = !isFullScholarship(app.BillingCategory) && isSchoolFeeInvoice(fee) && !isAcceptanceFeeLike(fee)
+    ? 'Regular' : app.BillingCategory || 'Regular';
   if (rules.some((rule) => ['all', '*'].includes(normalizeMatchText(rule)))) return 0;
   return feeFieldMatches(rules, actual || 'Regular', true) ? 2 : 0;
 }
@@ -1422,7 +1423,7 @@ function feeOverrideKey(fee, app) {
 export function applyBillingCategoryOverrides(fees, app) {
   const grouped = {};
   fees.forEach((fee) => {
-    if (isFullScholarship(app.BillingCategory) && !feeBillingCategoryMatches(fee, app)) return;
+    if (!feeBillingCategoryMatches(fee, app)) return;
     const key = feeOverrideKey(fee, app);
     grouped[key] = grouped[key] || [];
     grouped[key].push(fee);
@@ -2149,7 +2150,7 @@ export async function getPayableFees(env, body = {}) {
       return category === 'admission' || requiredForEnrollment;
     }
     return true;
-  }), billingApp), billingApp, invoiceRows.filter(rowMatchesAccount)).filter(fee => yesNo(fee.PayableOnline || 'YES') === 'YES');
+  }), billingApp), billingApp, invoiceRows.filter(rowMatchesAccount), fee => isSchoolFeeInvoice(fee) && !isAcceptanceFeeLike(fee)).filter(fee => yesNo(fee.PayableOnline || 'YES') === 'YES');
 
   const feeBalanceMap = {};
   const paymentCodeMap = {};
@@ -2220,7 +2221,7 @@ export async function getPayableFees(env, body = {}) {
     if (normalizeMatchText(fee.FeeCategory || 'School Fee') !== 'school fee') return false;
     const feeRank = termRank(fee.Term);
     return feeRank && feeRank < currentTermRank && feeMatchesAccountBase(fee, billingApp);
-  }), billingApp), billingApp, invoiceRows.filter(rowMatchesAccount)).reduce((sum, fee) => sum + asMoneyNumber(fee.Amount), 0) : 0;
+  }), billingApp), billingApp, invoiceRows.filter(rowMatchesAccount), fee => isSchoolFeeInvoice(fee) && !isAcceptanceFeeLike(fee)).reduce((sum, fee) => sum + asMoneyNumber(fee.Amount), 0) : 0;
   const schoolFeeRelatedCredit = currentTermRank ? paidLedgerRows.reduce((sum, row) => {
     return isAvailableSchoolCreditReceipt(row) ? sum + asMoneyNumber(row.Credit) : sum;
   }, 0) : 0;
@@ -6727,13 +6728,19 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef, financ
   for (const fee of fees) {
     const history = existing.filter(invoice => sameText(invoice.FeeCode, fee.FeeCode) && sameFinancialPeriod(invoice,
       resolvedPeriodValue(fee.AcademicSession, billingSession), resolvedPeriodValue(fee.Term, billingTerm)));
+    if (!['regular', 'full scholarship'].includes(lower(billingApp.BillingCategory)) && existing.some(invoice =>
+      !reversedInvoice(invoice) && !sameText(invoice.FeeCode, fee.FeeCode) && clean(invoice.FeeName) &&
+      sameText(invoice.FeeName, fee.FeeName) && sameText(invoice.FeeCategory, fee.FeeCategory) &&
+      sameFinancialPeriod(invoice, resolvedPeriodValue(fee.AcademicSession, billingSession), resolvedPeriodValue(fee.Term, billingTerm)))) {
+      await refuseBillingConflict('This component already has a posted invoice under another fee code. Use billing review before generating it again.');
+    }
     const matches = history.filter(invoice => !reversedInvoice(invoice));
     if (matches.length > 1) await refuseBillingConflict('Multiple existing invoices match this fee component. Use finance review; no invoices were changed.');
     const prior = matches[0];
     if (history.some(reversedInvoice) && (!prior || asMoneyNumber(prior.Debit) !== asMoneyNumber(fee.Amount))) {
       await refuseBillingConflict('A reversed charge requires reviewed recovery before billing this component. Existing invoice history was preserved.');
     }
-    if (prior && (managedCredit.summary || fee.BillingDiscount || prior.BillingDiscount) && asMoneyNumber(prior.Debit) !== asMoneyNumber(fee.Amount)) {
+    if (prior && (managedCredit.summary || fee.BillingDiscount || prior.BillingDiscount || !['regular', 'full scholarship'].includes(lower(billingApp.BillingCategory))) && asMoneyNumber(prior.Debit) !== asMoneyNumber(fee.Amount)) {
       await refuseBillingConflict('The current fee setup or billing discount differs from posted invoices. Use the billing review before changing existing charges; invoices and payments were preserved.');
     }
   }

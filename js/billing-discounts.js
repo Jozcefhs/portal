@@ -37,7 +37,13 @@ export async function openBillingDiscounts(request, { isCurrent = () => true, br
     <label style="display:block;margin:14px 0">Discount on total school fees<select aria-label="Discount on total school fees" name="DiscountType" style="width:100%"><option>None</option><option>Percentage</option><option>Fixed amount</option></select></label>
     <label style="display:block;margin:14px 0">Value (% or NGN)<input name="DiscountValue" type="number" min="0" max="100000000" step="0.01" value="0" required style="width:100%;box-sizing:border-box"></label>
     ${dimensions.map(coverageFields).join('')}
-    <p>Assign the category in the learner’s billing profile. Rates apply to new school fees after component discounts. Wallet top-ups, optional services and acceptance deposits are excluded. Use billing review to check existing charges.</p>
+    <fieldset><legend>Pupils eligible for this rate</legend>
+      <label class="check-row"><input type="checkbox" name="EnrollmentCategories" value="New Intake" checked>New intake</label>
+      <label class="check-row"><input type="checkbox" name="EnrollmentCategories" value="Returning" checked>Returning</label></fieldset>
+    <fieldset><legend>Student type</legend>
+      <label class="check-row"><input type="checkbox" name="StudentTypes" value="Day" checked>Day</label>
+      <label class="check-row"><input type="checkbox" name="StudentTypes" value="Boarding" checked>Boarding</label></fieldset>
+    <p>Assign the category in the learner’s billing profile. Each category starts with the Regular school fees for the same pupil classifications. The selected rate applies once to that total. Wallet top-ups, optional services and acceptance deposits are excluded. Use billing review to check existing charges.</p>
     <button type="button" data-remove hidden>Remove rate</button></fieldset></fieldset>
     <footer style="position:sticky;bottom:-18px;background:Canvas;color:CanvasText;padding:8px 0;border-top:1px solid var(--line);z-index:1">
     <p role="status" aria-live="polite" style="margin:0">Loading categories…</p>
@@ -89,7 +95,7 @@ export async function openBillingDiscounts(request, { isCurrent = () => true, br
     editingId = rate ? id : '';
     if (!editingId) draftId = crypto.randomUUID();
     ratesList.replaceChildren();
-    for (const item of [{ RateId: 'default', DiscountType: policy?.DiscountType, DiscountValue: policy?.DiscountValue }, ...rates]) {
+    for (const item of [{ ...policy, RateId: 'default' }, ...rates]) {
       const isDefault = item.RateId === 'default';
       const button = document.createElement('button');
       button.type = 'button';
@@ -97,6 +103,8 @@ export async function openBillingDiscounts(request, { isCurrent = () => true, br
       button.style.cssText = 'width:100%;min-width:0;margin:0;text-align:left;white-space:normal;overflow-wrap:anywhere;border:1px solid var(--line)';
       if (item.RateId !== editingId) { button.style.background = 'Canvas'; button.style.color = 'CanvasText'; }
       button.textContent = isDefault ? `Category default · ${scholarship ? 'Automatic exemption' : rateAmount(item)} · All classes, all terms` : `${rateAmount(item)} · ${rateScope(item)}`;
+      if (item.EnrollmentCategories) button.textContent += ' · ' + item.EnrollmentCategories.join(', ');
+      if (item.StudentTypes) button.textContent += ' · ' + item.StudentTypes.join(', ');
       button.onclick = () => selectRate(item.RateId);
       ratesList.append(button);
     }
@@ -106,6 +114,9 @@ export async function openBillingDiscounts(request, { isCurrent = () => true, br
     add.hidden = readOnly || scholarship;
     remove.hidden = readOnly || scholarship || !editingId || editingId === 'default';
     type.value = rate?.DiscountType || 'None';
+    for (const field of ['EnrollmentCategories', 'StudentTypes']) {
+      for (const box of form.elements[field]) box.checked = !rate?.[field] || rate[field].includes(box.value);
+    }
     value.value = rate?.DiscountValue || 0;
     setLimits();
     for (const item of coverage) {
@@ -130,7 +141,7 @@ export async function openBillingDiscounts(request, { isCurrent = () => true, br
     try {
       const data = await request({ action: 'list', IncludeOptions: true });
       if (!active()) return;
-      if (data.scopedRatesVersion !== 1) throw new Error('The billing service needs an update before class and term rates can be edited. Reload settings after the update.');
+      if (data.scopedRatesVersion !== 1 || data.intakeRatesVersion !== 1) throw new Error('The billing service needs an update. Reload settings after the update.');
       for (const item of coverage) {
         const options = data[item.label.toLowerCase()];
         if (!Array.isArray(options)) throw new Error(`Could not load ${item.label.toLowerCase()} for this branch. Reload settings before editing discounts.`);
@@ -148,6 +159,10 @@ export async function openBillingDiscounts(request, { isCurrent = () => true, br
   function savePayload() {
     const payload = { action: 'save', Name: name.value.trim(), RateId: editingId || draftId, DiscountType: type.value, DiscountValue: value.value,
       recordVersion: current()?.recordVersion || '' };
+    payload.EnrollmentCategories = [...form.elements.EnrollmentCategories].filter(box => box.checked).map(box => box.value);
+    if (!payload.EnrollmentCategories.length) { status.textContent = 'Select New intake, Returning, or both.'; return; }
+    payload.StudentTypes = [...form.elements.StudentTypes].filter(box => box.checked).map(box => box.value);
+    if (!payload.StudentTypes.length) { status.textContent = 'Select Day, Boarding, or both.'; return; }
     for (const { field, all, scope, list } of coverage) {
       const names = scope.value === 'Selected' ? [...list.querySelectorAll('input:checked')].map(input => input.value) : [];
       if (scope.value === 'Selected' && !names.length) {
@@ -158,7 +173,7 @@ export async function openBillingDiscounts(request, { isCurrent = () => true, br
       payload[field + 'Scope'] = scope.value;
       payload[field + 'Names'] = names;
     }
-    if (payload.ClassScope === 'All' && payload.TermScope === 'All' && editingId !== 'default') {
+    if (payload.ClassScope === 'All' && payload.TermScope === 'All' && payload.EnrollmentCategories.length === 2 && payload.StudentTypes.length === 2 && editingId !== 'default') {
       if (editingId || current()?.DiscountType && current().DiscountType !== 'None') {
         status.textContent = 'Choose the category default to change the rate for all classes and all terms.';
         ratesList.querySelector('button')?.focus();

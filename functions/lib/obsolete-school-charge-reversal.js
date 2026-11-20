@@ -149,7 +149,7 @@ export async function obsoleteSchoolChargeReversalPlan(student, data, { candidat
       same(fee.FeeName, invoice.FeeName) && same(fee.FeeCategory, invoice.FeeCategory) &&
       same(fee.BranchId, profile.BranchId) && feeMatchesAccountPeriod(fee, profile) &&
       (!clean(fee.SchoolSection || fee.schoolSection) || same(fee.SchoolSection || fee.schoolSection, profile.SchoolSection)) &&
-      fee.BillingCategories?.some(category => same(category, profile.BillingCategory)) &&
+      fee.BillingCategories?.some(category => same(category, fullScholarship ? profile.BillingCategory : 'Regular')) &&
       preview.rows.some(row => same(row.code, fee.FeeCode) && !row.conflict && row.expected > 0 && row.expected === fee.Amount &&
         (row.invoiced === row.expected || row.missing && row.invoiced === 0)));
     const replacementInvoices = replacementRules.length === 1 ? current.filter(row =>

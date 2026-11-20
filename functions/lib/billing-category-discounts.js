@@ -9,6 +9,31 @@ const key = value => clean(value).toLowerCase().replace(/\s+/g, ' ');
 const fail = (message, status = 400) => { throw Object.assign(new Error(message), { status }); };
 export const DEFAULT_BILLING_CATEGORIES = ['Regular', 'School Staff Child', 'Church Staff Child', 'Sibling Discount', 'Partial Scholarship', 'Full Scholarship', 'Sponsored'];
 const standardTerms = ['First Term', 'Second Term', 'Third Term'];
+const intakeOptions = ['New Intake', 'Returning'];
+
+const studentTypeOptions = ['Day', 'Boarding'];
+const audienceOptions = { EnrollmentCategories: intakeOptions, StudentTypes: studentTypeOptions };
+
+function audienceSelection(input) {
+  const scope = {};
+  for (const [field, options] of Object.entries(audienceOptions)) {
+    const names = input[field] === undefined ? options : input[field];
+    if (!Array.isArray(names) || !names.length || names.some(name => !options.includes(name))) {
+      fail(`Select ${options.join(', ')} or both.`);
+    }
+    const selected = options.filter(name => names.includes(name));
+    if (selected.length !== options.length) scope[field] = selected;
+  }
+  return scope;
+}
+
+function matchesAudience(rule, account) {
+  const intake = key(account.EnrollmentCategory || account.IntakeCategory || 'Returning');
+  const type = key(account.StudentType || account.studentType).replace(/ students?$/, '');
+  return (!rule.EnrollmentCategories || rule.EnrollmentCategories.some(name => key(name) === intake)) &&
+    (!rule.StudentTypes || rule.StudentTypes.some(name => key(name) === (type === 'boarder' ? 'boarding' : type)));
+}
+
 const wildcard = value => ['', '*', 'all'].includes(key(value));
 const selectableName = value => typeof value === 'string' && !wildcard(value) && !/[\u0000-\u001f]/.test(value);
 
@@ -31,7 +56,7 @@ function publicRule(row) {
     fail('Review the stored discount rates for this category.', 409);
   }
   return { Name: row.Name, BranchId: feeBranchId(row), DiscountType: row.DiscountType, DiscountValue: row.DiscountValue,
-    Currency: row.Currency || 'NGN', Rates: rates.map(rate => scopedRate(row.Name, rate)),
+    Currency: row.Currency || 'NGN', ...audienceSelection(row), Rates: rates.map(rate => scopedRate(row.Name, rate)),
     recordVersion: row.__updateTime || row.recordVersion || '' };
 }
 
@@ -44,7 +69,7 @@ export function normalizeBillingDiscount(input) {
   if (!Number.isFinite(DiscountValue) || DiscountValue > 100000000 || DiscountType === 'Percentage' && DiscountValue > 100) fail('Percentage must be between 0 and 100; fixed discounts must be at most 100,000,000.');
   if (key(Name) === 'full scholarship' && DiscountType !== 'None') fail('Full Scholarship already exempts standard fees. Keep its explicitly assigned fee exceptions in Fee Setup.');
   return { Name, DiscountType, DiscountValue: DiscountType === 'None' ? 0 : DiscountValue, Currency: 'NGN',
-    ...discountScope(input, 'Class'), ...discountScope(input, 'Term') };
+    ...discountScope(input, 'Class'), ...discountScope(input, 'Term'), ...audienceSelection(input) };
 }
 
 export async function billingDiscountId(branch, name) {
@@ -72,10 +97,11 @@ function rateForTerm(classRates, term, fallback) {
 
 export function selectBillingDiscount(rows, account) {
   const rule = publicRule((rows || []).find(row => matchesAccountCategory(row, account)));
-  if (!rule || !rule.Rates.length) return rule;
-  const rates = rule.Rates.filter(rate => matchesDiscountClass(rate, account));
-  if (!rates.length && rule.DiscountType === 'None') return null;
-  return { ...rule, Rates: rates };
+  if (!rule) return null;
+  const fallback = matchesAudience(rule, account) ? rule : { ...rule, DiscountType: 'None', DiscountValue: 0 };
+  const rates = rule.Rates.filter(rate => matchesDiscountClass(rate, account) && matchesAudience(rate, account));
+  if (!rates.length && rule.Rates.length && fallback.DiscountType === 'None') return null;
+  return { ...fallback, Rates: rates };
 }
 
 // Older desktops calculate account-screen fees for the displayed account's
@@ -124,8 +150,8 @@ export function applyTotalBillingDiscount(fees, account, eligible) {
   if (!rule || key(account.BillingCategory) === 'full scholarship') return fees;
   if (!matchesAccountCategory(rule, account)) return fees;
   const policy = publicRule(rule);
-  const fallback = normalizeBillingDiscount(policy);
-  const classRates = policy.Rates.filter(rate => matchesDiscountClass(rate, account));
+  const fallback = normalizeBillingDiscount(matchesAudience(policy, account) ? policy : { ...policy, DiscountType: 'None', DiscountValue: 0 });
+  const classRates = policy.Rates.filter(rate => matchesDiscountClass(rate, account) && matchesAudience(rate, account));
   const groups = new Map(), result = [...fees];
   fees.forEach((fee, index) => {
     const description = [fee.FeeCode, fee.FeeName, fee.FeeCategory].map(key).join(' ').replace(/[_-]/g, ' ');
@@ -162,15 +188,19 @@ export function applyTotalBillingDiscount(fees, account, eligible) {
 
 // A new policy is a quote for unbilled fees, never permission to replace a
 // posted charge in the parent's checkout. Retain its saved allocation too.
-export function billingFeesWithPostedAmounts(fees, account, invoices) {
+export function billingFeesWithPostedAmounts(fees, account, invoices, standardFee = () => false) {
   const period = (row, field) => /^(all|\*)?$/i.test(clean(row[field])) ? key(account[field]) : key(row[field]);
   return fees.map(fee => {
-    const posted = invoices.filter(row => feeBranchId(row) === feeBranchId(account) && key(row.FeeCode) === key(fee.FeeCode) &&
+    const commonBase = !['regular', 'full scholarship'].includes(key(account.BillingCategory || 'Regular')) && standardFee(fee);
+    const posted = invoices.filter(row => feeBranchId(row) === feeBranchId(account) &&
+      (key(row.FeeCode) === key(fee.FeeCode) || commonBase && key(row.FeeName) && key(row.FeeName) === key(fee.FeeName) &&
+        key(row.FeeCategory) === key(fee.FeeCategory) && key(row.Currency || 'NGN') === key(fee.Currency || 'NGN')) &&
+      key(row.FeeChargeReversed) !== 'yes' &&
       !['void', 'voided', 'cancelled', 'canceled'].includes(key(row.Status)) &&
       period(row, 'AcademicSession') === period(fee, 'AcademicSession') && period(row, 'Term') === period(fee, 'Term'));
-    if (!posted.length || !fee.BillingDiscount && !posted.some(row => row.BillingDiscount)) return fee;
+    if (!posted.length || !commonBase && !fee.BillingDiscount && !posted.some(row => row.BillingDiscount)) return fee;
     if (posted.length !== 1) fail('Multiple invoices need finance review before this discounted fee can be paid.', 409);
-    return { ...fee, Amount: Number(posted[0].Debit ?? posted[0].Amount ?? 0), BillingDiscount: posted[0].BillingDiscount || null };
+    return { ...fee, FeeCode: posted[0].FeeCode || fee.FeeCode, Amount: Number(posted[0].Debit ?? posted[0].Amount ?? 0), BillingDiscount: posted[0].BillingDiscount || null };
   });
 }
 
@@ -194,8 +224,9 @@ async function loadDiscountTerms(env, branch, db) {
 function scopedRate(name, input) {
   if (typeof input?.RateId !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(input.RateId) || input.RateId === 'default') fail('Choose a valid scoped discount rate.');
   const { DiscountType, DiscountValue, ClassScope, ClassNames, TermScope, TermNames } = normalizeBillingDiscount({ ...input, Name: name });
-  if (ClassScope === 'All' && TermScope === 'All') fail('Select classes or terms for this rate. Use the default rate for all classes and terms.');
-  return { RateId: input.RateId, DiscountType, DiscountValue, ClassScope, ClassNames, TermScope, TermNames };
+  const audience = audienceSelection(input);
+  if (ClassScope === 'All' && TermScope === 'All' && !Object.keys(audience).length) fail('Select classes, terms, an intake group or a student type for this rate. Use the default rate for everyone.');
+  return { RateId: input.RateId, DiscountType, DiscountValue, ClassScope, ClassNames, TermScope, TermNames, ...audience };
 }
 
 function scopesOverlap(a, b, dimension) {
@@ -233,13 +264,17 @@ export async function handleBillingDiscounts(env, user, body, overrides = {}) {
     const withOptions = body.IncludeOptions === true;
     const [rules, categories, classes, terms] = await Promise.all([loadBillingDiscounts(env, branch, db), db.listCollection(env, 'billingCategories'),
       withOptions && loadDiscountClasses(env, branch, db), withOptions && loadDiscountTerms(env, branch, db)]);
+    if (db.desktopClient && body.IntakeRatesVersion !== 1 && rules.some(policy =>
+      policy.EnrollmentCategories || policy.StudentTypes || policy.Rates.some(rate => rate.EnrollmentCategories || rate.StudentTypes))) {
+      fail('Update the desktop app to view or edit intake-specific billing discounts.', 409);
+    }
     if (db.desktopClient && !(Number(body.ScopedRatesVersion) >= 1) && rules.some(policy => policy.Rates.some(rate =>
       (rate.DiscountValue || Number(policy.DiscountValue)) &&
       (rate.DiscountValue !== Number(policy.DiscountValue) || rate.DiscountType !== policy.DiscountType)))) {
       fail('This branch uses class or term-specific discount rates. Update the desktop app to view fee estimates or edit its discounts.', 409);
     }
     const names = new Map([...DEFAULT_BILLING_CATEGORIES, ...categories.map(row => row.Name), ...rules.map(row => row.Name)].filter(Boolean).map(name => [key(name), name]));
-    return { ok: true, scopedRatesVersion: 1, branchId: branch, rules, categories: [...names.values()].sort(), ...(withOptions ? { classes, terms } : {}) };
+    return { ok: true, scopedRatesVersion: 1, intakeRatesVersion: 1, branchId: branch, rules, categories: [...names.values()].sort(), ...(withOptions ? { classes, terms } : {}) };
   }
   if (body.action !== 'save') fail('Choose a valid billing discount action.');
   if (user.subscriptionActive === false || user.subscriptionReadOnly === true) fail('This subscription is read-only.', 403);
@@ -251,11 +286,17 @@ export async function handleBillingDiscounts(env, user, body, overrides = {}) {
   if (typeof rateId !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(rateId)) fail('Choose a valid discount rate.');
   const rates = previous?.Rates || [];
   const value = { Name: previous?.Name || input.Name, BranchId: branch, Currency: 'NGN',
-    DiscountType: previous?.DiscountType || 'None', DiscountValue: previous?.DiscountValue || 0, Rates: rates };
+    DiscountType: previous?.DiscountType || 'None', DiscountValue: previous?.DiscountValue || 0, Rates: rates,
+    ...audienceSelection(previous || {}) };
   if (rateId === 'default') {
     if (body.RemoveRate === true || input.ClassScope !== 'All' || input.TermScope !== 'All') fail('The default rate covers all classes and terms. Set it to None to disable it.');
     value.DiscountType = input.DiscountType;
     value.DiscountValue = input.DiscountValue;
+    for (const field of Object.keys(audienceOptions)) {
+      if (body[field] === undefined) continue;
+      delete value[field];
+      if (input[field]) value[field] = input[field];
+    }
   } else if (body.RemoveRate === true) {
     if (!previous) fail('This category has no saved discount rate to remove.');
     value.Rates = rates.filter(rate => rate.RateId !== rateId);
@@ -265,14 +306,18 @@ export async function handleBillingDiscounts(env, user, body, overrides = {}) {
       resolveSavedScope(input, priorRate, body, 'Class', () => loadDiscountClasses(env, branch, db)),
       resolveSavedScope(input, priorRate, body, 'Term', () => loadDiscountTerms(env, branch, db))
     ]);
-    const updated = scopedRate(value.Name, { ...input, RateId: rateId, ...classes, ...terms });
-    if (rates.some(rate => rate.RateId !== rateId && scopesOverlap(rate, updated, 'Class') && scopesOverlap(rate, updated, 'Term'))) {
-      fail('This rate overlaps another saved rate for the same class and term. Choose separate classes or terms.');
+    const updated = scopedRate(value.Name, { ...input, RateId: rateId, ...classes, ...terms,
+      EnrollmentCategories: body.EnrollmentCategories ?? priorRate?.EnrollmentCategories,
+      StudentTypes: body.StudentTypes ?? priorRate?.StudentTypes });
+    if (rates.some(rate => rate.RateId !== rateId && scopesOverlap(rate, updated, 'Class') && scopesOverlap(rate, updated, 'Term') &&
+      Object.entries(audienceOptions).every(([field, options]) => (rate[field] || options).some(name => (updated[field] || options).includes(name))))) {
+      fail('This rate overlaps another saved rate for the same class and term. Choose a different class, term, intake group or student type.');
     }
     if (!priorRate && rates.length >= 100) fail('A billing category can have at most 100 scoped rates.');
     value.Rates = priorRate ? rates.map(rate => rate.RateId === rateId ? updated : rate) : [...rates, updated];
   }
-  if (previous && Object.entries(value).every(([field, val]) => JSON.stringify(previous[field]) === JSON.stringify(val))) {
+  if (previous && Object.keys(audienceOptions).every(field => JSON.stringify(value[field]) === JSON.stringify(previous[field])) &&
+      Object.entries(value).every(([field, val]) => JSON.stringify(previous[field]) === JSON.stringify(val))) {
     return { ok: true, changed: false, rule: previous, message: 'This discount is already saved.' };
   }
   if ((old?.__updateTime || '') !== clean(body.recordVersion)) fail('This discount changed. Reload its settings before saving.', 409);

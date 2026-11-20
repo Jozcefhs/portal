@@ -115,11 +115,11 @@ for (const section of ['primary', 'secondary']) {
   });
 }
 
-test('Regular, Partial Scholarship and staff-child generic/override rules remain unchanged', () => {
+test('Regular, Partial Scholarship and staff children share the same standard component price', () => {
   for (const category of ['Regular', 'Partial Scholarship', 'School Staff Child', 'Sponsored']) {
     assert.equal(feeMatchesApplication(fee, { ...student, BillingCategory: category }), true);
     const account = { ...student, BillingCategory: category };
-    const specific = { ...fee, FeeCode: 'SPEC', BillingCategory: category, Amount: 50000 };
+    const specific = { ...fee, FeeCode: 'SPEC', BillingCategory: 'Regular', Amount: 50000 };
     assert.deepEqual(applyBillingCategoryOverrides([fee, specific].filter((row) => feeMatchesApplication(row, account)), account)
       .map((row) => row.FeeCode), ['SPEC']);
   }

@@ -10,7 +10,8 @@ const [admin, discounts, style] = await Promise.all(['js/admin.js', 'js/billing-
 const start = admin.indexOf('    if (', admin.indexOf("const clubMembers = mountClubMemberRegister(panelEl);"));
 const end = admin.indexOf("      if (resolveDashboardEdition() === 'school')", start);
 assert.ok(start >= 0 && end >= 0);
-const launcher = 'export function render() {\n' + admin.slice(start, end) + '\n}\n}';
+const permissionHelpers = admin.slice(admin.indexOf('function hasFullModuleAccess('), admin.indexOf('function clean(', admin.indexOf('function modulePermissionRole(')));
+const launcher = permissionHelpers + '\nexport function render() {\n' + admin.slice(start, end) + '\n}\n}';
 await mkdir('tmp/billing-discount-ui', { recursive: true });
 
 try {
@@ -115,6 +116,7 @@ try {
     await page.getByText('Branch: Annex Campus', { exact: true }).waitFor();
     assert.equal(await type.inputValue(), 'Percentage');
     assert.equal(await value.inputValue(), '15');
+    for (const group of ['New intake', 'Returning', 'Day', 'Boarding']) assert.equal(await label(group).isChecked(), true);
     for (const name of ['Classes', 'Terms']) assert.equal(await label(name).inputValue(), 'All', 'legacy defaults retain all coverage');
     await category('Full Scholarship');
     await status('Full Scholarship is automatically exempt');
@@ -143,10 +145,12 @@ try {
     await add.click();
     await type.selectOption('Fixed amount'); await value.fill('12000');
     await label('Grade 3').check(); await label('Terms').selectOption('All');
+    await label('Day').uncheck(); await label('Returning').uncheck();
     await save.click(); await status('Discount saved');
     const second = calls.at(-1);
     assert.notEqual(second.RateId, first.RateId);
     assert.equal(second.TermScope, 'All'); assert.deepEqual(second.TermNames, []);
+    assert.deepEqual(second.StudentTypes, ['Boarding']); assert.deepEqual(second.EnrollmentCategories, ['New Intake']);
     const siblingId = await billingDiscountId('annex', 'Sibling Discount');
     const sibling = () => documents.get(siblingId);
     assert.equal(sibling().Rates.length, 2);
