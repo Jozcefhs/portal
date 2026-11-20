@@ -181,7 +181,7 @@
       const tabs = [['requests', 'Supply requests'], ['stock', 'Central stock'], ...(cap().canManage || cap().canApprove ? [['purchases', 'Purchases']] : []), ['transfers', 'Deliveries & receipts'], ['departments', 'Department balances'], ...(cap().canConfigure ? [['settings', 'Branch control']] : [])];
       if (!tabs.some(([id]) => id === tab)) tab = 'requests';
       const inTransit = (data.transfers || []).filter(row => ['IN_TRANSIT', 'PARTIALLY_RECEIVED', 'DISCREPANCY'].includes(statusKey(row))).length;
-      root.innerHTML = `<section class="procurement-workspace"><header class="procurement-heading"><div><h2>Procurement</h2><p>Purchase centrally, issue supplies and confirm department receipts.</p></div><button type="button" data-proc-action="refresh">Refresh</button></header>
+      root.innerHTML = `<section class="procurement-workspace"><header class="procurement-heading"><div><h2>Procurement</h2><p>Purchase centrally, issue supplies and confirm department receipts.</p></div>${options.openStorekeeping ? '<button type="button" data-proc-action="storekeeping">Storekeeping</button>' : ''}<button type="button" data-proc-action="refresh">Refresh</button></header>
         <p class="procurement-notice" data-proc-status role="status" aria-live="polite">${esc(notice)}</p>
         ${!writable() ? '<p class="procurement-notice">Read-only access: purchasing and stock changes are unavailable.</p>' : ''}
         ${(data.schoolSections || []).length > 1 ? `<div class="procurement-toolbar"><label>School section<select data-proc-school-section>${data.schoolSections.map(value => option(value, value, schoolSection)).join('')}</select></label></div>` : ''}
@@ -658,6 +658,7 @@
       if (!target || !root.contains(target) || busy) return;
       if (target.dataset.procTab) { tab = target.dataset.procTab; query = ''; draw(); root.querySelector(`[data-proc-tab="${tab}"]`)?.focus(); return; }
       const id = target.dataset.id, action = target.dataset.procAction;
+      if (action === 'storekeeping') return options.openStorekeeping?.();
       if (action === 'refresh') { notice = ''; await reload(); return; }
       if (action === 'more' && data.paging?.[tab]?.hasMore) return loadRecords(tab, data.paging[tab].mode, true);
       if (tab === 'stock' && can('canManage')) {
