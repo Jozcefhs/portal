@@ -54,7 +54,7 @@ export function branchOwnsResetRecord(path, row, branch, edition) {
   return exclusivelyScoped(row, branch, edition);
 }
 
-function exclusivelyScoped(record, branch, edition) {
+export function exclusivelyScoped(record, branch, edition) {
   for (const [field, value] of Object.entries(record)) {
     if (value == null || value === '') continue;
     if (/(?:branchids?|^(?:from|to|source|destination|target)branch|^branches)$/i.test(field)) {

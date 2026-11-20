@@ -93,7 +93,7 @@ let securityAuditData = {
   rows: [], facets: {}, warnings: [], fromDate: '', toDate: '', totalMatches: 0, truncated: false,
   filters: { action: '', user: '', module: '', outcome: '', source: '', branchId: '', search: '' }
 };
-let dataBackupState = { envelope: null, fileName: '', summary: null, busy: false };
+let dataBackupState = { busy: false };
 let staffApprovalAccounts = [];
 let staffRoleAccessData = null;
 let staffRoleAccessSelectedRole = '';
@@ -22301,19 +22301,6 @@ function backupDocumentCount(payload) {
   return Object.values(payload?.collections || {}).reduce((sum, rows) => sum + (Array.isArray(rows) ? rows.length : 0), 0);
 }
 
-function renderSelectedBackupSummary() {
-  const summary = document.getElementById('selectedBackupSummary');
-  if (!summary) return;
-  if (!dataBackupState.envelope) {
-    summary.hidden = true;
-    summary.innerHTML = '';
-    return;
-  }
-  const envelope = dataBackupState.envelope;
-  summary.hidden = false;
-  summary.innerHTML = `<strong>${escapeHtml(dataBackupState.fileName || 'Selected backup')}</strong><span>Created ${escapeHtml(securityAuditDateTime(envelope.createdAt) || 'date unavailable')}</span><span>${escapeHtml(envelope.workspaceId || 'Workspace identity is encrypted')}</span><small>Enter the backup password below to verify its contents before restore.</small>`;
-}
-
 function chunkRestoreRows(rows, maxRows = 100, maxBytes = 5 * 1024 * 1024) {
   const chunks = [];
   let current = [];
@@ -22330,42 +22317,6 @@ function chunkRestoreRows(rows, maxRows = 100, maxBytes = 5 * 1024 * 1024) {
   });
   if (current.length) chunks.push(current);
   return chunks;
-}
-
-async function restoreOrganizationBackup(payload, password) {
-  const entries = Object.entries(payload.collections || {});
-  if (!entries.length) throw new Error('The selected backup contains no collections.');
-  setDataBackupStatus('Creating the mandatory pre-restore safety backup...');
-  const safetyPayload = await collectOrganizationBackup('Safety backup');
-  const safetyEnvelope = await encryptOrganizationBackup(safetyPayload, password);
-  downloadBackupFile(safetyEnvelope, 'pre-restore-safety-backup');
-  const prepared = await dataBackupRequest('prepare-restore', {
-    manifest: {
-      format: payload.format,
-      formatVersion: payload.formatVersion,
-      createdAt: payload.createdAt,
-      workspaceId: payload.workspaceId,
-      edition: payload.edition
-    },
-    collectionPaths: entries.map(([path]) => path),
-    safetyBackupCreated: true
-  });
-  let collectionIndex = 0;
-  for (const [collectionPath, rows] of entries) {
-    collectionIndex += 1;
-    setDataBackupStatus(`Restoring ${collectionPath} (${collectionIndex} of ${entries.length})...`);
-    dataBackupProgress('Restoring collections', collectionIndex - 1, entries.length);
-    for (let clearPass = 0; clearPass < 10000; clearPass += 1) {
-      const cleared = await dataBackupRequest('clear-collection', { jobId: prepared.jobId, collectionPath });
-      if (!cleared.more) break;
-      if (clearPass === 9999) throw new Error(`Could not finish clearing ${collectionPath}.`);
-    }
-    for (const documents of chunkRestoreRows(rows)) {
-      await dataBackupRequest('write-collection', { jobId: prepared.jobId, collectionPath, documents });
-    }
-    dataBackupProgress('Restoring collections', collectionIndex, entries.length);
-  }
-  return dataBackupRequest('complete-restore', { jobId: prepared.jobId });
 }
 
 async function resetOrganizationTestData(preview, currentPassword, confirmation) {
@@ -22415,11 +22366,15 @@ function renderDataBackup() {
         </article>
         <article class="data-backup-card data-backup-restore-card">
           <span class="data-backup-card-icon" aria-hidden="true">&#8634;</span>
-          <div><p class="eyebrow">Disaster recovery</p><h3>Restore a previous backup</h3><p>Replaces records in the selected backup collections. A fresh encrypted safety backup downloads automatically before changes begin.</p></div>
-          <label class="data-backup-file-label">Backup file <input id="restoreBackupFile" type="file" accept=".json,.dynamax-backup.json,application/json"></label>
-          <div id="selectedBackupSummary" class="selected-backup-summary" hidden></div>
-          <label>Backup password <input id="restoreBackupPassword" type="password" minlength="10" autocomplete="current-password" placeholder="Password used for this backup"></label>
-          <button type="button" id="restoreDataBackup" class="danger" disabled>Restore selected backup</button>
+          <div><h3>Restore one branch</h3><p>Choose a backup and preview its changes. Shared records and collections missing from the backup are kept.</p></div>
+          <label>Branch to restore<select id="restoreBranch"><option value="">Choose one branch</option>${availableBranches.filter(row => row.id && row.id !== 'all' && (selectedBranchId === 'all' || selectedBranchId === row.id)).map(row => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.name || row.id)}</option>`).join('')}</select></label>
+          <label>Restore mode<select id="restoreMode"><option value="merge">Keep newer records</option><option value="exact">Match the backup exactly</option></select></label>
+          <p>Both modes restore eligible entries from the file. Exact match also removes previewed branch records absent from the file in those collections.</p>
+          <label>Backup file<input id="restoreBackupFile" type="file" accept=".json,.dynamax-backup.json,application/json"></label>
+          <label>Backup password<input id="restoreBackupPassword" type="password" autocomplete="off"></label>
+          <button type="button" id="previewBranchRestore" disabled>Preview branch restore</button>
+          <div id="branchRestoreSummary" aria-live="polite"></div>
+          <button type="button" id="restoreDataBackup" class="danger" disabled>Apply previewed changes</button>
         </article>
         <article class="data-backup-card data-backup-reset-card">
           <span class="data-backup-card-icon" aria-hidden="true">&#9888;</span>
@@ -22440,7 +22395,6 @@ function renderDataBackup() {
       <aside class="data-backup-notes"><strong>Recovery safeguards</strong><ul><li>The backup must match this workspace and organisation edition.</li><li>The currently signed-in Super Administrator account and deployment/subscription identity are preserved.</li><li>Restore activity is written to the Security Audit Log.</li></ul></aside>
     </section>`;
   renderModuleSummary('dataBackup', true);
-  renderSelectedBackupSummary();
   document.getElementById('downloadDataBackup')?.addEventListener('click', async (event) => {
     const password = document.getElementById('newBackupPassword').value;
     const confirmation = document.getElementById('confirmBackupPassword').value;
@@ -22464,57 +22418,15 @@ function renderDataBackup() {
       if (button.isConnected) setButtonLoading(button, false, 'Preparing...', 'Download backup');
     }
   });
-  document.getElementById('restoreBackupFile')?.addEventListener('change', async (event) => {
-    dataBackupState.envelope = null;
-    dataBackupState.fileName = '';
-    const button = document.getElementById('restoreDataBackup');
-    button.disabled = true;
-    const file = event.target.files?.[0];
-    if (!file) return renderSelectedBackupSummary();
-    try {
-      if (file.size > 250 * 1024 * 1024) throw new Error('This backup file exceeds the 250 MB browser restore limit. Use the desktop recovery tool for larger archives.');
-      const envelope = JSON.parse(await file.text());
-      if (!['dynamax-encrypted-backup', 'dynamax-organization-backup'].includes(clean(envelope.format))) throw new Error('This is not a Dynamax backup file.');
-      dataBackupState.envelope = envelope;
-      dataBackupState.fileName = file.name;
-      button.disabled = false;
-      setDataBackupStatus('Backup file selected. Enter its password to verify and restore it.');
-    } catch (error) {
-      setDataBackupStatus(error.message || String(error), 'bad');
-    }
-    renderSelectedBackupSummary();
-  });
-  document.getElementById('restoreDataBackup')?.addEventListener('click', async (event) => {
-    const password = document.getElementById('restoreBackupPassword').value;
-    if (password.length < 10) return setDataBackupStatus('Enter the backup password of at least 10 characters.', 'bad');
-    const confirmation = await window.DynamaxDialogs.prompt({
-      title: 'Restore organisation data',
-      message: 'Restoring a backup replaces records across the whole organisation, including other branches. A safety backup will download first. Type RESTORE to continue.',
-      label: 'Confirmation', placeholder: 'RESTORE', required: true, maxLength: 20,
-      tone: 'danger', confirmText: 'Continue to restore'
-    });
-    if (clean(confirmation).toUpperCase() !== 'RESTORE') {
-      if (confirmation !== null) setDataBackupStatus('Restore cancelled because the confirmation text did not match.', 'bad');
-      return;
-    }
-    const button = event.currentTarget;
-    setButtonLoading(button, true, 'Restoring...', 'Restore selected backup');
-    dataBackupState.busy = true;
-    try {
-      setDataBackupStatus('Decrypting and verifying the selected backup...');
-      const payload = await decryptOrganizationBackup(dataBackupState.envelope, password);
-      const result = await restoreOrganizationBackup(payload, password);
-      setDataBackupStatus(result.message || 'Organisation data restored successfully.', 'good');
-      await window.DynamaxDialogs.alert({ title: 'Restore completed', message: 'The organisation database has been restored. Reload the portal to use the restored records.', confirmText: 'Reload portal' });
-      window.location.reload();
-    } catch (error) {
-      setDataBackupStatus(`${error.message || String(error)} The downloaded safety backup can be used to recover the state from before this attempt.`, 'bad');
-    } finally {
-      dataBackupState.busy = false;
-      hideDataBackupProgress();
-      if (button.isConnected) setButtonLoading(button, false, 'Restoring...', 'Restore selected backup');
-    }
-  });
+  const restoreCard = document.getElementById('restoreBranch');
+  import('/js/branch-restore.js?v=20261120').then(({ mountBranchRestore }) => {
+    if (!restoreCard.isConnected) return;
+    mountBranchRestore({ request: dataBackupRequest, decrypt: decryptOrganizationBackup, chunks: chunkRestoreRows,
+      status: setDataBackupStatus, dialogs: window.DynamaxDialogs, safetyBackup: async password => {
+        const payload = await collectOrganizationBackup('Safety backup');
+        downloadBackupFile(await encryptOrganizationBackup(payload, password), 'pre-restore-safety-backup');
+      } });
+  }).catch(error => setDataBackupStatus(error.message, 'bad'));
   const resetBranch = document.getElementById('resetBranch');
   const resetFiles = document.getElementById('resetBranchFiles');
   const previewSummary = document.getElementById('branchResetPreviewSummary');

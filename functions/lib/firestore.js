@@ -270,6 +270,20 @@ export function toFirestoreValue(value, key = '') {
   return { stringValue: String(cleaned) };
 }
 
+// Backup JSON already carries types. Import-field heuristics would trim strings
+// or turn numeric-looking text into a number when replaying a saved record.
+export function backupJsonValue(value) {
+  if (value === null) return { nullValue: null };
+  if (typeof value === 'string') return { stringValue: value };
+  if (typeof value === 'boolean') return { booleanValue: value };
+  if (typeof value === 'number' && Number.isFinite(value)) return Number.isSafeInteger(value)
+    ? { integerValue: String(value) } : { doubleValue: value };
+  if (Array.isArray(value)) return { arrayValue: { values: value.map(backupJsonValue) } };
+  if (value && typeof value === 'object') return { mapValue: { fields:
+    Object.fromEntries(Object.entries(value).map(([field, item]) => [field, backupJsonValue(item)])) } };
+  throw new Error('The backup contains an unsupported field value.');
+}
+
 export function objectToFirestoreFields(data) {
   const fields = {};
   Object.entries(data || {}).forEach(([key, value]) => {
@@ -544,7 +558,7 @@ export async function batchCommitDocuments(env, writes, options = {}) {
         : {
             update: {
               name: resourceName,
-              fields: objectToFirestoreFields(item.data || {})
+              fields: item.restoreJsonTypes === true ? backupJsonValue(item.data).mapValue.fields : objectToFirestoreFields(item.data || {})
             }
           };
       const precondition = batchWritePrecondition(item);

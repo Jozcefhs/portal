@@ -362,7 +362,7 @@ function isProtectedRestoreStaff(row, actor) {
       .some((value) => actor.protectedStaffNames?.has(lower(value)) || lower(value) === actor.username);
 }
 
-function validateManifest(identity, manifest = {}) {
+export function validateManifest(identity, manifest = {}) {
   if (clean(manifest.format) !== ORGANIZATION_BACKUP_FORMAT) throw restoreError('This is not a Dynamax organisation backup.');
   if (Number(manifest.formatVersion || manifest.version) > ORGANIZATION_BACKUP_VERSION) {
     throw restoreError('This backup was created by a newer Dynamax version. Update the application before restoring it.', 409, 'BACKUP_VERSION_NEWER');

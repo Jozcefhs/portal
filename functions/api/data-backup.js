@@ -1,19 +1,16 @@
+import { branchRestoreRequest } from '../lib/branch-restore.js';
 import { assignedStaffBranches } from '../lib/staff-branch-access.js';
 import { requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession, verifyStaffApprovalPassword } from '../lib/staff-auth.js';
 import { readJsonBody } from '../lib/request-security.js';
 import {
-  clearOrganizationRestoreCollection,
   clearOrganizationResetObjects,
   clearOrganizationResetRecords,
   completeOrganizationReset,
-  completeOrganizationRestore,
   exportOrganizationBackupPage,
   prepareOrganizationReset,
-  prepareOrganizationRestore,
   previewBranchResetCountPage,
-  previewOrganizationReset,
-  writeOrganizationRestoreChunk
+  previewOrganizationReset
 } from '../lib/organization-backup.js';
 
 const clean = (value) => String(value ?? '').trim();
@@ -41,14 +38,10 @@ export async function onRequestPost({ request, env }) {
         pageToken: body.pageToken,
         pageSize: 200
       });
-    } else if (action === 'prepare-restore') {
-      result = await prepareOrganizationRestore(env, user, body.manifest, body.collectionPaths, body.safetyBackupCreated === true);
-    } else if (action === 'clear-collection') {
-      result = await clearOrganizationRestoreCollection(env, user, body.jobId, body.collectionPath);
-    } else if (action === 'write-collection') {
-      result = await writeOrganizationRestoreChunk(env, user, body.jobId, body.collectionPath, body.documents);
-    } else if (action === 'complete-restore') {
-      result = await completeOrganizationRestore(env, user, body.jobId);
+    } else if (['preview-branch-restore', 'preview-branch-restore-rows', 'preview-branch-restore-live', 'prepare-branch-restore', 'apply-branch-restore'].includes(action)) {
+      result = await branchRestoreRequest(env, user, action, body);
+    } else if (['prepare-restore', 'clear-collection', 'write-collection', 'complete-restore'].includes(action)) {
+      throw Object.assign(new Error('Refresh Backup & Restore and select one branch to preview the backup.'), { status: 409 });
     } else if (action === 'preview-reset') {
       result = await previewOrganizationReset(env, user, body);
     } else if (action === 'preview-reset-counts') {
