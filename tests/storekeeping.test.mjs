@@ -109,3 +109,14 @@ test('storekeeper dispatches an approved request through Procurement without pur
   assert.equal(f.get('procurementTransfers',sent.TransferId).Status,'IN_TRANSIT');
   await assert.rejects(f.run(f.office,'issueRequest',body));
 });
+
+test('an issued serial cannot be issued again from central or split by leaving the tag field blank',async()=>{
+  const f=fixture('school');
+  const issue={Reference:'SER1',ItemId:'item',Quantity:1,Recipient:'keeper',DestinationType:'Store',Destination:'Central',Notes:'Office goods',AssetTag:'A1'};
+  const original=await f.run(f.buyer,'issue',issue);
+  await f.run(f.keeper,'accept',original);
+  await assert.rejects(f.run(f.buyer,'issue',{...issue,Reference:'SER2'}),/assigned/);
+  await assert.rejects(f.run(f.keeper,'issue',{...issue,Reference:'SER3',SourceId:original.SlipId,Recipient:'office',DestinationType:'Department',Quantity:0.5,AssetTag:''}),/whole tagged unit/);
+  assert.equal(f.get('procurementItems','item').Quantity,9);
+  assert.equal(f.get('storekeepingHandovers',original.SlipId).HeldQuantity,1);
+});

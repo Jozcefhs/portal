@@ -166,6 +166,7 @@ export async function handleStorekeeping(env, user, body, dependencies = {}) {
           origin = source.Destination;
           if (source.AssetTag && AssetTag && AssetTag !== source.AssetTag) fail('The tag differs from the original issue.');
           AssetTag = source.AssetTag || AssetTag;
+          if (AssetTag && amount !== 1000) fail('Transfer the whole tagged unit.');
           Link = source.Link || null;
           if (Link) await changeDepartment(Link,-amount);
         }
@@ -246,13 +247,22 @@ export async function handleStorekeeping(env, user, body, dependencies = {}) {
       const tag = await get(env,'storekeepingAssets',key);
       if (tag && (!sameScope(tag,scope) || tag.ItemId !== item.ItemId)) fail('This asset tag belongs to another item.',409);
       if (finalizing && tag?.SlipId !== SlipId) fail('Asset custody changed. Refresh this handover.',409);
-      if (!finalizing && tag && (transfer.Kind === 'replace' || !transfer.SourceId ? tag.Holder !== 'Central' : tag.SlipId !== transfer.SourceId))
+      const fromCentral = !transfer.SourceId || transfer.Kind === 'replace';
+      let availableInCentral = tag?.AvailableInCentral;
+      if (!finalizing && fromCentral && tag && availableInCentral === undefined) {
+        // Older tags stored the location's display name. Verify its handover before reuse.
+        const last = tag.Holder === 'Central' && tag.SlipId ? await read(slips,tag.SlipId) : null;
+        availableInCentral = tag.Holder === 'Central' && (!tag.SlipId ||
+          (last?.Kind === 'return' && last.Status === 'Accepted' && last.Condition === 'Available'));
+      }
+      if (!finalizing && tag && (fromCentral ? !availableInCentral : tag.SlipId !== transfer.SourceId))
         fail('This asset is already assigned or in transit.',409);
       if (!finalizing && transfer.Kind === 'return' && transfer.SourceId.startsWith('SK-') && !tag)
         fail('Use the asset tag from the original handover.',409);
       const holder = !finalizing ? 'Transit' : action === 'cancel' ? tag.PreviousHolder
         : transfer.Kind === 'return' ? (transfer.Condition === 'Available' ? 'Central' : 'Quarantine') : transfer.Destination;
       save('storekeepingAssets',key,{ ...scope,ItemId:item.ItemId,AssetTag:transfer.AssetTag,Holder:holder,
+        AvailableInCentral:finalizing && (action === 'cancel' ? fromCentral : transfer.Kind === 'return' && transfer.Condition === 'Available'),
         SlipId:action === 'cancel' ? tag.PreviousSlipId : SlipId,
         PreviousHolder:finalizing ? tag.PreviousHolder : tag?.Holder || (transfer.SourceId && transfer.Kind !== 'replace' ? transfer.Origin : 'Central'),
         PreviousSlipId:finalizing ? tag.PreviousSlipId : tag?.SlipId || (transfer.Kind === 'return' ? transfer.SourceId : '') },tag);

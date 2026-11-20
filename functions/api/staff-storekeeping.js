@@ -4,7 +4,7 @@ import { readProcurementJsonBody } from '../lib/procurement-item-import.js';
 import { handleStorekeeping } from '../lib/storekeeping.js';
 
 export async function onRequestPost({ request, env }) {
-  const headers = { 'Content-Type':'application/json', 'Cache-Control':'no-store' };
+  const headers = { 'Content-Type':'application/json', 'Cache-Control':'no-store', 'X-Storekeeping-Version':'2' };
   try {
     requireFirestoreEnv(env);
     const user = await requireStaffSession(env,request);
