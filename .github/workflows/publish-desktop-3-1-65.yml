@@ -1,0 +1,42 @@
+name: Publish desktop 3.1.65
+on:
+  push:
+    branches: [codex/desktop-release-3-1-65]
+    paths: [.github/workflows/publish-desktop-3-1-65.yml]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: Jozcefhs/portal
+      INSTALLER: Dynamax_Setup_v3.1.65.exe
+      EXPECTED: d3ea49c6d934c98fb7c08974b9617405f56b67cc38ec64f78bd8073d38509fad
+    steps:
+      - name: Verify installer and publish release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 3 'https://df9c4e89.dynamaxms.pages.dev/Dynamax_Setup_v3.1.65.exe' -o "$INSTALLER"
+          test "$(stat -c %s "$INSTALLER")" = 42790438
+          printf '%s  %s\n' "$EXPECTED" "$INSTALLER" > "$INSTALLER.sha256"
+          sha256sum --check "$INSTALLER.sha256"
+          printf '%s\n\n%s\n' 'User Management now shows Save User, Delete User and Close at smaller window sizes and higher display scaling. School Documents & Structure saves the document and section switches and explains branch restrictions.' "Installer SHA-256: $EXPECTED" > notes
+          gh release view desktop-stable >/dev/null
+          version_tag=desktop-v3.1.65
+          if ! gh release view "$version_tag" >/dev/null 2>&1; then
+            gh release create "$version_tag" --target 2c77ba5478767f9b5f4866384b3fcee17ae8d74a --draft --title 'Dynamax Desktop v3.1.65' --notes-file notes
+          fi
+          for tag in "$version_tag" desktop-stable; do
+            for asset in "$INSTALLER" "$INSTALLER.sha256"; do
+              digest="$(gh release view "$tag" --json assets | jq -r --arg n "$asset" '.assets[] | select(.name == $n) | .digest')"
+              if [ -z "$digest" ]; then gh release upload "$tag" "$asset"; fi
+              expected="sha256:$(sha256sum "$asset" | cut -d' ' -f1)"
+              gh release view "$tag" --json assets | jq -e --arg n "$asset" --arg d "$expected" '.assets[] | select(.name == $n and .digest == $d and .state == "uploaded")' >/dev/null
+            done
+          done
+          gh release edit "$version_tag" --draft=false --latest --notes-file notes
+          gh release edit desktop-stable --title 'Dynamax Desktop v3.1.65 - Stable Download' --notes-file notes
+
