@@ -1460,6 +1460,15 @@
     "validation": "5145 Node tests passed; actual School Insights entry, 215-row full print, filters, 1366px/390px layouts, scope cleanup and zero extra network/storage writes verified with synthetic accounts",
     "evidence": "docs/school-debtors-report-2026-11-15.md"
   },
+  "branchHistoricalPaymentPass": {
+    "date": "2026-11-20",
+    "status": "tested_pending_deployment",
+    "request": "Fix cross-branch historical receipt collisions and permit authorised branch-scoped pupil billing-category updates.",
+    "validation": "162 focused tests passed; existing receipts, ledger deposits, invoice allocations, pupil identities and scholarship rules preserved.",
+    "evidence": "docs/branch-historical-payments-2026-11-20.md",
+    "preservation": "Live investigation read only three specific payment references. No real payments imported or pupil categories changed by this task.",
+    "deliveryConstraint": "Server deployment; no desktop compilation or release."
+  },
   "subscriberBankTransferPass": {
     "date": "2026-11-17",
     "status": "deployed_verified",
