@@ -1,9 +1,32 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { branchRestoreRequest } from '../functions/lib/branch-restore.js';
+import { branchRestoreRequest, putRestoreFile } from '../functions/lib/branch-restore.js';
 import { requiredDeploymentIdentity } from '../functions/lib/deployment-identity.js';
 import { previewBranchBackup, previewRestoreFiles } from '../js/branch-restore.js';
 import { backupJsonValue } from '../functions/lib/firestore.js';
+
+test('chunked browser upload reaches storage with the archived length and cancels on a collision', async () => {
+  let length;
+  const previous = globalThis.FixedLengthStream;
+  globalThis.FixedLengthStream = class extends TransformStream {
+    constructor(size) { super(); length = size; }
+  };
+  try {
+    const file = {key:'test',size:5};
+    const options = {onlyIf:new Headers({'If-None-Match':'*'})};
+    const bucket = {put:async (key, stream, received) => {
+      assert.equal(key,file.key); assert.equal(received,options);
+      assert.equal(await new Response(stream).text(),'hello'); return {size:5};
+    }};
+    assert.deepEqual(await putRestoreFile(bucket,file,new Blob(['hello']).stream(),options),{size:5});
+    assert.equal(length,5);
+    bucket.put = async () => null;
+    assert.equal(await putRestoreFile(bucket,file,new Blob(['hello']).stream(),options),null);
+  } finally {
+    if (previous) globalThis.FixedLengthStream = previous;
+    else delete globalThis.FixedLengthStream;
+  }
+});
 
 function fixture(edition) {
   const env = { DYNAMAX_WORKSPACE_ID: 'test-org', ORGANISATION_EDITION: edition };
