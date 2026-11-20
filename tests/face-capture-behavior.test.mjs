@@ -160,6 +160,8 @@ function captureHarness(t, frames, { inferenceMs = 350, videoSize = [480, 640], 
   globalThis.window = { setTimeout: callback => { now += 50; queueMicrotask(callback); } };
   t.after(() => { delete globalThis.window; });
   const video = { videoWidth: videoSize[0], videoHeight: videoSize[1], srcObject: { getVideoTracks: () => [{ readyState: 'live', getSettings: () => ({ facingMode }) }] } };
+  video.readyState = 2;
+  video.ownerDocument = { createElement: () => ({ getContext: () => ({ drawImage() {} }) }) };
   const elements = { '[data-face-video]': video, '[data-face-progress]': {}, '[data-face-status]': {}, '.student-face-guide': {} };
   const dialog = { open: true, isConnected: true, cameraGeneration: 1, querySelector: key => elements[key] || null };
   let index = 0;
@@ -251,7 +253,8 @@ test('another person entering the frame invalidates the observed live action', a
 test('closing the dialog during inference cancels before evidence or a descriptor is returned', async () => {
   globalThis.window = { setTimeout };
   const stream = { getVideoTracks: () => [{ readyState: 'live' }] };
-  const video = { srcObject: stream };
+  const video = { srcObject: stream, videoWidth: 640, videoHeight: 480, readyState: 2,
+    ownerDocument: { createElement: () => ({ getContext: () => ({ drawImage() {} }) }) } };
   const progress = {};
   const status = {};
   const dialog = { open: true, isConnected: true, cameraGeneration: 1,
