@@ -35,9 +35,9 @@ export async function onRequestPost({ request, env }) {
     let body;
     if (binary) {
       const header = request.headers.get('X-Restore-Document') || '';
-      if (!header || header.length > 16000 || !request.headers.has('content-length')) throw new Error('Missing restore file details.');
+      if (!header || header.length > 16000) throw new Error('Missing restore file details.');
       body = JSON.parse(decodeURIComponent(header));
-      body.byteLength = Number(request.headers.get('content-length'));
+      body.byteLength = request.headers.has('content-length') ? Number(request.headers.get('content-length')) : body.file?.size;
       body.binary = request.body || (body.byteLength === 0 ? new Uint8Array() : null);
     } else {
       body = await readJsonBody(request, { maxBytes: 8 * 1024 * 1024 });

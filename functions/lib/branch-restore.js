@@ -176,7 +176,7 @@ export async function branchRestoreRequest(env, user, action, body, db = databas
     }
     if (state === 'create') {
       const [, edition, workspaceId, category, branchId, schoolSection, ownerId, documentType] = file.key.split('/');
-      const result = await env.DYNAMAX_DOCUMENTS.put(file.key, body.binary, {
+      const result = await putRestoreFile(env.DYNAMAX_DOCUMENTS, file, body.binary, {
         onlyIf: new Headers({ 'If-None-Match': '*' }), sha256: file.sha256, httpMetadata: { contentType: file.type },
         customMetadata: { edition, workspaceId, category, branchId, schoolSection, ownerId, documentType, fileName: file.name, mimeType: file.type }
       });
@@ -194,6 +194,26 @@ export async function branchRestoreRequest(env, user, action, body, db = databas
   writes.push({ collectionPath: jobs, documentId: body.jobId, data: progress, updateMask: Object.keys(progress), updateTime: job.__updateTime });
   await db.commit(env, writes);
   return { ok: true, restored: progress.Restored, complete };
+}
+
+export async function putRestoreFile(bucket, file, source, options) {
+  if (!(source instanceof ReadableStream)) return bucket.put(file.key, source, options);
+  // R2 requires a known stream length. Browser uploads may arrive chunked.
+  const target = new FixedLengthStream(file.size);
+  const stop = new AbortController();
+  const transfer = source.pipeTo(target.writable, {signal: stop.signal}).then(() => null, error => error);
+  try {
+    const stored = await bucket.put(file.key, target.readable, options);
+    if (stored) {
+      const error = await transfer;
+      if (error) throw error;
+    }
+    return stored;
+  } finally {
+    stop.abort();
+    if (!target.readable.locked) await target.readable.cancel().catch(() => {});
+    await transfer;
+  }
 }
 
 async function inspectRestoreFile(env, identity, branch, structure, file) {
