@@ -11,7 +11,7 @@ const hospitalRecords = new Set(['Visits', 'Appointments', 'AppointmentEvents', 
   'AppointmentWaitlist', 'AppointmentWaitlistEvents', 'Encounters', 'Consultations', 'ClinicalEntries',
   'Orders', 'OrderEvents', 'InvestigationReports', 'CareSummaries', 'DischargeSummaries', 'NursingCharts']);
 
-function collectionKind(path, { workspaceId, edition }, branch) {
+export function collectionKind(path, { workspaceId, edition }, branch) {
   if (typeof path !== 'string') return '';
   if (branchResetPathAllowed(path, branch, edition)) return 'operational';
   if (edition === 'school' && ['admissionClasses', 'schoolClasses'].some(name => path === `organisationBranches/${branch}/${name}`)) return 'branch';
@@ -30,6 +30,19 @@ function owns(path, row, identity, branch) {
 
 function fields(row) {
   return Object.fromEntries(Object.entries(row).filter(([key]) => !key.startsWith('__')));
+}
+
+// Shared by backup creation and exact-match restore so the same records qualify for both.
+export async function readOwnedBranchPage(env, db, identity, branch, path, cursor, readTime) {
+  const kind = collectionKind(path, identity, branch);
+  if (!kind) throw fail('This collection is outside the selected branch.');
+  const rows = await db.queryCollection(env, path, { orderBy: [{ field: '__name__' }], limit: 250,
+    startAfterName: cursor, ...(readTime ? { readTime } : {}), ...(path.includes('/') && kind !== 'hospital' ? {} : {
+      filters: ['BranchId', 'branchId'].map(field => ({ field, op: '==', value: branch })), filterJoin: 'OR'
+    }) });
+  const next = rows.length === 250 ? rows.at(-1).__name : '';
+  if (rows.length === 250 && (!next || next === cursor)) throw fail('The database could not advance to the next page.');
+  return { rows: rows.filter(row => owns(path, row, identity, branch)), cursor: next };
 }
 
 function canonical(value) {
@@ -110,12 +123,8 @@ export async function branchRestoreRequest(env, user, action, body, db = databas
   if (action === 'preview-branch-restore-live') {
     const kind = collectionKind(path, identity, branch);
     if (mode !== 'exact' || !kind) throw fail('This collection is outside the exact-match preview.');
-    const rows = await db.queryCollection(env, path, { orderBy: [{ field: '__name__' }], limit: 250,
-      startAfterName: body.cursor || '', ...(path.includes('/') && kind !== 'hospital' ? {} : {
-        filters: ['BranchId', 'branchId'].map(field => ({ field, op: '==', value: branch })), filterJoin: 'OR'
-      }) });
-    return { ok: true, rows: rows.filter(row => owns(path, row, identity, branch)).map(row => ({ __id: row.__id, version: row.__updateTime })),
-      cursor: rows.length === 250 ? rows.at(-1).__name : '' };
+    const page = await readOwnedBranchPage(env, db, identity, branch, path, body.cursor || '');
+    return { ok: true, rows: page.rows.map(row => ({ __id: row.__id, version: row.__updateTime })), cursor: page.cursor };
   }
   const remove = body.remove === true;
   if (remove && mode !== 'exact') throw fail('Keeping newer records does not allow removals.');
