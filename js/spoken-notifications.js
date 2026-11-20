@@ -53,7 +53,7 @@
     const speak = () => new Promise((resolve) => {
       if (runGeneration !== generation || !eligible(row) || seen(key) || document.visibilityState !== 'visible') { resolve(); return; }
       // Camera instructions take priority; never cancel an in-progress face challenge.
-      if (window.speechSynthesis.speaking || document.querySelector('[data-student-face-dialog][open]')) {
+      if (window.speechSynthesis.speaking || document.querySelector('[data-student-face-dialog][open], [data-staff-attendance-face-dialog][open]')) {
         pending.set(key, row);
         resolve();
         return;
