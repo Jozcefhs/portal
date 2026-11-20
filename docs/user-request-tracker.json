@@ -1462,12 +1462,17 @@
   },
   "branchHistoricalPaymentPass": {
     "date": "2026-11-20",
-    "status": "tested_pending_deployment",
+    "status": "deployed_verified",
     "request": "Fix cross-branch historical receipt collisions and permit authorised branch-scoped pupil billing-category updates.",
     "validation": "162 focused tests passed; existing receipts, ledger deposits, invoice allocations, pupil identities and scholarship rules preserved.",
     "evidence": "docs/branch-historical-payments-2026-11-20.md",
     "preservation": "Live investigation read only three specific payment references. No real payments imported or pupil categories changed by this task.",
-    "deliveryConstraint": "Server deployment; no desktop compilation or release."
+    "deliveryConstraint": "Server deployment; no desktop compilation or release.",
+    "deployments": [
+      "https://cb0b3baf.destinychristianacademy.pages.dev",
+      "https://c2883cfc.dynamax-tenant-001.pages.dev"
+    ],
+    "liveVerification": "Both production backends returned HTTP 200 and the expected school/workspace identity. Pushed source trees match the tested deployment trees."
   },
   "subscriberBankTransferPass": {
     "date": "2026-11-17",
@@ -1500,5 +1505,16 @@
     "preservation": "Investigation and verification were read-only. No business records, orders, payments, ledger postings, stock quantities or collection statuses were changed by this task.",
     "deliveryConstraint": "Web only; no desktop compilation or release.",
     "liveBrowserVerification": "Signed-in Main Branch screen showed no outstanding orders after the two recent purchases were collected by staff during validation. Loading 14–17 November history showed both original orders once, each Collected, with collection controls disabled."
+  },
+  "libertyDesktopSettingsPass": {
+    "date": "2026-11-20",
+    "status": "source_pushed_pending_desktop_build",
+    "evidence": "docs/liberty-desktop-settings-2026-11-20.md",
+    "request": "Review locked School Documents & Structure settings on Liberty Square desktop.",
+    "validation": "64 focused Python tests passed; no business records or permissions changed.",
+    "finding": "Operator confirmed Selected branch overrides. Shared settings remain organisation-scoped; save button now saves the document switches as well as structure.",
+    "pending": "Confirm the configured Liberty Square Backend API URL because the screenshot shows another school branch list.",
+    "deliveryConstraint": "Desktop source only; do not compile or release.",
+    "desktopCommit": "fe406144aa00e0116c40a32e89c87466a8d442ba"
   }
 }

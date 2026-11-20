@@ -8,4 +8,12 @@ The preflight now distinguishes pupils by collection path plus document identity
 
 Validation: 162 focused tests passed. Real recorder tests intercepted every network request and verified a branch-local import, repeat replay with exactly one deposit, original branch receipt preservation, conflicting amount rejection, mixed pupil categories, scoped scholarship updates, unauthorised role/foreign-pupil rejection, invoice/payment preservation, and existing scholarship exemptions. Production investigation read only the three receipt references shown in the screenshot. No real payments were posted or pupil categories changed during this fix.
 
-Server deployment only. Installed desktop clients can retry the same CSV and category action after deployment without recompilation. Rollout details will be recorded after verification.
+Server deployment only. Installed desktop clients can retry the same CSV and category action without recompilation. Both production backends returned HTTP 200 with the expected school/workspace identities after deployment.
+
+Rollout on 20 November 2026:
+
+- Destiny Christian Academy: https://cb0b3baf.destinychristianacademy.pages.dev; source branch `codex/school-insights-qr-deploy`, remote commit `ebd7a79145a46912c6ea69818efaeb959fad2061`.
+- Tenant 001: https://c2883cfc.dynamax-tenant-001.pages.dev; source branch `codex/custom-domain-payment-checks`, remote commit `9205ea94ec070f74449d795591f3815efe3c184a`.
+- Shared source branch `codex/school-score-register-release`: remote commit `e2882c9cbe6a84349736f68860ac8d1673ca567b`.
+
+The pushed trees matched the tested and deployed trees. No desktop installer was compiled or released.
