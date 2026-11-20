@@ -1,0 +1,41 @@
+name: Publish desktop 3.1.66
+on:
+  push:
+    branches: [codex/desktop-release-3-1-66]
+    paths: [.github/workflows/publish-desktop-3-1-66.yml]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: Jozcefhs/portal
+      INSTALLER: Dynamax_Setup_v3.1.66.exe
+      EXPECTED: baa1cff69d41d04613b16be6ad10e8e195f6024f550aee44b79791c1b3bda556
+    steps:
+      - name: Verify installer and publish release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 3 'https://b3eb2233.dynamaxms.pages.dev/Dynamax_Setup_v3.1.66.exe' -o "$INSTALLER"
+          test "$(stat -c %s "$INSTALLER")" = 42788381
+          printf '%s  %s\n' "$EXPECTED" "$INSTALLER" > "$INSTALLER.sha256"
+          sha256sum --check "$INSTALLER.sha256"
+          printf '%s\n\n%s\n' 'Total school-fee discounts use the applicable Regular fees and can vary by intake and day or boarding status. Full Scholarship keeps its explicit-fee exemption.' "Installer SHA-256: $EXPECTED" > notes
+          gh release view desktop-stable >/dev/null
+          version_tag=desktop-v3.1.66
+          if ! gh release view "$version_tag" >/dev/null 2>&1; then
+            gh release create "$version_tag" --target 4d5e45c8acfad1b589fcf9c7723b1c7771555ab5 --draft --title 'Dynamax Desktop v3.1.66' --notes-file notes
+          fi
+          for tag in "$version_tag" desktop-stable; do
+            for asset in "$INSTALLER" "$INSTALLER.sha256"; do
+              digest="$(gh release view "$tag" --json assets | jq -r --arg n "$asset" '.assets[] | select(.name == $n) | .digest')"
+              if [ -z "$digest" ]; then gh release upload "$tag" "$asset"; fi
+              expected="sha256:$(sha256sum "$asset" | cut -d' ' -f1)"
+              gh release view "$tag" --json assets | jq -e --arg n "$asset" --arg d "$expected" '.assets[] | select(.name == $n and .digest == $d and .state == "uploaded")' >/dev/null
+            done
+          done
+          gh release edit "$version_tag" --draft=false --latest --notes-file notes
+          gh release edit desktop-stable --title 'Dynamax Desktop v3.1.66 - Stable Download' --notes-file notes
