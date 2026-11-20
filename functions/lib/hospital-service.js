@@ -143,7 +143,7 @@ export function createHospitalService(env, user, overrides = {}) {
       condition,strip,eq,auditWrite,auditRead,operation,page}),
     ...createHospitalClinicalService({env,user,db,collection,capabilities,requireCapability,branch,patient,clock,actor,
       condition,strip,eq,auditWrite,auditRead,operation,page}),
-    ...createEmergencyReception({env,db,collection,branch,requireCapability,operation,auditWrite,clock,actor,patient,strip,condition,page}),
+    ...createEmergencyReception({env,user,db,collection,branch,requireCapability,capabilities,operation,auditWrite,auditRead,clock,actor,patient,strip,condition,page}),
     async state() {
       if (!capabilities.length) fail('Your role does not have Hospital workspace access.', 403);
       branches = configuredStaffBranches(await db.getSchoolStructure(env));

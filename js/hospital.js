@@ -236,13 +236,16 @@
             if (!confirmed || epoch !== recordEpoch) return;
             const result = await api('identifyEmergencyArrival',{Reference:row.Reference,Revision:row.Revision,PatientId:person.PatientId,
               PatientRevision:person.Revision,HospitalNumber:person.HospitalNumber,IdentityEvidence:evidence},true);
-            form.remove();
+            card.replaceChildren(label);
             label.textContent = row.Reference+' · Identified · '+result.HospitalNumber;
             queues?.invalidate();
             status('Arrival linked to '+result.HospitalNumber+'. Open the visit in Reception visits.');
           });
         };
         card.append(form);
+      }
+      if (can('clinical.read') && row.Status === 'Awaiting identification') {
+        window.DynamaxEmergencyCare.attach(card,{Reference:row.Reference},{api,run,writable,status});
       }
       host.append(card);
     }

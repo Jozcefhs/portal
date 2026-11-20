@@ -14,7 +14,7 @@ export async function onRequestPost({ request, env, data }) {
       'messageRecipients','messageInbox','messageThread','startMessageThread','replyMessageThread','closeMessageThread',
       'patientPortalAccess','issuePatientPortalAccess','revokePatientPortalAccess',
       'clinicalPortalContext','clinicalPortalSharing','publishClinicalPortalDocument','withdrawClinicalPortalDocument',
-      'emergencyArrivals','recordEmergencyArrival','identifyEmergencyArrival',
+      'emergencyCareHistory','visitEmergencyWristbands','signEmergencyCare','emergencyArrivals','recordEmergencyArrival','identifyEmergencyArrival',
       'clinicQueue','clinicQueueAction','clinicQueueHistory',
       'investigationCatalog','saveInvestigationCatalogItem','investigationCatalogHistory',
       'pharmacySuppliers','savePharmacySupplier','savePharmacyPurchase','pharmacyPurchase','transitionPharmacyPurchase','receivePharmacyPurchase','returnPharmacyPurchase','procurementRegister','procurementHistory','saveSupplierBill','supplierBill','transitionSupplierBill','recordSupplierPayment','reverseSupplierPayment','creditSupplierBill',

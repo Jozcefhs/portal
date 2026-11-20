@@ -11,7 +11,7 @@
     const vitals=row.Content?.Vitals?`<div class="care-vitals">${Object.entries(measures).map(([key,label])=>`<div><small>${label}</small><strong>${esc(row.Content.Vitals[key]??'Not recorded')}</strong></div>`).join('')}</div>`:'';
     return `<article class="clinical-entry"><h3>${esc(row.Type)} · ${esc(row.AuthorName)}</h3><p class="hint">Signed ${esc(date(row.SignedAt))} WAT${row.Type==='Amendment'?` · Amendment to ${esc(row.TargetType)} entry`:''}</p>${vitals}<dl>${fields}</dl></article>`;
   }
-  window.DynamaxHospitalClinical={create({api,run,can,writable,status,navigate}){
+  window.DynamaxHospitalClinical={entryMarkup,create({api,run,can,writable,status,navigate}){
     let current=null,scope=null,entries=[],cursor=null,range=null;
     const dirty=new Set();
     async function confirmLeave(except=''){
@@ -35,13 +35,33 @@
       if(candidates.some(row=>row.EntryId===previous))$('amendEntry').value=previous;
       $('amendmentEditor').hidden=!candidates.length||!(writable('triage.write')||writable('consultations.write'));
     }
+    let emergencyCursor = null;
+    function clearEmergency(){
+      emergencyCursor = null;
+      $('linkedEmergencyRows').replaceChildren();
+      $('linkedEmergencyPanel').open = false;
+      $('moreLinkedEmergency').hidden = true;
+    }
+    async function linkedEmergency(after){
+      const result = await api('visitEmergencyWristbands',{...scope,...(after ? {Cursor:after} : {})});
+      emergencyCursor = result.next;
+      $('moreLinkedEmergency').hidden = !emergencyCursor;
+      const host = $('linkedEmergencyRows');
+      host.replaceChildren();
+      if (!result.references.length) host.textContent = 'No pre-identification care is linked to this visit.';
+      for (const Reference of result.references) window.DynamaxEmergencyCare.attach(host,{...scope,Reference},{api,run,writable,status});
+    }
+    $('loadLinkedEmergency').onclick = ()=>run(()=>linkedEmergency(null));
+    $('moreLinkedEmergency').onclick = ()=>run(()=>linkedEmergency(emergencyCursor));
     function clear(){
+      clearEmergency();
       current=null;scope=null;entries=[];cursor=range=null;dirty.clear();
       ['triageForm','consultationForm','amendmentForm','clinicalHistoryForm'].forEach(id=>$(id).reset());
       ['careName','careIdentity','careVisit','careAllergies','careFreshness','latestClinical','consultationOwner','clinicalEntries','amendEntry'].forEach(id=>$(id).replaceChildren());
       $('confirmCareIdentity').checked=false;$('carePanel').hidden=true;$('careEmpty').hidden=false;$('moreClinical').hidden=true;
     }
     function render(){
+      $('linkedEmergencyPanel').hidden = !current.visit.HasPreIdentificationCare;
       const p=current.patient;$('carePanel').hidden=false;$('careEmpty').hidden=true;
       $('careName').textContent=p.DisplayName;$('careIdentity').textContent=`${p.HospitalNumber} · DOB ${p.DateOfBirth||'Not recorded'} · ${p.Sex}`;
       $('careVisit').textContent=`${current.visit.Department} · Arrived ${date(current.visit.CreatedAt)} WAT · ${current.visit.Status}`;

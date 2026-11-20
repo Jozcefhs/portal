@@ -21,12 +21,15 @@ export function triageFields(input={},now){
     Vitals[key]=Number(raw);
   }
   if(('SystolicMmHg' in Vitals)!==('DiastolicMmHg' in Vitals))fail('Record both systolic and diastolic blood pressure, or leave both blank.');
-  const ObservedAt=clean(input.ObservedAt)||now;
+  return {Complaint,NursingNotes,Urgency,AllergyStatus,Allergies,Vitals,ObservedAt:observationTime(input.ObservedAt,now)};
+}
+export function observationTime(value,now){
+  const ObservedAt=clean(value)||now;
   const day=ObservedAt.slice(0,10),calendarDate=new Date(`${day}T00:00:00Z`);
   if(!/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(ObservedAt)||!Number.isFinite(Date.parse(ObservedAt))
     ||!Number.isFinite(calendarDate.getTime())||calendarDate.toISOString().slice(0,10)!==day
     ||Date.parse(ObservedAt)>Date.parse(now)+300000)fail('Enter a valid observation time, including its timezone, that is not in the future.');
-  return {Complaint,NursingNotes,Urgency,AllergyStatus,Allergies,Vitals,ObservedAt:new Date(ObservedAt).toISOString()};
+  return new Date(ObservedAt).toISOString();
 }
 export function consultationFields(input={},signing=false){
   const result=Object.fromEntries(['History','Examination','Assessment','Plan','FollowUp','Referral'].map(key=>[key,text(input,key)]));
