@@ -1,0 +1,20 @@
+.school-debtors-entry{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:18px 0 8px}
+.school-debtors-entry p{margin:0}
+.school-debtors-dialog{width:min(1200px,94vw);max-width:94vw;max-height:92dvh;box-sizing:border-box;padding:20px;border:1px solid #cad9e5;border-radius:16px;color:#17314b;background:#fff;overflow:auto}
+.school-debtors-dialog::backdrop{background:#102d48a6}
+.school-debtors-dialog header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;border-bottom:1px solid #d7e2ed;padding:12px 0;margin-bottom:14px;position:sticky;top:-20px;background:#fff;z-index:3}
+.school-debtors-dialog h2,.school-debtors-dialog header p{margin:0 0 5px}
+.school-debtors-filters{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:12px}
+.school-debtors-filters label{display:grid;gap:5px;min-width:0;font-size:13px;font-weight:600}
+.school-debtors-filters input,.school-debtors-filters select{width:100%;min-width:0;box-sizing:border-box;min-height:42px}
+.school-debtors-actions,.school-debtors-dialog nav{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:14px 0}
+.school-debtors-dialog button{width:auto;min-height:42px;margin:0}
+.school-debtors-table{max-height:48dvh;overflow:auto;border:1px solid #c4d6e6}
+.school-debtors-dialog table{width:100%;min-width:960px;border-collapse:collapse;font-size:13px}
+.school-debtors-dialog th,.school-debtors-dialog td{padding:9px 10px;text-align:left;border-bottom:1px solid #d9e4ee;min-width:60px}
+.school-debtors-dialog th{background:#edf4f9;position:sticky;top:0;z-index:1}
+.school-debtors-dialog tbody tr:nth-child(even){background:#f5f9fc}
+.school-debtors-dialog .amount{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.school-debtors-dialog iframe{width:100%;height:65dvh;box-sizing:border-box;border:1px solid #c4d6e6;background:#fff}
+.school-debtors-dialog [hidden]{display:none!important}
+@media(max-width:700px){.school-debtors-dialog{padding:14px}.school-debtors-dialog header{top:-14px}.school-debtors-filters{grid-template-columns:1fr 1fr}.school-debtors-filters label:first-child{grid-column:1/-1}.school-debtors-actions button{flex:1}.school-debtors-entry button{width:100%}}

@@ -15,6 +15,7 @@ import { studentWalletProfile } from '../lib/student-wallet-profile.js';
 import { loadFinanceSchoolProfile } from '../lib/finance-school-profile.js';
 import { branchProfilesForRecords } from '../lib/branch-profile-settings.js';
 import { recordBranchId } from '../lib/branch-scope.js';
+import { debtorReportRow, schoolDebtorsReport } from '../lib/school-debtors-report.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -467,16 +468,11 @@ export async function onRequestPost(context) {
         { label: 'Outstanding', value: outstandingFees }
       ];
       departments.schoolInsights = {
-        defaulters: outstandingRows.slice(0, 10).map((row) => ({
-          AccountRef: clean(row.AccountRef),
-          AdmissionNo: clean(row.AdmissionNo),
-          DisplayName: clean(row.DisplayName || row.AccountRef),
-          ClassName: clean(row.ClassName),
-          TotalDebit: toNumber(row.TotalDebit),
-          TotalCredit: toNumber(row.TotalCredit),
-          OutstandingBalance: toNumber(row.OutstandingBalance ?? row.Balance),
-          LastPaymentAt: clean(row.LastPaymentAt)
-        }))
+        defaulters: outstandingRows.slice(0, 10).map(debtorReportRow),
+        debtorsReport: schoolDebtorsReport(accountRows, {
+          available: accountOverview?.ok === true,
+          readTime: financeReadTime, academicSession: financeSession, schoolName: schoolProfile?.SchoolName
+        })
       };
     }
 
