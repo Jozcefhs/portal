@@ -23067,7 +23067,7 @@ function downloadBackupFile(envelope, suffix = 'backup') {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-async function collectOrganizationBackup(progressLabel = 'Backing up') {
+async function collectOrganizationBackup(progressLabel = 'Backing up', resetPreview = null) {
   const collections = {};
   let cursor = 0;
   let pageToken = '';
@@ -23075,7 +23075,16 @@ async function collectOrganizationBackup(progressLabel = 'Backing up') {
   let identity = null;
   let createdAt = '';
   for (let part = 0; part < 10000; part += 1) {
-    const data = await dataBackupRequest('export', { cursor, pageToken });
+    const data = await dataBackupRequest('export', { cursor, pageToken, ...(resetPreview ? { resetBranchId: resetPreview.branchId } : {}) });
+    if (resetPreview) {
+      if (!Array.isArray(data.resetSelection)) throw new Error('The server did not return a branch-scoped preview.');
+      if (data.resetSelection.length) {
+        const path = data.backup.currentCollection;
+        (resetPreview.selection[path] ||= []).push(...data.resetSelection);
+        resetPreview.recordCount += data.resetSelection.length;
+      }
+      resetPreview.uncertain += Number(data.resetUncertain || 0);
+    }
     identity ||= data.identity || null;
     createdAt ||= data.exportedAt || new Date().toISOString();
     Object.entries(data.collections || {}).forEach(([path, rows]) => {
@@ -23180,36 +23189,29 @@ async function restoreOrganizationBackup(payload, password) {
   return dataBackupRequest('complete-restore', { jobId: prepared.jobId });
 }
 
-async function resetOrganizationTestData(payload, currentPassword, confirmation) {
-  const prepared = await dataBackupRequest('prepare-reset', {
-    confirmation,
-    currentPassword,
-    safetyBackupCreated: true
+async function resetOrganizationTestData(preview, currentPassword, confirmation) {
+  const { branchId, includeFiles, recordCount, cutoff } = preview;
+  const { jobId } = await dataBackupRequest('prepare-reset', {
+    branchId, includeFiles, recordCount, cutoff, currentPassword, confirmation, safetyBackupCreated: true
   });
-  const collectionPaths = Array.isArray(prepared.collectionPaths) ? prepared.collectionPaths : [];
-  let removedRecords = 0;
-  for (let index = 0; index < collectionPaths.length; index += 1) {
-    const collectionPath = collectionPaths[index];
-    setDataBackupStatus(`Clearing ${collectionPath} (${index + 1} of ${collectionPaths.length})...`);
-    dataBackupProgress('Clearing operational collections', index, collectionPaths.length);
-    for (let clearPass = 0; clearPass < 10000; clearPass += 1) {
-      const cleared = await dataBackupRequest('clear-collection', { jobId: prepared.jobId, collectionPath });
-      removedRecords += Math.max(0, Number(cleared.removed || 0));
-      if (!cleared.more) break;
-      if (clearPass === 9999) throw new Error(`Could not finish clearing ${collectionPath}.`);
+  const scope = { jobId, branchId };
+  let processed = 0;
+  for (const [collectionPath, rows] of Object.entries(preview.selection)) {
+    for (let index = 0; index < rows.length; index += 100) {
+      const selection = rows.slice(index, index + 100);
+      await dataBackupRequest('clear-reset-records', { ...scope, collectionPath, selection });
+      processed += selection.length;
+      dataBackupProgress(`Resetting ${preview.branchName}`, processed, recordCount);
     }
-    dataBackupProgress('Clearing operational collections', index + 1, collectionPaths.length);
   }
-  let removedObjects = 0;
-  setDataBackupStatus('Clearing private Cloudflare R2 files...');
-  for (let clearPass = 0; clearPass < 10000; clearPass += 1) {
-    const cleared = await dataBackupRequest('clear-reset-r2', { jobId: prepared.jobId });
-    removedObjects += Math.max(0, Number(cleared.removed || 0));
-    if (!cleared.more) break;
-    if (clearPass === 9999) throw new Error('Could not finish clearing private Cloudflare R2 files.');
+  if (includeFiles) {
+    setDataBackupStatus(`Removing private uploads for ${preview.branchName}...`);
+    let more;
+    do {
+      ({ more } = await dataBackupRequest('clear-reset-r2', scope));
+    } while (more);
   }
-  const completed = await dataBackupRequest('complete-reset', { jobId: prepared.jobId });
-  return { ...completed, removedRecords, removedObjects, payloadRecords: backupDocumentCount(payload) };
+  return dataBackupRequest('complete-reset', scope);
 }
 
 function renderDataBackup() {
@@ -23242,8 +23244,12 @@ function renderDataBackup() {
         </article>
         <article class="data-backup-card data-backup-reset-card">
           <span class="data-backup-card-icon" aria-hidden="true">&#9888;</span>
-          <div><p class="eyebrow">Controlled clean start</p><h3>Reset test workspace</h3><p>Downloads an encrypted database backup, removes operational records and every private R2 file, and preserves organisation settings, branch structure, subscription, deployment bindings and this Super Administrator.</p></div>
-          <div class="data-backup-reset-warning"><strong>R2 files cannot be restored from the database backup.</strong> Use this only when every uploaded file is disposable test data.</div>
+          <div><p class="eyebrow">Controlled clean start</p><h3>Reset one branch</h3><p>Preview branch-owned operational records before clearing them. Shared accounts, settings and records with uncertain ownership are kept. The encrypted safety backup covers the whole organisation.</p></div>
+          <label>Branch to reset<select id="resetBranch"><option value="">Choose one branch</option>${availableBranches.filter(row => row.id && row.id !== 'all' && (selectedBranchId === 'all' || row.id === selectedBranchId)).map(row => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.name || row.id)}</option>`).join('')}</select></label>
+          <label><input id="resetBranchFiles" type="checkbox" disabled> Also delete this branch's private uploads</label>
+          <div class="data-backup-reset-warning">Uploaded files are kept by default. The database backup contains file references only. Main Branch also holds legacy uploads with unknown ownership, so its files are always kept.</div>
+          <button type="button" id="previewBranchReset">Preview branch reset</button>
+          <p id="branchResetPreviewSummary" role="status" hidden></p>
           <label>Safety-backup password <input id="resetBackupPassword" type="password" minlength="10" autocomplete="new-password" placeholder="At least 10 characters"></label>
           <label>Confirm safety-backup password <input id="confirmResetBackupPassword" type="password" minlength="10" autocomplete="new-password" placeholder="Repeat the password"></label>
           <label>Current Super Administrator password <input id="resetCurrentPassword" type="password" autocomplete="current-password" placeholder="Required for approval"></label>
@@ -23304,7 +23310,7 @@ function renderDataBackup() {
     if (password.length < 10) return setDataBackupStatus('Enter the backup password of at least 10 characters.', 'bad');
     const confirmation = await window.DynamaxDialogs.prompt({
       title: 'Restore organisation data',
-      message: 'This replaces current records with the selected recovery point. A safety backup will download first. Type RESTORE to continue.',
+      message: 'Restoring a backup replaces records across the whole organisation, including other branches. A safety backup will download first. Type RESTORE to continue.',
       label: 'Confirmation', placeholder: 'RESTORE', required: true, maxLength: 20,
       tone: 'danger', confirmText: 'Continue to restore'
     });
@@ -23330,7 +23336,50 @@ function renderDataBackup() {
       if (button.isConnected) setButtonLoading(button, false, 'Restoring...', 'Restore selected backup');
     }
   });
+  const resetBranch = document.getElementById('resetBranch');
+  const resetFiles = document.getElementById('resetBranchFiles');
+  const previewSummary = document.getElementById('branchResetPreviewSummary');
+  const previewButton = document.getElementById('previewBranchReset');
+  const resetButton = document.getElementById('resetTestWorkspace');
+  resetFiles.addEventListener('change', () => { previewSummary.hidden = true; });
+  resetBranch.addEventListener('change', () => {
+    previewSummary.hidden = true;
+    resetFiles.checked = false;
+    resetFiles.disabled = !resetBranch.value || resetBranch.value === 'main';
+  });
+  previewButton.addEventListener('click', async () => {
+    const branchId = resetBranch.value;
+    if (!branchId) return setDataBackupStatus('Choose one branch to preview.', 'bad');
+    previewSummary.hidden = true;
+    resetBranch.disabled = resetFiles.disabled = previewButton.disabled = resetButton.disabled = true;
+    try {
+      setDataBackupStatus('Counting records in the selected branch...');
+      const preview = await dataBackupRequest('preview-reset', { branchId, includeFiles: resetFiles.checked, countsOnly: true });
+      if (preview.branchId !== branchId || !Array.isArray(preview.paths)) throw new Error('The branch preview could not be verified.');
+      let count = 0;
+      for (const collectionPath of preview.paths) {
+        let cursor = '';
+        do {
+          const page = await dataBackupRequest('preview-reset-counts', { branchId, collectionPath, cursor });
+          if (page.branchId !== branchId || !Number.isSafeInteger(page.count) || page.count < 0 || (cursor && page.cursor === cursor)) throw new Error('The branch count could not be verified.');
+          count += page.count;
+          cursor = page.cursor;
+        } while (cursor);
+      }
+      previewSummary.textContent = `${preview.branchName}: ${count.toLocaleString()} eligible operational record(s), ${preview.r2ObjectCount.toLocaleString()} private file(s) selected for removal.`;
+      previewSummary.hidden = false;
+      setDataBackupStatus('Read-only preview complete.', 'good');
+    } catch (error) {
+      setDataBackupStatus(error.message || 'Branch preview failed.', 'bad');
+    } finally {
+      resetBranch.disabled = previewButton.disabled = resetButton.disabled = false;
+      resetFiles.disabled = branchId === 'main';
+    }
+  });
   document.getElementById('resetTestWorkspace')?.addEventListener('click', async (event) => {
+    const branchId = resetBranch.value;
+    const includeFiles = resetFiles.checked;
+    if (!branchId) return setDataBackupStatus('Choose one branch to preview.', 'bad');
     const backupPassword = document.getElementById('resetBackupPassword').value;
     const backupConfirmation = document.getElementById('confirmResetBackupPassword').value;
     const currentPassword = document.getElementById('resetCurrentPassword').value;
@@ -23338,23 +23387,21 @@ function renderDataBackup() {
     if (backupPassword !== backupConfirmation) return setDataBackupStatus('The safety-backup passwords do not match.', 'bad');
     if (!currentPassword) return setDataBackupStatus('Enter your current Super Administrator password.', 'bad');
     const button = event.currentTarget;
+    resetBranch.disabled = true;
+    previewButton.disabled = true;
+    resetFiles.disabled = true;
     setButtonLoading(button, true, 'Preparing preview...', 'Preview and reset test data');
     dataBackupState.busy = true;
     try {
       setDataBackupStatus('Preparing the reset preview and encrypted safety backup...');
-      const payload = await collectOrganizationBackup('Reset preview');
-      const preview = await dataBackupRequest('preview-reset');
-      const resetPaths = new Set(Array.isArray(preview.collectionPaths) ? preview.collectionPaths : []);
-      const recordCount = Object.entries(payload.collections || {}).reduce(
-        (total, [path, rows]) => total + (resetPaths.has(path) && Array.isArray(rows) ? rows.length : 0),
-        0
-      );
-      const r2Count = Math.max(0, Number(preview.r2ObjectCount || 0));
-      const r2Summary = preview.r2ObjectCountTruncated ? `at least ${r2Count.toLocaleString()}` : r2Count.toLocaleString();
-      const phrase = `RESET ${preview.workspaceId || payload.workspaceId}`.toUpperCase();
+      const preview = await dataBackupRequest('preview-reset', { branchId, includeFiles });
+      if (preview.branchId !== branchId || !preview.confirmation) throw new Error('The branch preview could not be verified.');
+      Object.assign(preview, { includeFiles, selection: Object.create(null), recordCount: 0, uncertain: 0 });
+      const payload = await collectOrganizationBackup('Reset preview', preview);
+      const phrase = preview.confirmation;
       const confirmation = await window.DynamaxDialogs.prompt({
-        title: 'Reset test workspace',
-        message: `This will permanently clear ${recordCount.toLocaleString()} operational database record(s), remove ${r2Summary} private R2 file(s) under ${preview.r2Prefix || `v1/${payload.edition}/`}, and sign out deleted test staff. Settings, branch structure, subscription, deployment bindings and your current Super Administrator account remain. Type ${phrase} to continue.`,
+        title: `Reset ${preview.branchName}`,
+        message: `Branch: ${preview.branchName} (${branchId}). Remove ${preview.recordCount.toLocaleString()} previewed operational record(s) and ${Number(preview.r2ObjectCount).toLocaleString()} private file(s). ${preview.uncertain.toLocaleString()} record(s) with unclear or shared ownership in the eligible collections will be kept. Type ${phrase} to confirm.`,
         label: 'Exact confirmation', placeholder: phrase, required: true, maxLength: 180,
         tone: 'danger', confirmText: 'Download backup and reset'
       });
@@ -23365,10 +23412,10 @@ function renderDataBackup() {
       setDataBackupStatus('Encrypting and downloading the mandatory safety backup...');
       const envelope = await encryptOrganizationBackup(payload, backupPassword);
       downloadBackupFile(envelope, 'pre-reset-safety-backup');
-      const result = await resetOrganizationTestData(payload, currentPassword, confirmation);
+      const result = await resetOrganizationTestData(preview, currentPassword, confirmation);
       setDataBackupStatus(`${result.message} ${result.removedRecords.toLocaleString()} database record(s) and ${result.removedObjects.toLocaleString()} private file(s) removed.`, 'good');
       await window.DynamaxDialogs.alert({
-        title: 'Test workspace reset completed',
+        title: `${preview.branchName} reset completed`,
         message: `${result.removedRecords.toLocaleString()} database record(s) and ${result.removedObjects.toLocaleString()} private file(s) were removed. Refresh the desktop application before onboarding real records.`,
         confirmText: 'Reload portal'
       });
@@ -23377,6 +23424,9 @@ function renderDataBackup() {
       setDataBackupStatus(`${error.message || String(error)} If deletion started, keep the downloaded safety backup and contact support before entering real data.`, 'bad');
     } finally {
       dataBackupState.busy = false;
+      resetBranch.disabled = false;
+      previewButton.disabled = false;
+      resetFiles.disabled = !resetBranch.value || resetBranch.value === 'main';
       const currentPasswordInput = document.getElementById('resetCurrentPassword');
       if (currentPasswordInput) currentPasswordInput.value = '';
       hideDataBackupProgress();

@@ -6,11 +6,13 @@ import { readJsonBody } from '../lib/request-security.js';
 import {
   clearOrganizationRestoreCollection,
   clearOrganizationResetObjects,
+  clearOrganizationResetRecords,
   completeOrganizationReset,
   completeOrganizationRestore,
   exportOrganizationBackupPage,
   prepareOrganizationReset,
   prepareOrganizationRestore,
+  previewBranchResetCountPage,
   previewOrganizationReset,
   writeOrganizationRestoreChunk
 } from '../lib/organization-backup.js';
@@ -35,6 +37,7 @@ export async function onRequestPost({ request, env }) {
     let result;
     if (action === 'export') {
       result = await exportOrganizationBackupPage(env, {
+        resetBranchId: body.resetBranchId,
         cursor: body.cursor,
         pageToken: body.pageToken,
         pageSize: 200
@@ -48,7 +51,9 @@ export async function onRequestPost({ request, env }) {
     } else if (action === 'complete-restore') {
       result = await completeOrganizationRestore(env, user, body.jobId);
     } else if (action === 'preview-reset') {
-      result = await previewOrganizationReset(env, user);
+      result = await previewOrganizationReset(env, user, body);
+    } else if (action === 'preview-reset-counts') {
+      result = await previewBranchResetCountPage(env, user, body);
     } else if (action === 'prepare-reset') {
       const password = String(body.currentPassword || '');
       if (!password || !(await verifyStaffApprovalPassword(env, user.username, password))) {
@@ -58,13 +63,16 @@ export async function onRequestPost({ request, env }) {
         throw error;
       }
       result = await prepareOrganizationReset(env, user, {
-        confirmation: body.confirmation,
+        confirmation: body.confirmation, branchId: body.branchId, includeFiles: body.includeFiles,
+        cutoff: body.cutoff, recordCount: body.recordCount,
         safetyBackupCreated: body.safetyBackupCreated === true
       });
+    } else if (action === 'clear-reset-records') {
+      result = await clearOrganizationResetRecords(env, user, body);
     } else if (action === 'clear-reset-r2') {
-      result = await clearOrganizationResetObjects(env, user, body.jobId);
+      result = await clearOrganizationResetObjects(env, user, body.jobId, body.branchId);
     } else if (action === 'complete-reset') {
-      result = await completeOrganizationReset(env, user, body.jobId);
+      result = await completeOrganizationReset(env, user, body.jobId, body.branchId);
     } else {
       const error = new Error('Unknown backup or restore action.');
       error.status = 400;

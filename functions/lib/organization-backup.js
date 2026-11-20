@@ -1,3 +1,5 @@
+import { assertResetJobScope, branchOwnsResetRecord, branchResetPathAllowed, clearBranchResetRecords, resetBranchId } from './branch-reset.js';
+import { branchResetFilePrefixes } from './document-storage.js';
 import { hasFullModuleAccess } from './module-authority.js';
 import { assignedStaffBranches } from './staff-branch-access.js';
 import {
@@ -5,11 +7,12 @@ import {
   getDocument,
   listCollectionPage,
   listRootCollectionIds,
+  queryCollection,
   upsertDocument
 } from './firestore.js';
 import { requiredDeploymentIdentity } from './deployment-identity.js';
 import { CHURCH_COLLECTIONS, churchCollectionPath } from './church-foundation.js';
-import { getSchoolStructure, schoolCollectionPaths } from './school-scope.js';
+import { getSchoolStructure, normalizeSchoolStructure, schoolCollectionPaths } from './school-scope.js';
 import {
   beginStaffAccountChange,
   commitStaffAccountChanges,
@@ -84,6 +87,7 @@ const IDENTITY_SETTING_FIELDS = Object.freeze([
 
 const RESET_PRESERVED_ROOT_COLLECTIONS = new Set([
   'settings',
+  'staffusers',
   'organisationbranches',
   'organizationbranches',
   'rolemoduleaccess',
@@ -126,44 +130,70 @@ export function isOrganizationResetProtectedPath(value) {
   return /(?:config|configuration|policies|policy|settings|structures|structure|templates|template)$/.test(root);
 }
 
-async function organizationResetPlan(env) {
+async function organizationResetPlan(env, user, options) {
+  const actor = restoreActor(user);
+  if (actor.role !== 'Super Admin' && !actor.fullBackupAccess) throw restoreError('Administrator permission is required for branch reset.', 403);
+  const branchId = resetBranchId(options?.branchId);
+  const working = clean(user.branchId || user.BranchId);
+  if (working && working !== 'all' && working !== branchId) throw restoreError('Switch to the selected working branch before resetting.', 403);
   const identity = requiredDeploymentIdentity(env);
-  const bucket = env?.DYNAMAX_DOCUMENTS;
-  if (!bucket || typeof bucket.list !== 'function' || typeof bucket.delete !== 'function') {
-    throw restoreError('Cloudflare R2 document storage is not connected, so a coordinated reset cannot start.', 503, 'RESET_R2_NOT_CONFIGURED');
+  // A temporary read error must never resolve to the default branch for deletion.
+  const structure = normalizeSchoolStructure(await getDocument(env, 'settings', 'schoolStructure') || {});
+  const branch = structure.Branches.find(row => row.Id === branchId);
+  if (!branch) throw restoreError('Choose a branch configured in this workspace.', 409);
+  const includeFiles = options.includeFiles === true;
+  if (includeFiles && (!env.DYNAMAX_DOCUMENTS?.list || !env.DYNAMAX_DOCUMENTS?.head || !env.DYNAMAX_DOCUMENTS?.delete)) {
+    throw restoreError('Private storage must be connected to include branch files.', 503, 'RESET_R2_NOT_CONFIGURED');
   }
-  const descriptors = await organizationBackupDescriptors(env);
-  const collectionPaths = descriptors
-    .map(({ path }) => safePath(path))
-    .filter((path) => path && !isOrganizationResetProtectedPath(path));
-  const protectedPaths = descriptors
-    .map(({ path }) => safePath(path))
-    .filter((path) => path && isOrganizationResetProtectedPath(path));
-  return {
-    identity,
-    bucket,
-    collectionPaths,
-    protectedPaths,
-    r2Prefix: `v1/${identity.edition}/`
-  };
+  if (includeFiles && branchId === 'main') {
+    // Older writers used 'main' as a fallback for missing ownership.
+    throw restoreError('Main Branch shares a legacy file prefix with unassigned uploads. Keep uploaded files for this reset.', 409);
+  }
+  if (includeFiles && structure.Branches.some(row => row.Id !== branchId && row.Id.replace(/^[._-]+|[._-]+$/g, '') === branchId)) {
+    throw restoreError('Two branch identifiers share a storage prefix. Keep uploaded files for this reset.', 409);
+  }
+  return { identity, branchId, branchName: branch.Name || branchId,
+    prefixes: includeFiles ? branchResetFilePrefixes(identity, branchId) : [],
+    confirmation: `RESET ${identity.workspaceId} BRANCH ${branchId}${includeFiles ? ' WITH FILES' : ''}`.toUpperCase() };
 }
 
-export async function previewOrganizationReset(env, user) {
-  const actor = restoreActor(user);
-  if (actor.role !== 'Super Admin' && !actor.fullBackupAccess) throw restoreError('Only a Super Administrator can preview a test-data reset.', 403, 'RESET_FORBIDDEN');
-  const plan = await organizationResetPlan(env);
-  const listed = await plan.bucket.list({ prefix: plan.r2Prefix, limit: 1000 });
-  return {
-    ok: true,
-    workspaceId: plan.identity.workspaceId,
-    edition: plan.identity.edition,
-    collectionPaths: plan.collectionPaths,
-    protectedPaths: plan.protectedPaths,
-    r2Prefix: plan.r2Prefix,
-    r2ObjectCount: Array.isArray(listed?.objects) ? listed.objects.length : 0,
-    r2ObjectCountTruncated: listed?.truncated === true,
-    message: 'Test-data reset preview prepared.'
-  };
+function resetFileEligible(object, prefix, identity, branchId, cutoff) {
+  const metadata = object.customMetadata;
+  return object.key.startsWith(prefix) && object.key.slice(prefix.length).split('/').length === 4
+    && metadata?.workspaceId === identity.workspaceId && metadata?.edition === identity.edition
+    && metadata?.branchId === branchId && new Date(object.uploaded).getTime() <= Date.parse(cutoff);
+}
+
+export async function previewOrganizationReset(env, user, options = {}) {
+  const plan = await organizationResetPlan(env, user, options);
+  const cutoff = nowIso();
+  let r2ObjectCount = 0;
+  for (const prefix of plan.prefixes) {
+    let cursor;
+    do {
+      const page = await env.DYNAMAX_DOCUMENTS.list({ prefix, cursor, limit: 1000, include: ['customMetadata'] });
+      r2ObjectCount += page.objects.filter(object => resetFileEligible(object, prefix, plan.identity, plan.branchId, cutoff)).length;
+      if (page.truncated && (!page.cursor || page.cursor === cursor)) throw restoreError('Storage preview could not advance.', 503);
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+  }
+  return { ok: true, branchId: plan.branchId, branchName: plan.branchName, workspaceId: plan.identity.workspaceId,
+    confirmation: plan.confirmation, cutoff, r2ObjectCount,
+    ...(options.countsOnly === true ? { paths: (await organizationBackupDescriptors(env)).map(item => item.path)
+      .filter(path => branchResetPathAllowed(path, plan.branchId, plan.identity.edition)) } : {}) };
+}
+
+export async function previewBranchResetCountPage(env, user, options) {
+  const { identity, branchId } = await organizationResetPlan(env, user, { branchId: options.branchId });
+  const path = options.collectionPath;
+  if (typeof path !== 'string' || !branchResetPathAllowed(path, branchId, identity.edition)) throw restoreError('Collection outside the selected branch.', 409);
+  // Shared collections may use either spelling. Firestore returns each match once for an OR query.
+  const rows = await queryCollection(env, path, { orderBy: [{ field: '__name__' }], limit: 250,
+    startAfterName: clean(options.cursor), ...(path.includes('/') ? {} : {
+      filters: ['BranchId', 'branchId'].map(field => ({ field, op: '==', value: branchId })), filterJoin: 'OR'
+    }) });
+  const count = rows.filter(row => branchOwnsResetRecord(path, row, branchId, identity.edition)).length;
+  return { ok: true, branchId, count, cursor: rows.length === 250 ? rows.at(-1).__name : '' };
 }
 
 function withoutTransportMetadata(row = {}) {
@@ -207,6 +237,10 @@ export async function organizationBackupDescriptors(env) {
     const legacyPath = legacyStaffAttendanceCollectionPath(key, branchId);
     descriptors.push({ key: canonicalPath, path: canonicalPath, type: 'staff-attendance' });
     descriptors.push({ key: legacyPath, path: legacyPath, type: 'staff-attendance-legacy' });
+    if (key === 'daily') {
+      const path = canonicalPath.replace(/[^/]+$/, 'hrPresenceReviews');
+      descriptors.push({ key: path, path, type: 'staff-presence-reviews' });
+    }
   }));
   if (identity.edition === 'school') {
     const schoolPaths = (await Promise.all(
@@ -252,9 +286,18 @@ export async function exportOrganizationBackupPage(env, options = {}) {
   const nextCursor = page.nextPageToken ? cursor : cursor + (descriptor ? 1 : 0);
   const complete = !page.nextPageToken && nextCursor >= descriptors.length;
   const identity = requiredDeploymentIdentity(env);
+  const resetRows = [];
+  let resetUncertain = 0;
+  if (options.resetBranchId && descriptor && branchResetPathAllowed(descriptor.path, options.resetBranchId, identity.edition)) {
+    for (const row of page.documents) {
+      if (branchOwnsResetRecord(descriptor.path, row, options.resetBranchId, identity.edition)) resetRows.push(row);
+      else if (descriptor.path.includes('/') || !row.BranchId && !row.branchId || [row.BranchId, row.branchId].includes(options.resetBranchId)) resetUncertain++;
+    }
+  }
   return {
     ok: true,
     message: complete ? 'Database backup completed.' : 'Backup page prepared.',
+    ...(options.resetBranchId ? { resetSelection: resetRows.map(row => ({ id: row.__id, version: row.__updateTime })), resetUncertain } : {}),
     exportedAt: nowIso(),
     identity,
     collections: descriptor
@@ -413,44 +456,36 @@ export async function prepareOrganizationReset(env, user, options = {}) {
   if (options.safetyBackupCreated !== true) {
     throw restoreError('Download the automatic encrypted safety backup before resetting test data.', 409, 'RESET_SAFETY_REQUIRED');
   }
-  const plan = await organizationResetPlan(env);
-  const identity = plan.identity;
-  const expectedConfirmation = `RESET ${identity.workspaceId}`.toUpperCase();
-  if (clean(options.confirmation).toUpperCase() !== expectedConfirmation) {
-    throw restoreError(`Type ${expectedConfirmation} exactly to reset this workspace.`, 409, 'RESET_CONFIRMATION_INVALID');
-  }
-  const collectionPaths = plan.collectionPaths;
-  if (!collectionPaths.length) {
-    throw restoreError('No operational collections were found to reset.', 409, 'RESET_NOTHING_TO_CLEAR');
-  }
+  const plan = await organizationResetPlan(env, user, options);
+  if (clean(options.confirmation).toUpperCase() !== plan.confirmation) throw restoreError(`Type ${plan.confirmation} to confirm.`, 409, 'RESET_CONFIRMATION_INVALID');
+  const cutoff = clean(options.cutoff);
+  const time = Date.parse(cutoff);
+  if (!Number.isFinite(time) || time > Date.now() || Date.now() - time > 2 * 3600000) throw restoreError('The preview expired. Preview the branch again.', 409);
+  if (!Number.isSafeInteger(options.recordCount) || options.recordCount < 0) throw restoreError('A previewed record count is required.');
   const jobId = `RESET-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const createdAt = nowIso();
-  const r2Prefix = plan.r2Prefix;
+  const collectionPaths = (await organizationBackupDescriptors(env)).map(item => item.path)
+    .filter(path => path.includes('/') || !isOrganizationResetProtectedPath(path))
+    .filter(path => branchResetPathAllowed(path, plan.branchId, plan.identity.edition));
   await upsertDocument(env, RESTORE_JOB_COLLECTION, jobId, {
-    JobId: jobId,
-    JobType: 'Reset',
-    Status: 'Prepared',
-    ActorUsername: actor.username,
-    Actor: actor.displayName,
-    WorkspaceId: identity.workspaceId,
-    Edition: identity.edition,
-    CollectionPaths: collectionPaths,
-    R2Prefix: r2Prefix,
-    RemovedRecords: 0,
-    RemovedObjects: 0,
-    CreatedAt: createdAt,
-    UpdatedAt: createdAt,
-    ExpiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString()
+    JobId: jobId, JobType: 'Reset', Status: 'Prepared', ActorUsername: actor.username, Actor: actor.displayName,
+    WorkspaceId: plan.identity.workspaceId, Edition: plan.identity.edition, BranchId: plan.branchId, BranchName: plan.branchName,
+    CollectionPaths: collectionPaths, IncludeFiles: options.includeFiles === true, FileIndex: 0, FileCursor: '', FileCutoff: cutoff,
+    ExpectedRecords: options.recordCount, RemovedRecords: 0, RemovedObjects: 0, CreatedAt: createdAt, UpdatedAt: createdAt,
+    ExpiresAt: new Date(Date.now() + 2 * 3600000).toISOString()
   });
-  return {
-    ok: true,
-    jobId,
-    workspaceId: identity.workspaceId,
-    edition: identity.edition,
-    collectionPaths,
-    r2Prefix,
-    message: 'Protected test-data reset prepared.'
-  };
+  return { ok: true, jobId, branchId: plan.branchId };
+}
+
+async function branchResetJob(env, user, jobId, branchId) {
+  const job = await currentRestoreJob(env, jobId, restoreActor(user));
+  assertResetJobScope(env, job, branchId, user.branchId || user.BranchId);
+  return job;
+}
+
+export async function clearOrganizationResetRecords(env, user, body) {
+  const job = await branchResetJob(env, user, body.jobId, body.branchId);
+  return clearBranchResetRecords(env, job, body.collectionPath, body.selection);
 }
 
 function jobAllowsCollection(job, collectionPath) {
@@ -464,6 +499,7 @@ function jobAllowsCollection(job, collectionPath) {
 export async function clearOrganizationRestoreCollection(env, user, jobId, collectionPath) {
   let actor = restoreActor(user);
   const job = await currentRestoreJob(env, jobId, actor);
+  if (job.JobType === 'Reset') throw restoreError('Reset jobs require a verified branch and previewed records.', 409, 'RESET_BRANCH_REQUIRED');
   const path = jobAllowsCollection(job, collectionPath);
   // Settings contain the live deployment and subscription bridge. Keep the
   // collection available while restored fields are overlaid so a recovery
@@ -494,7 +530,6 @@ export async function clearOrganizationRestoreCollection(env, user, jobId, colle
   await upsertDocument(env, RESTORE_JOB_COLLECTION, clean(jobId), {
     ...withoutTransportMetadata(job),
     Status: 'Restoring',
-    ...(clean(job.JobType) === 'Reset' ? { RemovedRecords: Math.max(0, Number(job.RemovedRecords || 0)) + rows.length } : {}),
     UpdatedAt: nowIso()
   });
   return {
@@ -572,52 +607,57 @@ export async function completeOrganizationRestore(env, user, jobId) {
   return { ok: true, message: 'Organisation data restore completed successfully.', restoredAt: nowIso() };
 }
 
-export async function clearOrganizationResetObjects(env, user, jobId) {
-  const actor = restoreActor(user);
-  const job = await currentRestoreJob(env, jobId, actor);
-  if (clean(job.JobType) !== 'Reset') throw restoreError('This session is not a test-data reset.', 409, 'RESET_JOB_REQUIRED');
-  const bucket = env?.DYNAMAX_DOCUMENTS;
-  if (!bucket || typeof bucket.list !== 'function' || typeof bucket.delete !== 'function') {
-    throw restoreError('Cloudflare R2 document storage is not connected.', 503, 'RESET_R2_NOT_CONFIGURED');
+export async function clearOrganizationResetObjects(env, user, jobId, branchId) {
+  const job = await branchResetJob(env, user, jobId, branchId);
+  if (!job.IncludeFiles || job.RemovedRecords !== job.ExpectedRecords) throw restoreError('File removal is outside this reset stage.', 409);
+  const identity = requiredDeploymentIdentity(env);
+  const prefixes = branchResetFilePrefixes(identity, branchId);
+  const index = Number(job.FileIndex);
+  if (index === prefixes.length) return { ok: true, more: false };
+  const prefix = prefixes[index];
+  if (!prefix) throw restoreError('Invalid file reset position.', 409);
+  const bucket = env.DYNAMAX_DOCUMENTS;
+  if (job.PendingFiles?.length) {
+    const keys = job.PendingFiles;
+    if (!keys.every(key => typeof key === 'string' && key.startsWith(prefix))) throw restoreError('File ownership could not be verified.', 409);
+    // A retry may resume after the original file was deleted or replaced.
+    // Recheck each current object before handing its key to the bucket.
+    const confirmed = [];
+    let alreadyRemoved = 0;
+    const objects = await Promise.all(keys.map(key => bucket.head(key)));
+    objects.forEach((object, pos) => {
+      if (!object) alreadyRemoved++;
+      else if (object.key === keys[pos] && resetFileEligible(object, prefix, identity, branchId, job.FileCutoff)) confirmed.push(object.key);
+    });
+    if (confirmed.length) await bucket.delete(confirmed);
+    const removed = alreadyRemoved + confirmed.length;
+    const fields = { PendingFiles: [], FileIndex: job.NextFileIndex, FileCursor: job.NextFileCursor,
+      RemovedObjects: Number(job.RemovedObjects || 0) + removed, UpdatedAt: nowIso() };
+    await batchCommitDocuments(env, [{ collectionPath: RESTORE_JOB_COLLECTION, documentId: jobId, data: fields,
+      updateMask: Object.keys(fields), updateTime: job.__updateTime }]);
+    return { ok: true, removed, more: fields.FileIndex < prefixes.length };
   }
-  const prefix = clean(job.R2Prefix);
-  const listed = await bucket.list({ prefix, limit: 1000 });
-  const keys = (Array.isArray(listed?.objects) ? listed.objects : [])
-    .map((object) => clean(object?.key))
-    .filter(Boolean);
-  if (keys.length) await bucket.delete(keys);
-  const removedObjects = Math.max(0, Number(job.RemovedObjects || 0)) + keys.length;
-  await upsertDocument(env, RESTORE_JOB_COLLECTION, clean(jobId), {
-    ...withoutTransportMetadata(job),
-    Status: 'Restoring',
-    RemovedObjects: removedObjects,
-    UpdatedAt: nowIso()
-  });
-  return {
-    ok: true,
-    removed: keys.length,
-    removedObjects,
-    more: listed?.truncated === true,
-    message: keys.length ? `Removed ${keys.length} private file(s).` : 'Private document storage is clear.'
-  };
+  const page = await bucket.list({ prefix, cursor: job.FileCursor || undefined, limit: 20, include: ['customMetadata'] });
+  if (page.truncated && (!page.cursor || page.cursor === job.FileCursor)) throw restoreError('Storage reset could not advance.', 503);
+  const keys = page.objects.filter(object => resetFileEligible(object, prefix, identity, branchId, job.FileCutoff)).map(object => object.key);
+  const nextIndex = page.truncated ? index : index + 1;
+  const cursor = page.truncated ? page.cursor : '';
+  const fields = keys.length ? { PendingFiles: keys, NextFileCursor: cursor, NextFileIndex: nextIndex, UpdatedAt: nowIso() }
+    : { FileIndex: nextIndex, FileCursor: cursor, UpdatedAt: nowIso() };
+  await batchCommitDocuments(env, [{ collectionPath: RESTORE_JOB_COLLECTION, documentId: jobId, data: fields,
+    updateMask: Object.keys(fields), updateTime: job.__updateTime }]);
+  return { ok: true, removed: 0, more: keys.length > 0 || nextIndex < prefixes.length };
 }
 
-export async function completeOrganizationReset(env, user, jobId) {
-  const actor = restoreActor(user);
-  const job = await currentRestoreJob(env, jobId, actor);
-  if (clean(job.JobType) !== 'Reset') throw restoreError('This session is not a test-data reset.', 409, 'RESET_JOB_REQUIRED');
+export async function completeOrganizationReset(env, user, jobId, branchId) {
+  const job = await branchResetJob(env, user, jobId, branchId);
+  if (job.ExpectedRecords !== job.RemovedRecords || (job.IncludeFiles && job.FileIndex !== branchResetFilePrefixes(requiredDeploymentIdentity(env), branchId).length)) {
+    throw restoreError('The previewed branch reset has not finished. Refresh the preview before retrying.', 409);
+  }
   const completedAt = nowIso();
-  await upsertDocument(env, RESTORE_JOB_COLLECTION, clean(jobId), {
-    ...withoutTransportMetadata(job),
-    Status: 'Completed',
-    CompletedAt: completedAt,
-    UpdatedAt: completedAt
-  });
-  return {
-    ok: true,
-    message: 'Test records and private files were cleared. Organisation configuration and the active Super Administrator were preserved.',
-    removedRecords: Math.max(0, Number(job.RemovedRecords || 0)),
-    removedObjects: Math.max(0, Number(job.RemovedObjects || 0)),
-    resetAt: completedAt
-  };
+  const fields = { Status: 'Completed', CompletedAt: completedAt, UpdatedAt: completedAt };
+  await batchCommitDocuments(env, [{ collectionPath: RESTORE_JOB_COLLECTION, documentId: jobId, data: fields,
+    updateMask: Object.keys(fields), updateTime: job.__updateTime }]);
+  return { ok: true, branchId, message: `Reset completed for ${job.BranchName || branchId}.`,
+    removedRecords: job.RemovedRecords, removedObjects: job.RemovedObjects, resetAt: completedAt };
 }

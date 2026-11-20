@@ -80,7 +80,7 @@ test('one-click test reset preserves identity/configuration paths and targets op
   assert.equal(isOrganizationResetProtectedPath('roleModuleAccess'), true);
   assert.equal(isOrganizationResetProtectedPath('schoolBranches/main/sections/secondary/students'), false);
   assert.equal(isOrganizationResetProtectedPath('schoolBranches/main/sections/secondary/applications'), false);
-  assert.equal(isOrganizationResetProtectedPath('staffUsers'), false);
+  assert.equal(isOrganizationResetProtectedPath('staffUsers'), true);
   assert.equal(isOrganizationResetProtectedPath('payments'), false);
 });
 
@@ -92,11 +92,11 @@ test('one-click test reset is password-approved, safety-backed and clears R2 thr
   assert.match(backupApi, /action === 'complete-reset'/);
   assert.match(backupLib, /RESET_SAFETY_REQUIRED/);
   assert.match(backupLib, /RESET \$\{identity\.workspaceId\}/);
-  assert.match(backupLib, /bucket\.list\(\{ prefix, limit: 1000 \}\)/);
-  assert.match(backupLib, /await bucket\.delete\(keys\)/);
+  assert.match(backupLib, /branchResetFilePrefixes\(identity, branchId\)/);
+  assert.match(backupLib, /await bucket\.delete\(confirmed\)/);
   assert.match(backupLib, /page\.documents\.filter\(\(row\) => !isProtectedRestoreStaff\(row, actor\)\)/);
   assert.match(backupLib, /commitStaffAccountChanges\(env, staffState, writes\)/);
-  assert.match(admin, /Reset test workspace/);
+  assert.match(admin, /Reset one branch/);
   assert.match(admin, /pre-reset-safety-backup/);
   assert.match(admin, /Preview and reset test data/);
   assert.match(admin, /preview-reset/);
