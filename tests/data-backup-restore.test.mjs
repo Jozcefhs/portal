@@ -64,9 +64,9 @@ test('web companion encrypts downloads and requires typed confirmation before re
   assert.match(admin, /PBKDF2/);
   assert.match(admin, /AES-GCM/);
   assert.match(admin, /pre-restore-safety-backup/);
-  assert.match(admin, /Type RESTORE to continue/);
-  assert.match(admin, /clear-collection/);
-  assert.match(admin, /write-collection/);
+  assert.match(admin, /Apply previewed changes/);
+  assert.match(admin, /Preview branch restore/);
+  assert.match(admin, /Match the backup exactly/);
   assert.match(styles, /\.data-backup-workspace/);
   assert.match(styles, /@media\(max-width:560px\)[\s\S]*\.data-backup-card/);
 });

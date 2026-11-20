@@ -128,13 +128,7 @@ import { resubmitRequisition } from './finance-workflow.js';
 import { postApprovedRequisition } from '../lib/requisition-posting.js';
 import { explicitAuditAction, securityAuditAction } from '../lib/security-audit.js';
 import { paymentAuditSummary } from '../lib/audit-language.js';
-import {
-  clearOrganizationRestoreCollection,
-  completeOrganizationRestore,
-  exportOrganizationBackupPage,
-  prepareOrganizationRestore,
-  writeOrganizationRestoreChunk
-} from '../lib/organization-backup.js';
+import { exportOrganizationBackupPage } from '../lib/organization-backup.js';
 import {
   loadNotificationSettings,
   notifyParentPaymentReceived,
@@ -11955,29 +11949,10 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       });
     }
     case 'prepareRestoreBackup':
-      return prepareOrganizationRestore(env, {
-        username: body.UserUsername,
-        displayName: body.RecordedBy,
-        role: body.UserRole
-      }, body.Manifest || body.manifest, body.CollectionPaths || body.collectionPaths, body.SafetyBackupCreated === true || body.safetyBackupCreated === true);
     case 'clearRestoreCollection':
-      return clearOrganizationRestoreCollection(env, {
-        username: body.UserUsername,
-        displayName: body.RecordedBy,
-        role: body.UserRole
-      }, body.JobId || body.jobId, body.CollectionPath || body.collectionPath);
     case 'writeRestoreCollection':
-      return writeOrganizationRestoreChunk(env, {
-        username: body.UserUsername,
-        displayName: body.RecordedBy,
-        role: body.UserRole
-      }, body.JobId || body.jobId, body.CollectionPath || body.collectionPath, body.Documents || body.documents);
     case 'completeRestoreBackup':
-      return completeOrganizationRestore(env, {
-        username: body.UserUsername,
-        displayName: body.RecordedBy,
-        role: body.UserRole
-      }, body.JobId || body.jobId);
+      throw Object.assign(new Error('Open Backup & Restore in the web companion to preview and restore one branch.'), { status: 409 });
     case 'getSystemHealth':
       return getSystemHealth(env, body);
     case 'optimizeFirestoreData':
