@@ -3815,11 +3815,12 @@ html[data-theme="dark"] .module-workspace-tabs button{color:#b8c8d8}html[data-th
   .staff-page #adminPanel:has([data-workspace-section="tuckShop"]),
   .staff-page #adminPanel:has([data-workspace-section="restaurant"]),
   .staff-page #adminPanel:has([data-workspace-section="organizationStore"]){min-height:0;padding:8px}
-  #adminPanel:has(.commerce-pos-layout)>.workflow-intro{display:flex;gap:8px;padding-bottom:6px}
+  #adminPanel:has(.commerce-pos-layout)>.workflow-intro{display:flex;flex-wrap:wrap;justify-content:flex-start;gap:8px;padding-bottom:6px}
+  #adminPanel:has(.commerce-pos-layout)>.workflow-intro>div:first-child{flex:0 0 100%;min-width:0}
   #adminPanel:has(.commerce-pos-layout)>.workflow-intro .eyebrow{margin:0;font-size:8px}
   #adminPanel:has(.commerce-pos-layout)>.workflow-intro h2{margin:0;font-size:17px;line-height:1.25}
   #adminPanel:has(.commerce-pos-layout)>.workflow-intro .muted{margin:2px 0 0;font-size:10px;line-height:1.3}
-  #adminPanel:has(.commerce-pos-layout)>.workflow-intro>button{min-height:36px;padding:6px 8px;font-size:10px}
+  #adminPanel:has(.commerce-pos-layout)>.workflow-intro>button{min-width:0;max-width:100%;min-height:36px;padding:6px 8px;font-size:10px;white-space:normal}
   #adminPanel:has(.commerce-pos-layout) .module-workspace-shell{margin-top:5px}
   #adminPanel:has(.commerce-pos-layout) .module-workspace-tabs{padding:3px}
   #adminPanel:has(.commerce-pos-layout) .module-workspace-panel{padding:6px 0 0}
