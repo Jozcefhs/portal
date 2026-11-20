@@ -16,7 +16,7 @@
     const Vitals = Object.fromEntries(Object.entries(measurements).filter(([,v])=>v !== ''));
     return {Complaint,NursingNotes,Urgency,AllergyStatus,Allergies,Vitals,ObservedAt};
   }
-  function attach(host, scope, {api,run,writable,status}) {
+  function attach(host, scope, {api,run,writable,status,issueOrder,openOrder}) {
     const panel = el('section');
     let sequence, cursor;
     const list = el('div');
@@ -34,7 +34,13 @@
       sequence = data.sequence;
       cursor = data.next;
       more.hidden = !cursor;
-      list.innerHTML = data.entries.map(window.DynamaxHospitalClinical.entryMarkup).join('');
+      list.replaceChildren();
+      for(const entry of data.entries){
+        list.insertAdjacentHTML('beforeend',window.DynamaxHospitalClinical.entryMarkup(entry));
+        if(entry.OrderId && openOrder){
+          list.append(button('Open '+entry.Content.OrderNumber,()=>run(()=>openOrder({OrderId:entry.OrderId,PatientId:scope.PatientId||data.arrivalId}))));
+        }
+      }
       if (!data.entries.length) list.textContent = 'No signed entries for this wristband.';
     }
     function addEditor(type) {
@@ -75,6 +81,7 @@
       editor.append(section);
     }
     if (!scope.VisitId) {
+      if(writable('orders.create')&&issueOrder) editor.append(button('Issue medication or investigation order',()=>run(()=>issueOrder(scope))));
       if (writable('triage.write')) addEditor('Triage');
       if (writable('consultations.write') || writable('nursing.write')) addEditor('Treatment');
     }

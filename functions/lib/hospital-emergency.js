@@ -1,7 +1,7 @@
 import { observationTime, triageFields } from './hospital-clinical-model.js';
 import { clean, digest, fail, id, patientName } from './hospital-model.js';
 
-function reference(value) {
+export function emergencyReference(value) {
   const ref = clean(value).toUpperCase();
   if (!/^[A-Z0-9][A-Z0-9-]{2,39}$/.test(ref)) fail('Enter a unique wristband or arrival reference of 3 to 40 letters, numbers or hyphens.');
   return ref;
@@ -32,7 +32,7 @@ export function createEmergencyReception({env, user, db, collection, branch, req
     },
     async emergencyCareHistory(body) {
       requireCapability('clinical.read');
-      const branchId = await branch(body), ref = reference(body.Reference);
+      const branchId = await branch(body), ref = emergencyReference(body.Reference);
       const rid = await arrivalId(branchId,ref);
       const row = await db.getDocument(env,arrivals,rid);
       if (!row || row.BranchId !== branchId) fail('Wristband unavailable in this branch.',404);
@@ -48,8 +48,8 @@ export function createEmergencyReception({env, user, db, collection, branch, req
       ], 'TimelineKey', body);
       if (result.rows.some(entry => entry.ArrivalId !== rid || entry.BranchId !== branchId)) fail('Emergency entry linkage needs review.',409);
       if (result.rows.length) await auditRead(body,'View signed emergency care',branchId,person,{ArrivalId:rid,VisitId:row.VisitId || ''});
-      return {ok:true,sequence:row.CareSequence || 0,entries:result.rows.map(entry => ({
-        EntryId:entry.EntryId,Type:entry.Type,Content:entry.Content,SignedAt:entry.SignedAt,AuthorName:entry.AuthorName
+      return {ok:true,arrivalId:rid,sequence:row.CareSequence || 0,entries:result.rows.map(entry => ({
+        EntryId:entry.EntryId,OrderId:entry.OrderId,Type:entry.Type,Content:entry.Content,SignedAt:entry.SignedAt,AuthorName:entry.AuthorName
       })),next:result.next};
     },
     async signEmergencyCare(body) {
@@ -58,7 +58,7 @@ export function createEmergencyReception({env, user, db, collection, branch, req
       else if (body.Type === 'Treatment') {
         if (!capabilities.includes('nursing.write')) requireCapability('consultations.write');
       } else fail('Choose triage or treatment.');
-      const branchId = await branch(body), ref = reference(body.Reference);
+      const branchId = await branch(body), ref = emergencyReference(body.Reference);
       if (body.ConfirmedReference !== ref) fail('Confirm the wristband before signing.');
       const now = clock();
       let content;
@@ -80,7 +80,9 @@ export function createEmergencyReception({env, user, db, collection, branch, req
           TimelineKey:rid+'|'+String(sequence).padStart(12,'0'),Type:body.Type,Content:content,
           AuthorUsername:actor,AuthorName:clean(user.displayName)||actor,SignedAt:now};
         return {writes:[create('EmergencyCareEntries',key,entry),
-          {collectionPath:arrivals,documentId:rid,currentDocument:condition(row),data:{...strip(row),CareSequence:sequence}},
+          {collectionPath:arrivals,documentId:rid,currentDocument:condition(row),data:{...strip(row),CareSequence:sequence,
+            ...(body.Type === 'Triage' ? {OrderAllergies:{AllergyStatus:content.AllergyStatus,Allergies:content.Allergies,
+              AllergyRecordedAt:now,AllergyRecordedBy:actor}} : {})}},
           auditWrite(key,'Sign emergency '+body.Type.toLowerCase(),branchId,{}, {EntityType:'Emergency arrival',EntityId:rid,EntryId:key})],
           result:{EntryId:key,Sequence:sequence}};
       });
@@ -89,7 +91,7 @@ export function createEmergencyReception({env, user, db, collection, branch, req
       requireCapability('visits.read');
       const branchId = await branch(body);
       if (clean(body.Reference)) {
-        const row = await db.getDocument(env, arrivals, await arrivalId(branchId, reference(body.Reference)));
+        const row = await db.getDocument(env, arrivals, await arrivalId(branchId, emergencyReference(body.Reference)));
         return {ok: true, arrivals: row ? [view(row)] : [], next: null};
       }
       const prefix = branchId + '|';
@@ -101,7 +103,7 @@ export function createEmergencyReception({env, user, db, collection, branch, req
     async recordEmergencyArrival(body) {
       requireCapability('visits.write');
       const branchId = await branch(body);
-      const ref = reference(body.Reference);
+      const ref = emergencyReference(body.Reference);
       const note = clean(body.ArrivalNote);
       if (!note || note.length > 300) fail('Enter a brief arrival description of up to 300 characters.');
       return operation(body, 'recordEmergencyArrival', async key => {
@@ -123,7 +125,7 @@ export function createEmergencyReception({env, user, db, collection, branch, req
       requireCapability('visits.write');
       requireCapability('patients.write');
       const branchId = await branch(body);
-      const ref = reference(body.Reference);
+      const ref = emergencyReference(body.Reference);
       const evidence = clean(body.IdentityEvidence);
       if (evidence.length < 5 || evidence.length > 300) fail('Record how the patient identity was verified (5 to 300 characters).');
       return operation(body, 'identifyEmergencyArrival', async key => {

@@ -56,7 +56,7 @@
     const catalogCache=new Map();
     const catalogAllowed=kind=>can('orders.read')||can(kind==='Laboratory'?'laboratory.work':'imaging.work')||can(kind==='Laboratory'?'laboratory.configure':'imaging.configure');
     const catalogWritable=kind=>writable(kind==='Laboratory'?'laboratory.work':'imaging.work')||writable(kind==='Laboratory'?'laboratory.configure':'imaging.configure');
-    const sharing=window.DynamaxHospitalClinicalSharing.create({host:$('orderPanel'),api,run,status,getScope:()=>current?{DocumentType:'investigations',ParentId:current.order.OrderId,PatientId:current.patient.PatientId}:null,allowed:()=>writable('orders.create')&&!!current&&current.order.Kind!=='Prescription'});
+    const sharing=window.DynamaxHospitalClinicalSharing.create({host:$('orderPanel'),api,run,status,getScope:()=>current?{DocumentType:'investigations',ParentId:current.order.OrderId,PatientId:current.patient.PatientId}:null,allowed:()=>writable('orders.create')&&!!current&&!current.unidentified&&current.order.Kind!=='Prescription'});
     const dirty=new Set(),editForms=['catalogItemForm','issueOrderForm','reviewRxForm','dispenseRxForm','returnRxForm','specimenForm','reportForm','releaseForm','ackForm','cancelOrderForm','receiveStockForm','quarantineStockForm'];
     const medicines=window.DynamaxHospitalMedicines.create({api,run,can,writable,status,dirty});
     editForms.forEach(id=>$(id).addEventListener('input',()=>{dirty.add(id);if(id==='reportForm')$('confirmOrder').checked=false;permissions();}));
@@ -126,15 +126,15 @@
       $('quarantineStockForm').querySelectorAll('input,textarea,button').forEach(el=>el.disabled=!writable('pharmacy.work'));
       const o=current?.order,rx=o?.Kind==='Prescription',worker=o&&writable(o.Kind==='Laboratory'?'laboratory.work':o.Kind==='Imaging'?'imaging.work':'pharmacy.work');
       const active=o&&o.Status!=='Cancelled';
-      const visible={reviewRx:rx&&worker&&active,dispenseRx:rx&&worker&&['Ready to dispense','Partially dispensed'].includes(o.Status),returnRx:rx&&can('pharmacy.work'),
-        specimenWork:o?.Kind==='Laboratory'&&worker&&['Requested','Specimen collected','Specimen rejected','Specimen received'].includes(o.Status),reportWork:!rx&&worker&&active&&(o?.Kind!=='Laboratory'||o.SpecimenWorkflow!==2||o.CurrentSpecimen?.Status==='Received'),
+      const visible={reviewRx:rx&&worker&&active,dispenseRx:rx&&worker&&!current?.unidentified&&(!o.EmergencyArrivalId||o.ReviewPatientId===o.PatientId)&&['Ready to dispense','Partially dispensed'].includes(o.Status),returnRx:rx&&!current?.unidentified&&can('pharmacy.work'),
+        specimenWork:o?.Kind==='Laboratory'&&worker&&['Requested','Specimen collected','Specimen rejected','Specimen received'].includes(o.Status),reportWork:!rx&&worker&&!current?.unidentified&&active&&(o?.Kind!=='Laboratory'||o.SpecimenWorkflow!==2||o.CurrentSpecimen?.Status==='Received'),
         verifyWork:!rx&&worker&&o?.Status==='Result draft',releaseWork:!rx&&worker&&o?.Status==='Verified',ackWork:writable('orders.create')&&o?.CriticalNeedsAcknowledgement,
         cancelWork:writable('orders.create')&&current?.canCancel&&active&&!o.ReleasedReportId&&o.Status!=='Dispensed'};
       for(const [id,show] of Object.entries(visible))$(id).hidden=!show;
       $('verifyReport').disabled=!current?.canVerify||dirty.has('reportForm');
       $('returnRxForm').querySelectorAll('input,textarea,select,button').forEach(el=>el.disabled=!writable('pharmacy.work'));
       $('printSpecimen').hidden=o?.Kind!=='Laboratory';
-      $('loadReleasedHistory').hidden=!o||rx;
+      $('loadReleasedHistory').hidden=!o||rx||current?.unidentified;
       if(issue)$('issueOrderForm').querySelector('button:not([type=button])').disabled=!writable('orders.create');
     }
     function clear(){
@@ -153,7 +153,8 @@
     $('issueKind').onchange=issueKind;
     async function openVisit(visit){
       if(!await confirmLeave('',false))return;
-      clearOrder();issue=await api('orderVisitContext',{PatientId:visit.PatientId,VisitId:visit.VisitId});
+      clearOrder();issue=await api('orderVisitContext',visit.Reference?{Reference:visit.Reference}:{PatientId:visit.PatientId,VisitId:visit.VisitId});
+      issue.Reference=visit.Reference;
       $('issueOrderForm').reset();dirty.delete('issueOrderForm');issueKind();$('issueOrderPanel').hidden=false;
       $('issueIdentity').textContent=`${issue.patient.DisplayName} · ${issue.patient.HospitalNumber} · DOB ${issue.patient.DateOfBirth||'Not recorded'}`;
       $('issueAllergies').textContent=`Allergies: ${issue.care.AllergyStatus} ${issue.care.Allergies||''}`;navigate('orders');status('Prescribing context loaded. Review the patient and current allergies.');
@@ -181,6 +182,15 @@
       }
       $('orderIdentity').textContent=`${data.patient.DisplayName} · ${data.patient.HospitalNumber} · DOB ${data.patient.DateOfBirth||'Not recorded'} · ${o.OrderNumber} · ${o.Status}`;
       $('orderAllergies').textContent=`Current allergies: ${data.care.AllergyStatus} ${data.care.Allergies||''}`;
+      if(o.EmergencyReference){
+        const snapshot=o.AllergySnapshot||{};
+        $('orderAllergies').textContent+=' · Wristband '+o.EmergencyReference+' at issue: '+(snapshot.Status||'Unknown')+' '+(snapshot.Details||'');
+        if(!data.unidentified && o.WristbandAllergies){
+          $('orderAllergies').textContent+=' · At identification: '+o.WristbandAllergies.Status+' '+(o.WristbandAllergies.Details||'');
+          if(o.Kind==='Prescription' && o.ReviewPatientId!==o.PatientId) $('orderAllergies').textContent+=' · Pharmacy review required for this patient.';
+        }
+        if(data.unidentified)$('orderIdentity').textContent+=' · Awaiting identification';
+      }
       $('orderInstructions').innerHTML=`<h3>${esc(o.Kind)} · ${esc(o.PrescriberName)}</h3>${pairs(o.Fields)}${o.Kind==='Prescription'?`<p>Dispensed: ${o.DispensedQuantity} · Returned: ${o.ReturnedQuantity}</p><p>Pharmacy review: ${esc(o.PharmacyReview||'Pending')} · ${esc(o.ReviewReason||'')}</p>`:''}${o.CancelReason?`<p>Cancelled: ${esc(o.CancelReason)}</p>`:''}`;
       if(o.MedicineCatalogSnapshot)$('orderInstructions').insertAdjacentHTML('beforeend',`<h4>Saved medicine catalogue</h4>${pairs({Code:o.MedicineCatalogSnapshot.Code,HandlingNotes:o.MedicineCatalogSnapshot.HandlingNotes})}`);
       if(o.CatalogSnapshot)$('orderInstructions').insertAdjacentHTML('beforeend',`<h4>Saved catalogue instructions</h4>${pairs({Code:o.CatalogSnapshot.Code,Preparation:o.CatalogSnapshot.Preparation,Instructions:o.CatalogSnapshot.Instructions})}`);
@@ -191,13 +201,13 @@
       $('releasedReport').innerHTML=reportHtml(data.releasedReport,'Released report')+(o.CriticalNeedsAcknowledgement?'<p class="care-amendment-note">Critical result awaits clinician acknowledgement.</p>':'');
       $('draftReport').innerHTML=data.latestReport?.ReportId!==o.ReleasedReportId?reportHtml(data.latestReport,o.Status==='Verified'?'Verified — awaiting release':'Draft — not released'):'';
       if(data.latestReport){$('reportForm').elements.Text.value=data.latestReport.Text;$('reportForm').elements.Critical.checked=data.latestReport.Critical;}
-      $('orderFreshness').textContent=`Loaded ${date(new Date().toISOString())} WAT. Refresh to see another officer’s changes.`;
+      $('orderFreshness').textContent=`Loaded ${date(new Date().toISOString())} WAT. ${data.unidentified?'Review and specimen handling are available. Identify the patient before dispensing or reporting.':'Refresh to see another officer’s changes.'}`;
       $('nextDispenses').hidden=$('nextOrderHistory').hidden=true;permissions();
     }
     async function openOrder(order){if(!await confirmLeave('',false))return;$('issueOrderPanel').hidden=true;issue=null;dirty.delete('issueOrderForm');await loadOrder(order);navigate('orders');status('Order loaded.');}
     $('issueOrderForm').onsubmit=event=>{event.preventDefault();run(async()=>{
       if(!await confirmLeave('issueOrderForm',false))return;
-      const data=fields($('issueOrderForm')),saved=await api('createOrder',{PatientId:issue.patient.PatientId,VisitId:issue.visit.VisitId,VisitRevision:issue.visit.Revision,CareRevision:issue.care.Revision,
+      const data=fields($('issueOrderForm')),saved=await api('createOrder',{...(issue.Reference?{Reference:issue.Reference}:{}),PatientId:issue.patient.PatientId,VisitId:issue.visit.VisitId,VisitRevision:issue.visit.Revision,CareRevision:issue.care.Revision,
         Kind:$('issueKind').value,Prescription:data,Investigation:data,...medicines.selection('issueOrderForm'),...(selectedCatalog?{CatalogId:selectedCatalog.CatalogId,CatalogRevision:selectedCatalog.Revision}:{}),ConfirmPatient:$('confirmIssue').checked},true);
       dirty.delete('issueOrderForm');$('issueOrderForm').reset();medicines.resetSelection('issueOrderForm');$('issueOrderPanel').hidden=true;issue=null;await loadOrder(saved);status('Order signed and issued.');
     });};
@@ -267,6 +277,6 @@
     async function stockHistory(next=null){if(!next)stockHistoryQuery={BatchId:$('stockHistoryBatch').value,DateRange:{fromDate:$('stockHistoryFrom').value,toDate:$('stockHistoryTo').value}};const data=await api('stockHistory',{...stockHistoryQuery,...(next?{Cursor:next}:{})});stockHistoryCursor=data.next;if(!next)$('stockHistoryRows').replaceChildren();$('stockHistoryRows').insertAdjacentHTML('beforeend',historyRows(data.movements,'stock'));$('nextStockHistory').hidden=!stockHistoryCursor;status('Dated stock movements loaded.');}
     $('stockHistoryFilter').onsubmit=event=>{event.preventDefault();run(()=>stockHistory());};$('nextStockHistory').onclick=()=>run(()=>stockHistory(stockHistoryCursor));
     function selectTask(task){medicines.selectTask(task);const kind={pharmacy:'Prescription',laboratory:'Laboratory',imaging:'Imaging'}[task];if(kind&&kinds().includes(kind))$('ordersKind').value=kind;if(['Laboratory','Imaging'].includes(kind)&&catalogAllowed(kind)){$('catalogKind').value=kind;if(!kinds().length)$('investigationCatalogPanel').open=true;}permissions();}
-    return {openVisit,clear,permissions,confirmLeave,selectTask};
+    return {openVisit,openOrder,clear,permissions,confirmLeave,selectTask};
   }};
 })();

@@ -11,7 +11,7 @@
     const vitals=row.Content?.Vitals?`<div class="care-vitals">${Object.entries(measures).map(([key,label])=>`<div><small>${label}</small><strong>${esc(row.Content.Vitals[key]??'Not recorded')}</strong></div>`).join('')}</div>`:'';
     return `<article class="clinical-entry"><h3>${esc(row.Type)} · ${esc(row.AuthorName)}</h3><p class="hint">Signed ${esc(date(row.SignedAt))} WAT${row.Type==='Amendment'?` · Amendment to ${esc(row.TargetType)} entry`:''}</p>${vitals}<dl>${fields}</dl></article>`;
   }
-  window.DynamaxHospitalClinical={entryMarkup,create({api,run,can,writable,status,navigate}){
+  window.DynamaxHospitalClinical={entryMarkup,create({api,run,can,writable,status,navigate,openOrder}){
     let current=null,scope=null,entries=[],cursor=null,range=null;
     const dirty=new Set();
     async function confirmLeave(except=''){
@@ -49,7 +49,7 @@
       const host = $('linkedEmergencyRows');
       host.replaceChildren();
       if (!result.references.length) host.textContent = 'No pre-identification care is linked to this visit.';
-      for (const Reference of result.references) window.DynamaxEmergencyCare.attach(host,{...scope,Reference},{api,run,writable,status});
+      for (const Reference of result.references) window.DynamaxEmergencyCare.attach(host,{...scope,Reference},{api,run,writable,status,openOrder:can('orders.read')?openOrder:null});
     }
     $('loadLinkedEmergency').onclick = ()=>run(()=>linkedEmergency(null));
     $('moreLinkedEmergency').onclick = ()=>run(()=>linkedEmergency(emergencyCursor));

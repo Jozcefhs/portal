@@ -1,3 +1,4 @@
+import {emergencyReference} from './hospital-emergency.js';
 import {clean,fail,id,digest,patientSummary} from './hospital-model.js';
 import {stockReceiptFields,prepareStockReceipt} from './hospital-stock-receipt.js';
 import {medicineCatalogSnapshot} from './hospital-medicines-service.js';
@@ -28,12 +29,57 @@ export function createHospitalOrdersService(ctx){
     if(care&&care.PatientId!==visit.PatientId)fail('Review this patient’s allergy reference.',409);
     return {BranchId,visit,person,care};
   }
-  async function orderContext(body){
+  async function wristbandContext(arrival,BranchId){
+    const rid=arrival.__id, ref=arrival.Reference;
+    let allergies=arrival.OrderAllergies;
+    // Older signed triage entries predate the compact allergy snapshot.
+    if(!allergies && arrival.CareSequence){
+      let cursor=null;
+      do {
+        const result=await page('EmergencyCareEntries',[
+          {field:'TimelineKey',op:'>=',value:rid+'|'},{field:'TimelineKey',op:'<',value:rid+'|~'}
+        ],'TimelineKey',{Cursor:cursor});
+        for(const entry of result.rows) if(entry.Type==='Triage'){
+          allergies={AllergyStatus:entry.Content.AllergyStatus,Allergies:entry.Content.Allergies,
+            AllergyRecordedAt:entry.SignedAt,AllergyRecordedBy:entry.AuthorUsername};
+        }
+        cursor=result.next;
+      } while(cursor);
+    }
+    return {BranchId,arrival,
+      person:{PatientId:rid,LastName:'Unidentified patient',HospitalNumber:ref,Status:'Active'},
+      visit:{VisitId:rid,Status:'Waiting',__updateTime:arrival.__updateTime},
+      care:{AllergyStatus:'Unknown',Allergies:'',...allergies,__updateTime:arrival.__updateTime}};
+  }
+  async function issueContext(body){
+    if(!body.Reference)return visitContext(body,true);
+    const BranchId=await branch(body),ref=emergencyReference(body.Reference);
+    const rid=await digest(JSON.stringify([BranchId,ref]));
+    const arrival=await read('EmergencyArrivals',rid);
+    if(!arrival||arrival.BranchId!==BranchId||arrival.Reference!==ref)fail('Wristband not found in this branch.',404);
+    if(arrival.Status!=='Awaiting identification')fail('Use the identified patient visit to issue this order.',409);
+    if(body.PatientId && (body.PatientId!==rid||body.VisitId!==rid))fail('The selected wristband changed.',409);
+    return wristbandContext(arrival,BranchId);
+  }
+  async function orderContext(body,{allowWristband=false,reading=false}={}){
     const BranchId=await branch(body),order=await read('Orders',body.OrderId);
     if(!order||order.BranchId!==BranchId)fail('This order is not available in the selected branch.',404);
     kindAccess(order.Kind);
-    if(order.PatientId!==body.PatientId)fail('The patient does not match this order.',409);
-    const current=await visitContext({...body,VisitId:order.VisitId});
+    if(order.EmergencyArrivalId && order.PatientId===order.EmergencyArrivalId){
+      const row=await read('EmergencyArrivals',order.EmergencyArrivalId);
+      if(!row||row.BranchId!==BranchId||row.Reference!==order.EmergencyReference)fail('Review this order’s wristband linkage.',409);
+      if(row.Status==='Identified'){
+        if(body.PatientId!==row.PatientId && !(reading&&body.PatientId===order.PatientId))
+          fail('The wristband has been identified. Refresh and verify the registered patient.',409);
+        const c=await visitContext({...body,VisitId:row.VisitId,PatientId:row.PatientId});
+        return {...c,order:{...order,WristbandAllergies:allergySnapshot(row.OrderAllergies),PatientId:row.PatientId,VisitId:row.VisitId,PatientName:patientSummary(c.person).DisplayName,HospitalNumber:c.person.HospitalNumber}};
+      }
+      if(row.Status!=='Awaiting identification'||body.PatientId!==row.__id)fail('The selected wristband does not match this order.',409);
+      if(!allowWristband)fail('Identify the wristband and verify the registered patient before completing this action.',409);
+      return {...await wristbandContext(row,BranchId),order};
+    }
+    if(order.PatientId!==body.PatientId && !(reading&&order.EmergencyArrivalId&&order.EmergencyArrivalId===body.PatientId))fail('The patient does not match this order.',409);
+    const current=await visitContext({...body,VisitId:order.VisitId,PatientId:order.PatientId});
     return {...current,order};
   }
   function careLock(current){return write('CareSummaries',current.person.PatientId,{...strip(current.care),PatientId:current.person.PatientId,
@@ -44,7 +90,9 @@ export function createHospitalOrdersService(ctx){
   }
   function changes(key,current,Action,updates={},details={}){
     const next={...strip(current.order),...updates,UpdatedAt:clock()};
-    return [write('Orders',next.OrderId,next,current.order),event(key,current,Action,details),
+    return [...(current.arrival ? [write('EmergencyArrivals',current.arrival.__id,
+      {...strip(current.arrival),OrderAllergies:strip(current.care),LastOrderActivityAt:clock()},current.arrival)] : []),
+      write('Orders',next.OrderId,next,current.order),event(key,current,Action,details),
       ...(current.visit.AdmissionId&&['Waiting','In progress'].includes(current.visit.Status)?[write('Visits',current.visit.VisitId,{...strip(current.visit),DischargeApprovalId:''},current.visit)]:[]),
       auditWrite(key,Action,current.BranchId,current.person,{OrderId:next.OrderId,OrderNumber:next.OrderNumber})];
   }
@@ -63,7 +111,7 @@ export function createHospitalOrdersService(ctx){
   }
   return {
     async orderVisitContext(body){
-      requireCapability('orders.create');const c=await visitContext(body,true);
+      requireCapability('orders.create');const c=await issueContext(body);
       await auditRead(body,'View prescribing context',c.BranchId,c.person,{VisitId:c.visit.VisitId});
       return {ok:true,patient:patientSummary(c.person),visit:publicRow(c.visit),care:publicRow(c.care)||{AllergyStatus:'Unknown',Allergies:'',Revision:''}};
     },
@@ -71,7 +119,7 @@ export function createHospitalOrdersService(ctx){
       requireCapability('orders.create');await branch(body);confirmed(body);
       const Kind=body.Kind,Fields=Kind==='Prescription'?await prescription(body.Prescription):investigation({...body.Investigation,Kind});
       return operation(body,'createOrder',async key=>{
-        const c=await visitContext(body,true);revision(body,c.visit,'VisitRevision');revision(body,c.care,'CareRevision');
+        const c=await issueContext(body);revision(body,c.visit,'VisitRevision');revision(body,c.care,'CareRevision');
         if(body.MedicineCatalogId && Kind!=='Prescription')fail('Choose a prescription before selecting a medicine.');
         const MedicineCatalogSnapshot=await medicineCatalogSnapshot(body,Fields,c.BranchId,read);
         let CatalogSnapshot = null;
@@ -86,12 +134,22 @@ export function createHospitalOrdersService(ctx){
         }
         const order={OrderId:key,OrderNumber:`${Kind==='Prescription'?'RX':'INV'}-${key.slice(0,12).toUpperCase()}`,
           PatientId:c.person.PatientId,PatientName:patientSummary(c.person).DisplayName,HospitalNumber:c.person.HospitalNumber,VisitId:c.visit.VisitId,BranchId:c.BranchId,
+          ...(c.arrival?{EmergencyArrivalId:c.arrival.__id,EmergencyReference:c.arrival.Reference}:{}),
           Kind,Fields,...(MedicineCatalogSnapshot?{MedicineCatalogSnapshot}:{}),...(CatalogSnapshot?{CatalogSnapshot}:{}),...(Kind==='Laboratory'?{SpecimenWorkflow:2,SpecimenSequence:0}:{}),Status:Kind==='Prescription'?'Awaiting pharmacy review':'Requested',CreatedAt:clock(),UpdatedAt:clock(),
           PrescriberUsername:actor,PrescriberName:clean(user.displayName)||actor,AllergySnapshot:allergySnapshot(c.care),
           DispensedQuantity:0,ReturnedQuantity:0,CriticalNeedsAcknowledgement:false,CriticalPendingCount:0};
         c.order=order;
-        return {writes:[write('Orders',key,order,null),careLock(c),
-          write('Visits',c.visit.VisitId,{...strip(c.visit),LastOrderAt:clock(),...(c.visit.AdmissionId?{DischargeApprovalId:''}:{})},c.visit),
+        let linkage;
+        if(c.arrival){
+          const sequence=(c.arrival.CareSequence||0)+1, rid=c.arrival.__id;
+          linkage=[write('EmergencyArrivals',rid,{...strip(c.arrival),CareSequence:sequence,OrderAllergies:strip(c.care)},c.arrival),
+            write('EmergencyCareEntries',key,{EntryId:key,OrderId:key,ArrivalId:rid,BranchId:c.BranchId,Reference:c.arrival.Reference,Sequence:sequence,
+              TimelineKey:rid+'|'+String(sequence).padStart(12,'0'),Type:Kind+' order',AuthorUsername:actor,AuthorName:order.PrescriberName,
+              SignedAt:order.CreatedAt,Content:{OrderNumber:order.OrderNumber,Service:Fields.Medicine || Fields.Service}},null)];
+        }else{
+          linkage=[careLock(c),write('Visits',c.visit.VisitId,{...strip(c.visit),LastOrderAt:clock(),...(c.visit.AdmissionId?{DischargeApprovalId:''}:{})},c.visit)];
+        }
+        return {writes:[write('Orders',key,order,null),...linkage,
           event(key,c,'Issue hospital order',{Kind}),auditWrite(key,'Issue hospital order',c.BranchId,c.person,{OrderId:key,OrderNumber:order.OrderNumber})],result:result(c)};
       });
     },
@@ -105,17 +163,17 @@ export function createHospitalOrdersService(ctx){
         CriticalNeedsAcknowledgement:row.CriticalNeedsAcknowledgement})),next:rows.next};
     },
     async orderDetails(body){
-      const c=await orderContext(body),isWorker=can(c.order.Kind==='Laboratory'?'laboratory.work':c.order.Kind==='Imaging'?'imaging.work':'pharmacy.work');
+      const c=await orderContext(body,{allowWristband:true,reading:true}),isWorker=can(c.order.Kind==='Laboratory'?'laboratory.work':c.order.Kind==='Imaging'?'imaging.work':'pharmacy.work');
       const latestRead=isWorker?report(c.order,c.order.LatestReportId):Promise.resolve(null);
       const releasedRead=isWorker&&c.order.ReleasedReportId&&c.order.ReleasedReportId===c.order.LatestReportId?latestRead:report(c.order,c.order.ReleasedReportId);
       const [latest,released]=await Promise.all([latestRead,releasedRead]);
       await auditRead(body,'View hospital order',c.BranchId,c.person,{OrderId:c.order.OrderId});
-      return {ok:true,order:{...publicRow(c.order),LabelToPrint:specimenLabel(c.order)},patient:patientSummary(c.person),care:publicRow(c.care)||{AllergyStatus:'Unknown',Allergies:'',Revision:''},
+      return {ok:true,unidentified:!!c.arrival,order:{...publicRow(c.order),LabelToPrint:specimenLabel(c.order)},patient:patientSummary(c.person),care:publicRow(c.care)||{AllergyStatus:'Unknown',Allergies:'',Revision:''},
         latestReport:publicRow(latest),releasedReport:publicRow(released),canVerify:!!latest&&latest.ActorUsername!==actor&&isWorker,
         canCancel:can('orders.create')&&(c.order.PrescriberUsername===actor||user.role==='Medical Director')};
     },
     async orderHistory(body){
-      const filters=dateFilters(body.DateRange),c=await orderContext(body);
+      const filters=dateFilters(body.DateRange),c=await orderContext(body,{allowWristband:true,reading:true});
       const rows=await page('OrderEvents',[eq('BranchId',c.BranchId),eq('OrderId',c.order.OrderId),...filters],'CreatedAt',body);
       await auditRead(body,'View hospital order history',c.BranchId,c.person,{OrderId:c.order.OrderId,ResultCount:rows.rows.length});
       return {ok:true,events:rows.rows.map(publicRow),next:rows.next};
@@ -131,7 +189,7 @@ export function createHospitalOrdersService(ctx){
     async cancelOrder(body){
       requireCapability('orders.create');await branch(body);const Reason=field(body,'Reason',2000,true);
       return operation(body,'cancelOrder',async key=>{
-        const c=await orderContext(body);revision(body,c.order);notCancelled(c.order);
+        const c=await orderContext(body,{allowWristband:true});revision(body,c.order);notCancelled(c.order);
         if(c.order.PrescriberUsername!==actor&&user.role!=='Medical Director')fail('Only the prescriber or Medical Director can cancel this order.',403);
         if(c.order.ReleasedReportId||c.order.Status==='Dispensed')fail('This order has been fulfilled. Record a return or report amendment instead.',409);
         return {writes:changes(key,c,'Cancel hospital order',{Status:'Cancelled',CancelledAt:clock(),CancelledBy:actor,CancelReason:Reason},{Reason}),result:result(c)};
@@ -141,12 +199,13 @@ export function createHospitalOrdersService(ctx){
       requireCapability('pharmacy.work');await branch(body);const Reason=field(body,'Reason',2000,true),Decision=body.Decision;
       if(!['Approved','On hold'].includes(Decision))fail('Approve or place the prescription on hold.');
       return operation(body,'reviewPrescription',async key=>{
-        const c=await orderContext(body);revision(body,c.order);pharmacyCurrent(body,c);
+        const c=await orderContext(body,{allowWristband:true});revision(body,c.order);pharmacyCurrent(body,c);
         notCancelled(c.order);
+        const approvalStatus=c.arrival?'Reviewed on wristband':c.order.DispensedQuantity>=c.order.Fields.Quantity?'Dispensed':c.order.DispensedQuantity?'Partially dispensed':'Ready to dispense';
         const ReviewedAllergies=await digest(JSON.stringify(allergySnapshot(c.care)));
-        if(c.order.PharmacyReview===Decision&&c.order.ReviewReason===Reason&&c.order.ReviewedAllergies===ReviewedAllergies)return {writes:[],result:{...result(c),Unchanged:true}};
-        return {writes:[...changes(key,c,'Review prescription',{Status:Decision==='Approved'?(c.order.DispensedQuantity>=c.order.Fields.Quantity?'Dispensed':c.order.DispensedQuantity?'Partially dispensed':'Ready to dispense'):'On hold',
-          PharmacyReview:Decision,ReviewedBy:actor,ReviewedAt:clock(),ReviewReason:Reason,ReviewedAllergies},{Decision,Reason}),careLock(c)],result:result(c)};
+        if(c.order.PharmacyReview===Decision&&c.order.ReviewReason===Reason&&c.order.ReviewedAllergies===ReviewedAllergies&&(!c.order.EmergencyArrivalId||c.order.ReviewPatientId===c.person.PatientId))return {writes:[],result:{...result(c),Unchanged:true}};
+        return {writes:[...changes(key,c,'Review prescription',{Status:Decision==='Approved'?approvalStatus:'On hold',
+          PharmacyReview:Decision,ReviewedBy:actor,ReviewedAt:clock(),ReviewReason:Reason,ReviewedAllergies,...(c.order.EmergencyArrivalId?{ReviewPatientId:c.person.PatientId}:{})},{Decision,Reason}),...(c.arrival?[]:[careLock(c)])],result:result(c)};
       });
     },
     async receiveMedicine(body){
@@ -187,6 +246,7 @@ export function createHospitalOrdersService(ctx){
       requireCapability('pharmacy.work');await branch(body);const Quantity=quantity(body.Quantity);
       return operation(body,'dispensePrescription',async key=>{
         const c=await orderContext(body);revision(body,c.order);pharmacyCurrent(body,c);
+        if(c.order.EmergencyArrivalId && c.order.ReviewPatientId!==c.person.PatientId)fail('Review this prescription for the identified patient before dispensing.',409);
         if(!['Ready to dispense','Partially dispensed'].includes(c.order.Status)||c.order.PharmacyReview!=='Approved')fail('The pharmacist must approve this prescription before dispensing.',409);
         if(c.order.ReviewedAllergies!==await digest(JSON.stringify(allergySnapshot(c.care))))fail('Allergy information changed. Review this prescription again before dispensing.',409);
         const batch=await read('MedicineBatches',body.BatchId);
@@ -237,7 +297,7 @@ export function createHospitalOrdersService(ctx){
       requireCapability('laboratory.work');await branch(body);confirmed(body);const Note=field(body,'Note',2000,true);
       if(!['Collected','Received','Rejected'].includes(body.Decision))fail('Choose Collected, Received or Rejected.');
       return operation(body,'recordSpecimen',async key=>{
-        const c=await orderContext(body);revision(body,c.order);notCancelled(c.order);
+        const c=await orderContext(body,{allowWristband:true});revision(body,c.order);notCancelled(c.order);
         if(c.order.Kind!=='Laboratory'||!['Requested','Specimen rejected','Specimen collected','Specimen received'].includes(c.order.Status))fail('This order is not awaiting specimen handling.',409);
         if(body.SpecimenLabel!==specimenLabel(c.order))fail('Match the specimen label to this patient and collection attempt.');
         if(c.order.SpecimenWorkflow===2){

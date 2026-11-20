@@ -245,7 +245,7 @@
         card.append(form);
       }
       if (can('clinical.read') && row.Status === 'Awaiting identification') {
-        window.DynamaxEmergencyCare.attach(card,{Reference:row.Reference},{api,run,writable,status});
+        window.DynamaxEmergencyCare.attach(card,{Reference:row.Reference},{api,run,writable,status,issueOrder:orders.openVisit,openOrder:can('orders.read')?orders.openOrder:null});
       }
       host.append(card);
     }
@@ -278,7 +278,7 @@
   stockControl=window.DynamaxHospitalStockControl.create({api,run,can,writable,status});
   stockDisposal=window.DynamaxHospitalStockDisposal.create({api,run,can,writable,status});
   procurement=window.DynamaxHospitalProcurement.create({api,run,can,writable,status});
-  clinical=window.DynamaxHospitalClinical.create({api,run,can,writable,status,navigate:showTab});
+  clinical=window.DynamaxHospitalClinical.create({api,run,can,writable,status,navigate:showTab,openOrder:order=>orders.openOrder(order)});
   orders=window.DynamaxHospitalOrders.create({api,run,can,writable,status,navigate:showTab});
   billing=window.DynamaxHospitalBilling.create({api,run,can,writable,status,navigate:showTab});
   inpatients=window.DynamaxHospitalInpatients.create({api,run,can,writable,status,navigate:showTab});

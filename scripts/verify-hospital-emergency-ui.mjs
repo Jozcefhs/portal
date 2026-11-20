@@ -11,7 +11,7 @@ try {
   for (const width of [1280,390]) {
     const f=fixture();
     const patient=await f.register();
-    const doctor = {...actor,role:'Doctor',username:'demo-doctor',allowedSections:[...actor.allowedSections,'hospitalTriage','hospitalConsultations']};
+    const doctor = {...actor,role:'Doctor',username:'demo-doctor',allowedSections:[...actor.allowedSections,'hospitalTriage','hospitalConsultations','hospitalOrders']};
     let user = actor;
     const page=await browser.newPage({viewport:{width,height:850}});
     const errors=[];
@@ -60,6 +60,17 @@ try {
     await rows.getByRole('button',{name:'Review and sign treatment'}).click();
     await page.getByRole('button',{name:'Sign for ED-1001'}).click();
     await page.locator('#status').filter({hasText:'Treatment signed'}).waitFor();
+    await rows.getByRole('button',{name:'Issue medication or investigation order'}).click();
+    await page.locator('#issueKind').selectOption('Laboratory');
+    const issue=page.locator('#issueOrderForm');
+    await issue.locator('[name=Service]').fill('Synthetic investigation');
+    await issue.locator('[name=Specimen]').fill('Synthetic sample');
+    await issue.locator('[name=Indication]').fill('Synthetic indication');
+    await page.locator('#confirmIssue').check();
+    await issue.getByRole('button',{name:'Sign and issue order'}).click();
+    await page.locator('#status').filter({hasText:'Order signed and issued'}).waitFor();
+    await page.locator('#orderIdentity').filter({hasText:'ED-1001'}).waitFor();
+    const original=f.rows('Orders')[0].OrderNumber;
     await changeRole(actor);
     await rows.getByText(/ED-1001/).waitFor();
     assert.equal(await rows.getByRole('button',{name:'Open care for ED-1001'}).count(),0);
@@ -89,6 +100,10 @@ try {
     await linked.getByText('Synthetic triage note',{exact:true}).waitFor();
     await linked.getByText('Synthetic treatment note',{exact:true}).waitFor();
     assert.equal(await linked.getByRole('button',{name:/Review and sign/}).count(),0);
+    await linked.getByRole('button',{name:'Open '+original}).click();
+    await page.locator('#orderIdentity').filter({hasText:patient.HospitalNumber}).waitFor();
+    await page.locator('#orderIdentity').filter({hasText:original}).waitFor();
+    assert.equal(f.rows('Orders').length,1);
     assert.deepEqual(errors,[]);
     console.log('Emergency intake and verified patient link passed at '+width+'px.');
     await page.close();
