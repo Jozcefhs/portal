@@ -1,8 +1,18 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { enforceDesktopDeviceActionScope } from '../functions/api/backend.js';
 
 const backendSource = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
+
+test('branch-paired accounts can change a billing category only through a role-gated scoped student lookup', () => {
+  const body = { BranchId: 'area-1-primary', AccountRef: 'DCAP1/26/0277', BillingCategory: 'Full Scholarship' };
+  assert.deepEqual(enforceDesktopDeviceActionScope({ type: 'device', branchId: 'area-1-primary' }, 'updateStudentBillingCategory', body), body);
+  const handler = backendSource.slice(backendSource.indexOf('async function updateStudentBillingCategory('), backendSource.indexOf('async function updateStudentStatus('));
+  assert.match(handler, /requireAccountingRole\(body, \['Super Admin', 'Accounts Officer'\]\)/);
+  assert.match(handler, /findStudentByAccountRef\(env, accountRef, requestedStudentScope\(body\)\)/);
+  assert.doesNotMatch(handler, /findStudentByAccountRef\(env, accountRef\)/);
+});
 
 test('desktop student requests derive a branch and school-section scope', () => {
   const helper = backendSource.slice(

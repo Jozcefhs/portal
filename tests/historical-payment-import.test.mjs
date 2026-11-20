@@ -47,9 +47,9 @@ test('historical payment import is role-gated, preflights rows, updates category
   assert.match(backendSource, /HISTORICAL_PAYMENT_IMPORT_LIMIT = 5/);
   assert.match(backendSource, /case 'importHistoricalPayments':[\s\S]*?return importHistoricalPayments\(env, body\)/);
   assert.match(backendSource, /requireAccountingRole\(body, \['Super Admin', 'Accounts Officer'\]\)/);
-  assert.match(backendSource, /Reference already belongs to a different payment/);
+  assert.match(backendSource, /resolveHistoricalPaymentReference\(row, student/);
   assert.match(backendSource, /const categoryByStudent = new Map\(\)/);
-  assert.match(backendSource, /student\.__scopePath \|\| student\.__id \|\| student\.AdmissionNo/);
+  assert.match(backendSource, /const studentKey = \[clean\(student\.__scopePath\), clean\(/);
   assert.match(backendSource, /BillingCategory: row\.BillingCategory/);
   assert.match(backendSource, /DeferNotifications: true/);
   assert.match(backendSource, /Channel: 'Historical Payment Import'/);

@@ -1,5 +1,6 @@
 import { prepareParentOnboarding, issueStaffParentOnboarding } from '../lib/parent-onboarding.js';
 import { securityAuditList } from './security-audit.js';
+import { resolveHistoricalPaymentReference } from '../lib/historical-payment-reference.js';
 import { loadDatedHistory } from '../lib/history-date-range.js';
 import { assignedStaffBranches, assertStaffScopeManageable, resolveStaffBranchAssignment } from '../lib/staff-branch-access.js';
 import { listBranchCollection } from '../lib/branch-reads.js';
@@ -1054,7 +1055,7 @@ const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
   'getHotelServices', 'saveHotelRoom', 'saveHotelReservation', 'changeHotelReservationStatus',
   'saveHotelRoomMedia', 'saveHotelKeyDevice', 'saveHotelKeySlot', 'resolveHotelKeyCommand',
   'recordHotelCharge', 'recordHotelPayment', 'setHotelHousekeepingStatus',
-  'updateStudentProfile', 'reissueParentOnboarding',
+  'updateStudentProfile', 'reissueParentOnboarding', 'updateStudentBillingCategory',
   'getSchoolClasses', 'saveSchoolClasses', 'resetSchoolClasses',
   'getAdmissionClasses', 'saveAdmissionClasses', 'resetAdmissionClasses',
   'getAccountsOverview', 'getAccountSnapshot', 'getHistoricalPaymentTemplateAccounts', 'importHistoricalPayments', 'recordManualPayment',
@@ -6381,6 +6382,7 @@ export async function recordManualPayment(env, body, { reviewWalletDuplicates = 
       RecordedAt: nowIso(),
       RecordedBy: clean(body.RecordedBy) || 'Accounts Office',
       Channel: clean(body.Channel),
+      ...(body.Channel === 'Historical Payment Import' ? { HistoricalImportReference: clean(body.HistoricalImportReference) } : {}),
       ReceiptNo: clean(body.ReceiptNo) || paymentId,
       Metadata: clean(body.Metadata),
       ProcessingStatus: 'Processing',
@@ -7075,26 +7077,25 @@ export async function importHistoricalPayments(env, body) {
     try {
       const student = await findStudentByAccountRef(env, row.AccountRef, scope);
       if (!student) throw historicalPaymentImportError(`Student account ${row.AccountRef} was not found.`, row.RowNumber);
-      const studentKey = clean(
-        student.__scopePath || student.__id || student.AdmissionNo || student.AccountRef || student.ApplicationReference || row.AccountRef
-      );
+      const studentKey = [clean(student.__scopePath), clean(
+        student.__id || student.AdmissionNo || student.AccountRef || student.ApplicationReference || row.AccountRef
+      )].join('/');
       const priorStudentCategory = categoryByStudent.get(studentKey);
       if (priorStudentCategory && !sameText(priorStudentCategory, row.BillingCategory)) {
         throw historicalPaymentImportError('The same student has conflicting BillingCategory values in this import.', row.RowNumber);
       }
       categoryByStudent.set(studentKey, row.BillingCategory);
-      const existing = await findPaymentByReference(env, row.Reference);
-      if (existing) {
+      const resolved = await resolveHistoricalPaymentReference(row, student,
+        (reference, options) => findPaymentByReference(env, reference, options), existing => {
         const existingPayment = normalizePayment(existing);
         const sameAccount = referencesMatch(existingPayment.AccountRef, row.AccountRef) ||
           accountRefsFrom(student).some((value) => referencesMatch(existingPayment.AccountRef, value));
         const sameFee = sameText(existingPayment.FeeCode, row.FeeCode);
         const sameAmount = Math.abs(paymentCreditedAmount(existingPayment) - row.Amount) < 0.005;
-        if (!sameAccount || !sameFee || !sameAmount) {
-          throw historicalPaymentImportError('Reference already belongs to a different payment.', row.RowNumber);
-        }
-      }
-      prepared.push({ row, student });
+        const sameCurrency = sameText(existingPayment.Currency || 'NGN', row.Currency);
+        return sameAccount && sameFee && sameAmount && sameCurrency;
+      });
+      prepared.push({ row, student, paymentReference: resolved.reference });
     } catch (error) {
       failures.push({ row: row.RowNumber, message: error.message || String(error) });
     }
@@ -7105,7 +7106,7 @@ export async function importHistoricalPayments(env, body) {
 
   const results = [];
   let duplicates = 0;
-  for (const { row, student } of prepared) {
+  for (const { row, student, paymentReference } of prepared) {
     try {
       let currentStudent = student;
       if (!sameText(student.BillingCategory || 'Regular', row.BillingCategory)) {
@@ -7117,6 +7118,8 @@ export async function importHistoricalPayments(env, body) {
       }
       const result = await recordManualPayment(env, {
         ...row,
+        Reference: paymentReference,
+        HistoricalImportReference: row.Reference,
         AccountRef: clean(currentStudent.AdmissionNo || currentStudent.AccountRef || row.AccountRef),
         ApplicationReference: clean(currentStudent.ApplicationReference),
         AdmissionNo: clean(currentStudent.AdmissionNo),
@@ -7128,7 +7131,7 @@ export async function importHistoricalPayments(env, body) {
         RecordedBy: clean(body.RecordedBy) || 'Accounts Office',
         Gateway: 'Manual',
         Channel: 'Historical Payment Import',
-        Metadata: row.Notes ? `Historical payment import: ${row.Notes}` : 'Historical payment import',
+        Metadata: `Historical payment import; original reference: ${row.Reference}${row.Notes ? `; ${row.Notes}` : ''}`,
         DeferNotifications: true
       });
       if (result.duplicate) duplicates += 1;
@@ -8048,13 +8051,16 @@ async function recordStockMovement(env, body, collection, movementCollection, de
 }
 
 async function updateStudentBillingCategory(env, body) {
+  requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
   const accountRef = clean(body.AccountRef || body.accountRef || body.AdmissionNo || body.admissionNo);
   const category = clean(body.BillingCategory || body.billingCategory) || 'Regular';
-  const student = await findStudentByAccountRef(env, accountRef);
+  const student = await findStudentByAccountRef(env, accountRef, requestedStudentScope(body));
   if (!student) throw applicationNotFound(accountRef);
   const saved = await saveStudent(env, { ...student, BillingCategory: category, UpdatedAt: nowIso() });
   return { ok: true, message: 'Billing category updated.', student: saved };
 }
+
+export { updateStudentBillingCategory };
 
 async function updateStudentStatus(env, body) {
   const accountRef = clean(body.AccountRef || body.accountRef || body.AdmissionNo || body.admissionNo);
