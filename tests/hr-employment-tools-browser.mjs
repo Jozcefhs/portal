@@ -365,11 +365,26 @@ try {
   assert.equal(await page.locator('[data-hr-pay-count]').textContent(), '1 of 4 staff shown');
   assert.equal(await staffRows.filter({ hasText: 'Chidi Example' }).isVisible(), false);
   assert.equal(await page.evaluate(() => calls.length), callsBeforeFilters, 'grade, level and name filters do not request data');
-  for (const edition of ['faith', 'organisation', 'hospital']) {
+  for (const edition of ['school', 'faith', 'organization', 'hospital']) {
     const before = await page.evaluate(() => calls.length);
     await page.evaluate(value => mountHr(value), edition);
     assert.equal(await page.evaluate(() => calls.length), before, `${edition} workspace opening is read-free`);
-    assert.equal(await page.getByRole('button', { name: 'Load employee setup', exact: true }).count(), 1);
+    await page.getByLabel('Staff member', { exact: true }).selectOption('ada');
+    await page.getByRole('button', { name: 'Load employee setup', exact: true }).click();
+    const groups = page.locator('[data-hr-salary-fields] .hr-salary-components');
+    await groups.getByRole('heading', { name: 'Other deductions' }).waitFor();
+    for (const width of [1366, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      const layout = await groups.evaluate(grid => {
+        const [allowances, deductions] = [...grid.children].map(section => section.getBoundingClientRect());
+        return {
+          fits: grid.scrollWidth <= grid.clientWidth,
+          columns: allowances.top === deductions.top && deductions.left >= allowances.right,
+          stacked: deductions.left === allowances.left && deductions.top >= allowances.bottom
+        };
+      });
+      assert.ok(layout.fits && (width === 1366 ? layout.columns : layout.stacked), `${edition} salary layout at ${width}px`);
+    }
   }
   await page.evaluate(() => {
     const directory = Array.from({ length: 51 }, (_, index) => ({
