@@ -22371,13 +22371,14 @@ function renderDataBackup() {
         </article>
         <article class="data-backup-card data-backup-restore-card">
           <span class="data-backup-card-icon" aria-hidden="true">&#8634;</span>
-          <div><h3>Restore one branch</h3><p>Choose a backup and preview its changes. Shared records and collections missing from the backup are kept.</p></div>
-          <label>Branch to restore<select id="restoreBranch"><option value="">Choose one branch</option>${availableBranches.filter(row => row.id && row.id !== 'all' && (selectedBranchId === 'all' || selectedBranchId === row.id)).map(row => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.name || row.id)}</option>`).join('')}</select></label>
+          <div><h3>Restore from backup</h3><p>Choose one branch or the whole organisation and preview the changes.</p></div>
+          <label>Restore scope<select id="restoreBranch"><option value="">Choose a scope</option><option value="@organisation" ${selectedBranchId !== 'all' || currentUser.role !== 'Super Admin' ? 'disabled' : ''}>Whole organisation</option>${availableBranches.filter(row => row.id && row.id !== 'all' && (selectedBranchId === 'all' || selectedBranchId === row.id)).map(row => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.name || row.id)}</option>`).join('')}</select></label>
+          ${selectedBranchId !== 'all' ? '<small>Choose All branches in the workspace selector for a whole-organisation restore.</small>' : ''}
           <label>Restore mode<select id="restoreMode"><option value="merge">Keep newer records</option><option value="exact">Match the backup exactly</option></select></label>
-          <p>Both modes restore eligible entries from the file. Exact match also removes previewed branch records absent from the file in those collections.</p>
+          <p id="restoreModeHint">Both modes restore eligible entries from the file. Exact match also removes previewed branch records absent from the file in those collections.</p>
           <label>Backup file<input id="restoreBackupFile" type="file" accept=".json,.dynamax-backup,application/json"></label>
           <label>Backup password<input id="restoreBackupPassword" type="password" autocomplete="off"></label>
-          <label><input type="checkbox" id="restoreUploadedDocuments"> Restore uploaded documents for the selected branch</label>
+          <label><input type="checkbox" id="restoreUploadedDocuments"> Restore uploaded documents in this scope</label>
           <button type="button" id="openBackupDocuments">Browse documents in backup</button>
           <div id="backupDocumentList" aria-live="polite"></div>
           <button type="button" id="previewBranchRestore" disabled>Preview branch restore</button>
@@ -22478,7 +22479,7 @@ function renderDataBackup() {
     }
   });
   const restoreCard = document.getElementById('restoreBranch');
-  import('/js/branch-restore.js?v=20261120-restore-files').then(({ mountBranchRestore }) => {
+  import('/js/branch-restore.js?v=20261120-organisation').then(({ mountBranchRestore }) => {
     if (!restoreCard.isConnected) return;
     mountBranchRestore({ request: dataBackupRequest, staffFetch, decrypt: decryptOrganizationBackup, chunks: chunkRestoreRows,
       status: setDataBackupStatus, dialogs: window.DynamaxDialogs, derive: deriveBackupEncryptionKey, safetyBackup: async password => {
