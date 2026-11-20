@@ -1054,7 +1054,7 @@ const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
   'getHotelServices', 'saveHotelRoom', 'saveHotelReservation', 'changeHotelReservationStatus',
   'saveHotelRoomMedia', 'saveHotelKeyDevice', 'saveHotelKeySlot', 'resolveHotelKeyCommand',
   'recordHotelCharge', 'recordHotelPayment', 'setHotelHousekeepingStatus',
-  'updateStudentProfile', 'reissueParentOnboarding',
+  'updateStudentProfile', 'reissueParentOnboarding', 'updateStudentBillingCategory',
   'getSchoolClasses', 'saveSchoolClasses', 'resetSchoolClasses',
   'getAdmissionClasses', 'saveAdmissionClasses', 'resetAdmissionClasses',
   'getAccountsOverview', 'getAccountSnapshot', 'getHistoricalPaymentTemplateAccounts', 'importHistoricalPayments', 'recordManualPayment',
@@ -8049,13 +8049,16 @@ async function recordStockMovement(env, body, collection, movementCollection, de
 }
 
 async function updateStudentBillingCategory(env, body) {
+  requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
   const accountRef = clean(body.AccountRef || body.accountRef || body.AdmissionNo || body.admissionNo);
   const category = clean(body.BillingCategory || body.billingCategory) || 'Regular';
-  const student = await findStudentByAccountRef(env, accountRef);
+  const student = await findStudentByAccountRef(env, accountRef, requestedStudentScope(body));
   if (!student) throw applicationNotFound(accountRef);
   const saved = await saveStudent(env, { ...student, BillingCategory: category, UpdatedAt: nowIso() });
   return { ok: true, message: 'Billing category updated.', student: saved };
 }
+
+export { updateStudentBillingCategory };
 
 async function updateStudentStatus(env, body) {
   const accountRef = clean(body.AccountRef || body.accountRef || body.AdmissionNo || body.admissionNo);

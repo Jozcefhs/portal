@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, webcrypto } from 'node:crypto';
-import { recordManualPayment, enforceDesktopDeviceActionScope, syncSchoolAccountCreditJournals } from '../functions/api/backend.js';
+import { recordManualPayment, enforceDesktopDeviceActionScope, syncSchoolAccountCreditJournals, updateStudentBillingCategory } from '../functions/api/backend.js';
 import { handleManualPaymentCorrection } from '../functions/lib/manual-payment-corrections.js';
 import { handleWebManualPayment } from '../functions/lib/web-manual-payments.js';
 import { objectToFirestoreFields, firestoreDocumentToObject } from '../functions/lib/firestore.js';
@@ -198,6 +198,25 @@ function fixture(t, branch = 'main', section = 'secondary') {
 }
 
 const denied = error => [403, 404, 409].includes(error.status);
+
+test('branch billing-category changes affect the selected branch pupil and preserve other pupils and financial records', async t => {
+  const f = fixture(t, 'north', 'primary');
+  f.student(); f.student('STU-001', 'main', 'primary');
+  const foreign = structuredClone(f.get(f.schoolPath('students', 'main', 'primary'), 'STU-001'));
+  f.put('payments', 'prior-payment', { Reference: 'prior-payment', BranchId: 'north', AccountRef: 'STU-001', Amount: 7000 });
+  f.put('invoices', 'prior-invoice', { InvoiceId: 'prior-invoice', BranchId: 'north', AccountRef: 'STU-001', Amount: 10000 });
+  const financial = [f.get('payments', 'prior-payment'), f.get('invoices', 'prior-invoice')];
+  const result = await updateStudentBillingCategory(f.env, f.body({ BillingCategory: 'Full Scholarship' }));
+  assert.equal(result.student.BillingCategory, 'Full Scholarship');
+  assert.deepEqual(f.get(f.schoolPath('students', 'main', 'primary'), 'STU-001'), foreign);
+  assert.deepEqual([f.get('payments', 'prior-payment'), f.get('invoices', 'prior-invoice')], financial);
+  f.student('FOREIGN-ONLY', 'main', 'primary');
+  const before = f.mutations.length;
+  await assert.rejects(updateStudentBillingCategory(f.env, f.body({ AccountRef: 'FOREIGN-ONLY', BillingCategory: 'Full Scholarship' })));
+  assert.equal(f.mutations.length, before);
+  await assert.rejects(updateStudentBillingCategory(f.env, f.body({ UserRole: 'Front Desk', BillingCategory: 'Regular' })), denied);
+  assert.equal(f.mutations.length, before);
+});
 
 test('web manual payment uses the real account snapshot, preserves a batch credit and retries without another deposit', async t => {
   const f = fixture(t); f.student();
