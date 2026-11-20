@@ -334,7 +334,7 @@ function restoreActor(user = {}) {
   };
 }
 
-function protectRestoreStaffActor(env, actor, rows) {
+export function protectRestoreStaffActor(env, actor, rows) {
   // Resolve the destination from live records, never the backup's Username.
   // Legacy account document IDs may differ from the canonical/login username.
   const matches = rows.filter((row) => [row.Username, row.username, row.__id]
@@ -359,7 +359,7 @@ function protectRestoreStaffActor(env, actor, rows) {
   };
 }
 
-function isProtectedRestoreStaff(row, actor) {
+export function isProtectedRestoreStaff(row, actor) {
   return actor.protectedStaffIds?.has(clean(row.__id))
     || [row.Username, row.username, row.UsernameKey, row.LoginUsername, row.loginUsername, row.LoginUsernameKey]
       .some((value) => actor.protectedStaffNames?.has(lower(value)) || lower(value) === actor.username);
@@ -405,6 +405,34 @@ function restoreCollectionPathAllowed(path, discoveredPaths, edition) {
     && parts[0] === 'organisationBranches'
     && /^[a-z0-9._-]+$/i.test(parts[1])
     && churchCollections.has(parts[2]);
+}
+
+export function wholeRestorePathAllowed(path, identity) {
+  if (typeof path !== 'string' || !path || path.length > 1024 ||
+      !path.split('/').every(part => /^[A-Za-z0-9._-]+$/.test(part) && part !== '.' && part !== '..')) return false;
+  const root = path.split('/')[0];
+  if (EXCLUDED_ROOT_COLLECTIONS.has(root) || ['tenantregistrations','tenantprojectpool','managedorganisations',
+      'managedorganizations','subscriptions','subscriptionpayments'].includes(lower(root))) return false;
+  if (path.endsWith('/hrPresenceReviews') && path.split('/').length === 3) {
+    return path.startsWith(identity.edition === 'school' ? 'schoolBranches/' : 'organisationBranches/');
+  }
+  return restoreCollectionPathAllowed(path, new Set(), identity.edition);
+}
+
+// Never import credentials or installation identity from an archive. Preserve
+// those live fields even when an older archive has no redaction metadata.
+export function wholeRestoreFields(path, row, current) {
+  const data = Object.fromEntries(Object.entries(row).filter(([field]) => !field.startsWith('__')));
+  if (path !== 'settings') return row.__redactedFields ? null : data;
+  if (row.__id === 'staffAccountIntegrity') return null;
+  const redacted = Array.isArray(row.__redactedFields) ? row.__redactedFields : [];
+  if (!current && (redacted.length || row.__id === 'organisationProfile')) return null;
+  const protectedFields = [...SENSITIVE_SETTING_FIELDS, ...redacted, ...(row.__id === 'organisationProfile' ? IDENTITY_SETTING_FIELDS : [])];
+  for (const field of protectedFields) {
+    if (current && Object.hasOwn(current, field)) data[field] = current[field];
+    else delete data[field];
+  }
+  return data;
 }
 
 async function currentRestoreJob(env, jobId, actor) {

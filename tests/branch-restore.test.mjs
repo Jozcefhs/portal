@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { branchRestoreRequest, putRestoreFile } from '../functions/lib/branch-restore.js';
 import { requiredDeploymentIdentity } from '../functions/lib/deployment-identity.js';
-import { previewBranchBackup, previewRestoreFiles } from '../js/branch-restore.js';
+import { previewBranchBackup, previewRestoreFiles, prepareRestoreBatches } from '../js/branch-restore.js';
 import { backupJsonValue } from '../functions/lib/firestore.js';
 
 test('chunked browser upload reaches storage with the archived length and cancels on a collision', async () => {
@@ -81,6 +81,55 @@ function fixture(edition) {
 }
 
 for (const edition of ['school','faith','organization','hospital']) {
+  for (const mode of ['missing','merge']) test(edition+' whole organisation, '+mode+': one confirmed record and file sequence', async t => {
+    try { requiredDeploymentIdentity({ORGANISATION_EDITION:edition,DYNAMAX_WORKSPACE_ID:'test-org'}); } catch {return t.skip();}
+    const f = fixture(edition);
+    Object.assign(f.user,{branchId:'all',branchAccess:'all',role:'Super Admin'});
+    const payload = {...f.payload,collections:{
+      [f.path]:[{__id:'new',BranchId:'east'}, {__id:'edit',BranchId:'west',Amount:200}, {__id:'collision',BranchId:'west'}],
+      settings:[{__id:'labels',Title:'new'}, {__id:'email',Title:'new',__redactedFields:['Secret']}],
+      systemRestoreJobs:[{__id:'foreign'}]
+    }};
+    f.put('settings','email',{Title:'old',Secret:'live'});
+    const blob = new Blob(['abc']);
+    const file = {key:'v1/'+edition+'/test-org/finance/east/all/a/invoice/x.pdf',name:'x.pdf',type:'application/pdf',size:3,etag:'old',version:'old'};
+    payload.documentArchive = {files:[file,file],missing:[]};
+    let object, puts = 0;
+    f.env.DYNAMAX_DOCUMENTS = {head: async () => object, put: async (key,bytes,options) => {
+      assert.equal(key,file.key); assert.equal(options.onlyIf.get('If-None-Match'),'*'); assert.equal(bytes.byteLength,3);
+      puts++; return object = {size:3, checksums:{toJSON:()=>({sha256:options.sha256})}};
+    }};
+    const preview = async () => {
+      const plan = await previewBranchBackup(payload,'@organisation',mode,f.call, rows => [rows],()=>{});
+      await previewRestoreFiles(plan,{payload,offsets:[0,1]},new Set(),f.call,async()=>blob);
+      return plan;
+    };
+    const snapshot = new Map(f.store), plan = await preview();
+    assert.equal(puts,0); assert.deepEqual(f.store,snapshot);
+    assert.deepEqual([...plan.byBranch.keys()].sort(),['Excluded collections','Organisation-wide','east','west']);
+    assert.equal(plan.byBranch.get('east').length,2);
+    assert.equal(plan.totals.conflict,1); assert.equal(plan.totals.keep,mode==='missing'?2:0);
+    const prepare = {...plan.scope, ...await prepareRestoreBatches(plan), confirmation:plan.phrase,safetyBackupCreated:true};
+    await assert.rejects(f.call('prepare-branch-restore',{...prepare,confirmation:'RESTORE EAST MERGE'}));
+    await assert.rejects(f.call('prepare-branch-restore',{...prepare,manifest:{...prepare.manifest,branchId:'east'}}));
+    f.user.branchAccess = 'selected';
+    await assert.rejects(f.call('prepare-branch-restore',prepare)); f.user.branchAccess='all';
+    const {jobId} = await f.call('prepare-branch-restore',prepare);
+    for (const [index,batch] of plan.batches.entries()) {
+      const body = {...plan.scope,...batch,index,jobId};
+      const action = batch.file ? 'apply-branch-restore-document' : 'apply-branch-restore';
+      if (batch.file) Object.assign(body,{binary:new Uint8Array(await blob.arrayBuffer()),byteLength:3});
+      await assert.rejects(f.call(action,{...body,nextHash:'bad'}));
+      if (!index) await assert.rejects(f.call(action,{...body, documents:[{__id:'substituted',BranchId:'east'}]}));
+      const result = await f.call(action,body);
+      assert.deepEqual(await f.call(action,body),result);
+    }
+    assert.equal(puts,1); assert.equal(f.get('settings','email').Secret,'live');
+    assert.equal(f.get(f.path,'edit').Amount,mode==='merge'?200:1);
+    assert.equal(f.get(f.path,'collision').BranchId,'east'); assert.ok(f.get(f.path,'later'));
+    assert.equal(f.get('systemRestoreJobs','foreign'),undefined); assert.ok(f.get('settings','labels'));
+    assert.equal((await preview()).batches.length,0);
+  });
   test(edition + ' restores selected files once, keeps conflicts, and resumes an interrupted write', async t => {
     try { requiredDeploymentIdentity({ORGANISATION_EDITION:edition, DYNAMAX_WORKSPACE_ID:'test-org'}); } catch { return t.skip(); }
     const f = fixture(edition);
