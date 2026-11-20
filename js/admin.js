@@ -22359,7 +22359,10 @@ function renderDataBackup() {
       <div class="data-backup-grid">
         <article class="data-backup-card">
           <span class="data-backup-card-icon" aria-hidden="true">&#8681;</span>
-          <div><p class="eyebrow">Create recovery point</p><h3>Download encrypted backup</h3><p>Captures every current operational collection, branch and school section. Temporary request locks are excluded.</p></div>
+          <div><p class="eyebrow">Create recovery point</p><h3>Download encrypted backup</h3></div>
+          <label>Backup scope<select id="backupScope"><option value="branch">One branch</option><option value="organisation">Whole organisation</option></select></label>
+          <label id="backupBranchLabel">Branch to back up<select id="backupBranch"><option value="">Choose one branch</option>${availableBranches.filter(row => row.id && row.id !== 'all' && (selectedBranchId === 'all' || row.id === selectedBranchId)).map(row => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.name || row.id)}</option>`).join('')}</select></label>
+          <p id="backupScopeHint" aria-live="polite"></p>
           <label>Backup password <input id="newBackupPassword" type="password" minlength="10" autocomplete="new-password" placeholder="At least 10 characters"></label>
           <label>Confirm password <input id="confirmBackupPassword" type="password" minlength="10" autocomplete="new-password" placeholder="Repeat the password"></label>
           <button type="button" id="downloadDataBackup">Download backup</button>
@@ -22395,7 +22398,27 @@ function renderDataBackup() {
       <aside class="data-backup-notes"><strong>Recovery safeguards</strong><ul><li>The backup must match this workspace and organisation edition.</li><li>The currently signed-in Super Administrator account and deployment/subscription identity are preserved.</li><li>Restore activity is written to the Security Audit Log.</li></ul></aside>
     </section>`;
   renderModuleSummary('dataBackup', true);
+  const backupScope = document.getElementById('backupScope');
+  const backupBranch = document.getElementById('backupBranch');
+  const downloadButton = document.getElementById('downloadDataBackup');
+  if (selectedBranchId !== 'all') backupBranch.value = selectedBranchId;
+  function showBackupScope() {
+    const single = backupScope.value === 'branch';
+    document.getElementById('backupBranchLabel').hidden = !single;
+    backupBranch.disabled = !single;
+    downloadButton.disabled = single && !backupBranch.value;
+    document.getElementById('backupScopeHint').textContent = single
+      ? 'Includes operational records that can be traced exclusively to this branch. Choose Whole organisation to include shared records.'
+      : 'Includes database records across all branches and shared organisation records.';
+  }
+  backupScope.addEventListener('change', showBackupScope);
+  backupBranch.addEventListener('change', showBackupScope);
+  showBackupScope();
   document.getElementById('downloadDataBackup')?.addEventListener('click', async (event) => {
+    const single = backupScope.value === 'branch';
+    const branchId = backupBranch.value;
+    if (single && !branchId) return setDataBackupStatus('Select the branch to back up.', 'bad');
+    if (dataBackupState.busy) return;
     const password = document.getElementById('newBackupPassword').value;
     const confirmation = document.getElementById('confirmBackupPassword').value;
     if (password.length < 10) return setDataBackupStatus('Use a backup password of at least 10 characters.', 'bad');
@@ -22403,19 +22426,27 @@ function renderDataBackup() {
     const button = event.currentTarget;
     setButtonLoading(button, true, 'Preparing...', 'Download backup');
     dataBackupState.busy = true;
+    backupScope.disabled = backupBranch.disabled = true;
     try {
-      setDataBackupStatus('Collecting organisation records...');
-      const payload = await collectOrganizationBackup();
+      setDataBackupStatus(single ? 'Collecting selected branch records...' : 'Collecting organisation records...');
+      const payload = single
+        ? await (await import('/js/branch-backup.js?v=1')).collectBranchBackup(branchId, dataBackupRequest,
+            (current, total) => dataBackupProgress('Backing up branch', current, total))
+        : await collectOrganizationBackup();
       setDataBackupStatus('Encrypting the backup on this device...');
       const envelope = await encryptOrganizationBackup(payload, password);
-      downloadBackupFile(envelope);
+      downloadBackupFile(envelope, single ? 'branch-' + branchId : 'organisation-backup');
       setDataBackupStatus(`Backup downloaded: ${Object.keys(payload.collections).length.toLocaleString()} collections and ${backupDocumentCount(payload).toLocaleString()} records.`, 'good');
     } catch (error) {
       setDataBackupStatus(error.message || String(error), 'bad');
     } finally {
       dataBackupState.busy = false;
       hideDataBackupProgress();
-      if (button.isConnected) setButtonLoading(button, false, 'Preparing...', 'Download backup');
+      if (button.isConnected) {
+        setButtonLoading(button, false, 'Preparing...', 'Download backup');
+        backupScope.disabled = false;
+        showBackupScope();
+      }
     }
   });
   const restoreCard = document.getElementById('restoreBranch');
