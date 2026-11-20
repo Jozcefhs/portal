@@ -80,7 +80,7 @@ function metadataValue(value, maximum = 1024) {
   return clean(value).replace(/[\r\n]+/g, ' ').slice(0, maximum);
 }
 
-function identityPrefix(identity) {
+export function identityPrefix(identity) {
   return `v1/${safeSegment(identity.edition)}/${safeSegment(identity.workspaceId)}/`;
 }
 

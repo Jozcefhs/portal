@@ -20,7 +20,7 @@ export function collectionKind(path, { workspaceId, edition }, branch) {
   return '';
 }
 
-function owns(path, row, identity, branch) {
+export function owns(path, row, identity, branch) {
   if ([row.WorkspaceId, row.workspaceId].some(id => id && id !== identity.workspaceId)) return false;
   const kind = collectionKind(path, identity, branch);
   if (kind === 'operational') return branchOwnsResetRecord(path, row, branch, identity.edition);

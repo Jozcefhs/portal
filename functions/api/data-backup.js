@@ -1,5 +1,6 @@
 import { branchRestoreRequest } from '../lib/branch-restore.js';
 import { exportBranchBackup } from '../lib/branch-backup.js';
+import { backupDocuments } from '../lib/backup-documents.js';
 import { assignedStaffBranches } from '../lib/staff-branch-access.js';
 import { requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession, verifyStaffApprovalPassword } from '../lib/staff-auth.js';
@@ -32,7 +33,10 @@ export async function onRequestPost({ request, env }) {
     const body = await readJsonBody(request, { maxBytes: 8 * 1024 * 1024 });
     const action = lower(body.action || 'export');
     let result;
-    if (action === 'plan-branch-backup' || action === 'export-branch-page') {
+    if (['list-backup-documents', 'inspect-backup-document', 'read-backup-document'].includes(action)) {
+      result = await backupDocuments(env, user, action, body);
+      if (result instanceof Response) return result;
+    } else if (action === 'plan-branch-backup' || action === 'export-branch-page') {
       result = await exportBranchBackup(env, user, action, body);
     } else if (action === 'export') {
       result = await exportOrganizationBackupPage(env, {
