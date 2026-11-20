@@ -80,7 +80,7 @@ test('hidden pages wait and account switches discard queued private messages', a
 
 test('camera guidance is not interrupted by notification speech', async () => {
   const h = harness();
-  h.document.querySelector = () => ({});
+  h.document.querySelector = selector => selector.includes('[data-staff-attendance-face-dialog][open]') ? {} : null;
   h.events.get('pointerdown')();
   h.api.announce(requisition());
   await flush();

@@ -3,7 +3,6 @@ const DESCRIPTOR_LENGTH = 1024;
 const ENROLLMENT_SAMPLE_COUNT = 3;
 const ROUTINE_SAMPLE_COUNT = 1;
 const CAPTURE_TIMEOUT_MS = 40000;
-const SPOKEN_GUIDANCE_DELAY_MS = 220;
 const LIVENESS_ACTIONS = new Set(['BLINK', 'TURN_LEFT', 'TURN_RIGHT', 'CHIN_UP']);
 const NEUTRAL_POSE_FRAMES = 3;
 const RETURN_POSE_FRAMES = 2;
@@ -40,53 +39,52 @@ function saveAudioGuidancePreference(enabled) {
   }
 }
 
-function audioGuidanceState(dialog) {
-  if (!audioGuidanceStates.has(dialog)) {
-    audioGuidanceStates.set(dialog, { timer: 0, lastMessage: '', pendingMessage: '', utterance: null });
-  }
-  return audioGuidanceStates.get(dialog);
-}
-
 function stopAudioGuidance(dialog) {
   const state = audioGuidanceStates.get(dialog);
-  if (state?.timer) window.clearTimeout(state.timer);
-  if (state) {
-    state.timer = 0;
-    state.pendingMessage = '';
-    state.utterance = null;
-  }
-  if (audioGuidanceSupported()) window.speechSynthesis.cancel();
   audioGuidanceStates.delete(dialog);
+  if (state?.utterance && audioGuidanceSupported()) window.speechSynthesis.cancel();
 }
 
-function speakGuidance(dialog, message, { immediate = false, force = false } = {}) {
-  const spokenMessage = clean(message);
-  if (!dialog?.open || !spokenMessage || !audioGuidanceEnabled()) return;
-  const state = audioGuidanceState(dialog);
-  if (!force && (state.lastMessage === spokenMessage || state.pendingMessage === spokenMessage)) return;
-  if (state.timer) window.clearTimeout(state.timer);
-  state.pendingMessage = spokenMessage;
-  const speak = () => {
-    state.timer = 0;
+function speakGuidance(dialog, message) {
+  if (!dialog.open || !message || !audioGuidanceEnabled()) return;
+  let state = audioGuidanceStates.get(dialog);
+  if (!state) {
+    state = { lastMessage: '', pendingMessage: '', utterance: null };
+    audioGuidanceStates.set(dialog, state);
+  }
+  if (state.lastMessage === message) {
     state.pendingMessage = '';
-    if (!dialog.open || !audioGuidanceEnabled() || (!force && state.lastMessage === spokenMessage)) return;
-    window.speechSynthesis.cancel();
-    const utterance = new window.SpeechSynthesisUtterance(spokenMessage);
-    utterance.lang = document.documentElement.lang || navigator.language || 'en-NG';
-    utterance.rate = 0.96;
-    utterance.pitch = 1;
-    utterance.volume = 1;
-    state.lastMessage = spokenMessage;
-    state.utterance = utterance;
-    utterance.addEventListener('end', () => {
-      if (state.utterance === utterance) state.utterance = null;
-    }, { once: true });
-    utterance.addEventListener('error', () => {
-      if (state.utterance === utterance) state.utterance = null;
-    }, { once: true });
-    window.speechSynthesis.speak(utterance);
+    return;
+  }
+  if (state.utterance) {
+    state.pendingMessage = message;
+    return;
+  }
+  const utterance = new window.SpeechSynthesisUtterance(message);
+  utterance.lang = document.documentElement.lang || navigator.language || 'en-NG';
+  utterance.rate = 0.96;
+  state.utterance = utterance;
+  state.lastMessage = message;
+  const finished = () => {
+    if (audioGuidanceStates.get(dialog) !== state || state.utterance !== utterance) return;
+    state.utterance = null;
+    const next = state.pendingMessage;
+    state.pendingMessage = '';
+    if (next) speakGuidance(dialog, next);
   };
-  state.timer = window.setTimeout(speak, immediate ? 0 : SPOKEN_GUIDANCE_DELAY_MS);
+  utterance.addEventListener('end', finished, { once: true });
+  utterance.addEventListener('error', finished, { once: true });
+  try {
+    window.speechSynthesis.speak(utterance);
+  } catch {
+    finished();
+  }
+}
+
+function guideCaptureStep(dialog, message) {
+  if (dialog.captureInstruction === message) return;
+  dialog.captureInstruction = message;
+  speakGuidance(dialog, message);
 }
 
 function updateAudioGuidanceButton(dialog) {
@@ -94,6 +92,7 @@ function updateAudioGuidanceButton(dialog) {
   if (!button) return;
   const supported = audioGuidanceSupported();
   const enabled = audioGuidanceEnabled();
+  dialog.querySelector('[data-face-status]')?.setAttribute('aria-live', enabled ? 'off' : 'polite');
   button.disabled = !supported;
   button.setAttribute('aria-pressed', String(enabled));
   button.title = supported
@@ -105,7 +104,8 @@ function updateAudioGuidanceButton(dialog) {
     : 'Audio unavailable';
 }
 
-function initializeAudioGuidance(dialog) {
+function initializeAudioGuidance(dialog, narrateStatus = false) {
+  dialog.narrateFaceStatus = narrateStatus;
   updateAudioGuidanceButton(dialog);
   dialog?.querySelector('[data-face-audio]')?.addEventListener('click', () => {
     if (!audioGuidanceSupported()) return;
@@ -114,10 +114,10 @@ function initializeAudioGuidance(dialog) {
     stopAudioGuidance(dialog);
     updateAudioGuidanceButton(dialog);
     if (enabled) {
-      const currentInstruction = dialog.querySelector('[data-face-overlay]')?.textContent ||
-        dialog.querySelector('[data-face-status]')?.textContent ||
-        'Audio guidance is on.';
-      speakGuidance(dialog, currentInstruction, { immediate: true, force: true });
+      const instruction = dialog.narrateFaceStatus
+        ? dialog.querySelector('[data-face-status]')?.textContent
+        : dialog.captureInstruction;
+      speakGuidance(dialog, instruction);
     }
   });
 }
@@ -126,14 +126,18 @@ function setStatus(dialog, message, tone = '') {
   const element = dialog?.querySelector('[data-face-status]');
   if (!element) return;
   const normalizedMessage = clean(message);
+  if (element.setAttribute) {
+    const announcement = tone === 'bad' || !audioGuidanceEnabled() ? 'polite' : 'off';
+    if (element.getAttribute('aria-live') !== announcement) element.setAttribute('aria-live', announcement);
+  }
   element.className = `student-face-status${tone ? ` ${tone}` : ''}`;
-  element.textContent = normalizedMessage;
+  if (element.textContent !== normalizedMessage) element.textContent = normalizedMessage;
   const overlay = dialog.querySelector('[data-face-overlay]');
   if (overlay) {
     overlay.className = `student-face-live-guidance${tone ? ` ${tone}` : ''}`;
     overlay.textContent = normalizedMessage;
   }
-  speakGuidance(dialog, normalizedMessage);
+  if (dialog.narrateFaceStatus) speakGuidance(dialog, normalizedMessage);
 }
 
 function setGuideState(dialog, state = 'searching') {
@@ -699,7 +703,9 @@ export async function captureDescriptor(dialog, human, sampleCount = ENROLLMENT_
     maximumAbsolutePitchDelta: 0
   };
   setGuideState(dialog, 'searching');
-  setStatus(dialog, 'Centre your face and hold still to begin the live check.');
+  const firstInstruction = 'Look straight at the camera and hold still.';
+  setStatus(dialog, firstInstruction);
+  guideCaptureStep(dialog, firstInstruction);
   progress.hidden = false;
   progress.max = sampleCount;
   progress.value = 0;
@@ -744,6 +750,8 @@ export async function captureDescriptor(dialog, human, sampleCount = ENROLLMENT_
         neutralEyes = eyeOpenness(face);
         setGuideState(dialog, 'ready');
         setStatus(dialog, challenge.instruction, 'good');
+        const returnInstruction = challenge.action === 'BLINK' ? 'Hold still.' : 'Then face the camera and hold still.';
+        guideCaptureStep(dialog, `${challenge.instruction} ${returnInstruction}`);
       }
     }
     if (readiness.ready && neutralPose && !livenessConfirmed) {
@@ -922,7 +930,10 @@ export async function openStudentFaceLookup(options = {}) {
   const mode = options.mode === 'enroll' ? 'enroll' : 'lookup';
   const sampleCount = mode === 'enroll' ? ENROLLMENT_SAMPLE_COUNT : ROUTINE_SAMPLE_COUNT;
   const allowCameraSelection = mode === 'lookup' || options.allowCameraSelection !== false;
-  if (activeDialog?.open) activeDialog.close();
+  if (activeDialog?.open) {
+    stopAudioGuidance(activeDialog);
+    activeDialog.close();
+  }
   document.body.insertAdjacentHTML('beforeend', dialogMarkup(mode, options.student || {}, allowCameraSelection));
   const dialog = document.body.lastElementChild;
   activeDialog = dialog;
@@ -934,7 +945,7 @@ export async function openStudentFaceLookup(options = {}) {
   const branchId = clean(options.student?.branchId || options.student?.BranchId);
   const purpose = mode === 'enroll' ? 'records-desk' : (clean(options.purpose) || 'records-desk');
   let status = null;
-  initializeAudioGuidance(dialog);
+  initializeAudioGuidance(dialog, mode === 'lookup');
   if (allowCameraSelection) bindCameraSelector(dialog, captureButton, {
     quickLookup: mode === 'lookup', onCameraReady: (human) => captureAndSubmit(human)
   });
@@ -998,6 +1009,7 @@ export async function openStudentFaceLookup(options = {}) {
       const descriptor = mode === 'lookup'
         ? await captureLookupDescriptor(dialog, human)
         : await captureDescriptor(dialog, human, sampleCount);
+      if (mode === 'enroll') stopAudioGuidance(dialog);
       if (!dialog.open || options.signal?.aborted) return;
       stopCamera(video);
       startButton.hidden = false;
@@ -1031,6 +1043,10 @@ export async function openStudentFaceLookup(options = {}) {
         : ' Start the camera to try again.';
       setStatus(dialog, `${formatCameraError(failure)}${retryHint}`, 'bad');
     } finally {
+      if (mode === 'enroll') {
+        dialog.captureInstruction = '';
+        stopAudioGuidance(dialog);
+      }
       dialog.querySelector('[data-face-progress]').hidden = true;
       lockCaptureControls(dialog, false);
       setBusy(captureButton, false);
@@ -1137,7 +1153,10 @@ function attendanceFaceDialogMarkup(mode) {
 
 export function captureStaffAttendanceFace(options = {}) {
   const mode = options.mode === 'enroll' ? 'enroll' : 'verify';
-  if (activeDialog?.open) activeDialog.close();
+  if (activeDialog?.open) {
+    stopAudioGuidance(activeDialog);
+    activeDialog.close();
+  }
   document.body.insertAdjacentHTML('beforeend', attendanceFaceDialogMarkup(mode));
   const dialog = document.body.lastElementChild;
   activeDialog = dialog;
@@ -1196,6 +1215,7 @@ export function captureStaffAttendanceFace(options = {}) {
           challenge: mode === 'verify' ? activeChallenge : { action: 'TURN_LEFT' },
           onLivenessEvidence: (evidence) => { livenessEvidence = evidence; }
         });
+        stopAudioGuidance(dialog);
         const result = await staffAttendanceFaceRequest(mode === 'enroll' ? 'enroll' : 'verify', {
           modelId: MODEL_ID,
           descriptor,
@@ -1216,6 +1236,8 @@ export function captureStaffAttendanceFace(options = {}) {
         setGuideState(dialog, 'warning');
         setStatus(dialog, formatCameraError(error), 'bad');
       } finally {
+        dialog.captureInstruction = '';
+        stopAudioGuidance(dialog);
         capturing = false;
         dialog.querySelector('[data-face-progress]').hidden = true;
         lockCaptureControls(dialog, false);

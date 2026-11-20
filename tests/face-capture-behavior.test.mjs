@@ -192,6 +192,39 @@ test('slow portrait capture finishes with a gentle turn, natural narrow eyes and
   assert.ok(detections.slice(0, 6).every(value => value === false), 'descriptor work waits until the live action finishes');
 });
 
+for (const [mode, action, yaw, count] of [
+  ['enrollment', 'TURN_LEFT', -0.3, 3], ['clock-in', 'TURN_RIGHT', 0.3, 1]
+]) {
+  test(`${mode} speaks two instructions in sequence even when the face leaves the frame`, async t => {
+    const still = liveFrame();
+    const frames = [still, still, still, { face: [] }, still, still, still,
+      liveFrame({ yaw }), still, still, still, still, still];
+    const { dialog, human } = captureHarness(t, frames);
+    const spoken = [];
+    globalThis.document = { documentElement: { lang: 'en' } };
+    t.after(() => { delete globalThis.document; });
+    window.SpeechSynthesisUtterance = class extends EventTarget {
+      constructor(text) { super(); this.text = text; }
+    };
+    window.speechSynthesis = {
+      speak(utterance) { spoken.push(utterance); },
+      cancel() { assert.fail('A frame update interrupted a spoken instruction'); }
+    };
+    const detect = human.detect;
+    let frame = 0;
+    human.detect = (...args) => {
+      if (++frame === 7) {
+        assert.deepEqual(spoken.map(item => item.text), ['Look straight at the camera and hold still.']);
+        spoken[0].dispatchEvent(new Event('end'));
+      }
+      return detect(...args);
+    };
+    await captureDescriptor(dialog, human, count, { challenge: { action } });
+    assert.equal(spoken.length, 2);
+    assert.match(spoken[1].text, yaw < 0 ? /left.*face the camera/ : /right.*face the camera/);
+  });
+}
+
 test('head-turn enrollment works when a phone omits gesture labels and eye landmarks', async t => {
   const frames = [liveFrame(), liveFrame(), liveFrame(), liveFrame({ yaw: -0.3 }),
     liveFrame(), liveFrame(), liveFrame(), liveFrame(), liveFrame()];

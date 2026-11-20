@@ -430,9 +430,6 @@ test('front and back camera selection covers staff enrollment and every student 
 test('face capture gives persistent visual and optional spoken guidance without recording audio', () => {
   assert.match(uiSource, /SpeechSynthesisUtterance/);
   assert.match(uiSource, /window\.speechSynthesis\.speak\(utterance\)/);
-  assert.match(uiSource, /state\.lastMessage === spokenMessage/);
-  assert.match(uiSource, /state\.pendingMessage === spokenMessage/);
-  assert.match(uiSource, /SPOKEN_GUIDANCE_DELAY_MS = 220/);
   assert.match(uiSource, /faceAudioGuidance/);
   assert.match(uiSource, /data-face-audio/);
   assert.match(uiSource, /Audio guidance \$\{enabled \? 'on' : 'off'\}/);
