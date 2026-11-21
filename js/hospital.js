@@ -105,6 +105,9 @@
     procurement?.permissions();
     stockControl?.permissions();
     stockDisposal?.permissions();
+    const picker=$('hospitalTask');
+    for(const option of picker.options) option.disabled=option.hidden;
+    if(picker.selectedOptions[0]?.hidden) showTab('patients');
   }
   async function run(work) {
     if (busy) return; busy = true;
@@ -130,8 +133,19 @@
     loadedBranch = $('branch').value; permissions(); $('workspace').hidden = false;
     status('Hospital reception ready. Search for a patient or choose dates to load visits.');
   }
-  function showTab(name) { for(const id of ['messages','patients','reception','care','orders','billing','inpatients','nursing','theatre','appointments','queues','referrals','procurement','stockControl','stockDisposal'])$(id).hidden=name!==id; }
-  document.querySelectorAll('[data-tab]').forEach(button => { button.onclick = () => { showTab(button.dataset.tab); if(button.dataset.tab==='messages'&&can('clinical.read'))run(()=>messages.open()); if(button.dataset.tab==='queues'&&can('visits.read'))run(()=>queues.open()); if(button.dataset.tab==='stockDisposal'&&can('stock.read'))run(()=>stockDisposal.open()); }; });
+  function showTab(name) {
+    const picker=$('hospitalTask');
+    for(const option of picker.options) $(option.value).hidden=option.value!==name;
+    picker.value=name;
+  }
+  $('hospitalTask').onchange=()=>{
+    const option=$('hospitalTask').selectedOptions[0];
+    if(!option || option.hidden || option.disabled)return;
+    showTab(option.value);
+    if(option.value==='messages')run(()=>messages.open());
+    if(option.value==='queues')run(()=>queues.open());
+    if(option.value==='stockDisposal')run(()=>stockDisposal.open());
+  };
   $('refresh').onclick = () => run(async () => { if(!await clinical.confirmLeave()||!await orders.confirmLeave()||!await billing.confirmLeave()||!await inpatients.confirmLeave()||!await nursing.confirmLeave()||!await theatre.confirmLeave()||!await appointments.confirmLeave()||!await referrals.confirmLeave()||!await procurement.confirmLeave()||!await stockControl.confirmLeave()||!await stockDisposal.confirmLeave())return; clearRecords(); await loadAccess(); if(!$('stockDisposal').hidden&&can('stock.read'))await stockDisposal.open(); });
   $('branch').onchange = () => run(async () => {
     if(!await clinical.confirmLeave()||!await orders.confirmLeave()||!await billing.confirmLeave()||!await inpatients.confirmLeave()||!await nursing.confirmLeave()||!await theatre.confirmLeave()||!await appointments.confirmLeave()||!await referrals.confirmLeave()||!await procurement.confirmLeave()||!await stockControl.confirmLeave()||!await stockDisposal.confirmLeave()){$('branch').value=loadedBranch;return;}

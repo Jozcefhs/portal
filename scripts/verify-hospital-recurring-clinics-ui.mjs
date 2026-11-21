@@ -35,7 +35,7 @@ try{
   await page.locator('#rcSave').click();await done('Recurring clinic template saved');assert.equal(f.rows('ClinicTemplates').length,1);
   await page.locator('#rcListForm button').first().click();await done('Selected clinic templates loaded');let q=f.queries.length;
   await page.locator('#rcListForm button').first().click();await done('Selected clinic templates loaded');assert.equal(f.queries.length,q);
-  await page.locator('[data-tab=patients]').click();await page.locator('[data-tab=appointments]').click();await page.locator('#rcListForm button').first().click();await done('Selected clinic templates loaded');assert.equal(f.queries.length,q);
+  await page.locator('#hospitalTask').selectOption('patients');await page.locator('#hospitalTask').selectOption('appointments');await page.locator('#rcListForm button').first().click();await done('Selected clinic templates loaded');assert.equal(f.queries.length,q);
   await page.locator('#rcRefresh').click();await done('Selected clinic templates loaded');assert.equal(f.queries.length,q+1);
   await dates('rcGen','2026-10-26','2026-11-01');const commits=f.commits.length;await page.locator('#rcPreviewForm button').click();await done('Clinic date preview ready');assert.equal(f.commits.length,commits);assert.match(await page.locator('#rcSummary').textContent(),/2 to create · 1 already available/);
   await page.evaluate(()=>{window.print=()=>{window.__prints=(window.__prints||0)+1;};});let reads=f.reads.length;q=f.queries.length;

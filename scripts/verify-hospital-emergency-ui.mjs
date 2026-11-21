@@ -32,7 +32,7 @@ try {
       await route.fulfill({body:await readFile(new URL('..'+path,import.meta.url)),contentType:path.endsWith('.js')?'text/javascript':path.endsWith('.css')?'text/css':'text/html'});
     });
     await page.goto('https://hospital.test/hospital.html');
-    await page.locator('[data-tab=reception]').click();
+    await page.locator('#hospitalTask').selectOption('reception');
     await page.locator('#emergencyPanel summary').click();
     assert.equal(f.queries.length,0);
     await page.locator('#emergencyIntake [name=Reference]').fill('ED-1001');
@@ -44,7 +44,7 @@ try {
     const changeRole = async next => {
       user = next;
       await page.reload();
-      await page.locator('[data-tab=reception]').click();
+      await page.locator('#hospitalTask').selectOption('reception');
       await page.locator('#emergencyPanel summary').first().click();
       await page.locator('#emergencyPending').click();
     };
@@ -75,7 +75,7 @@ try {
     const original=f.rows('Orders')[0].OrderNumber;
     user=actors.laboratory;
     await page.reload();
-    await page.locator('[data-tab=orders]').click();
+    await page.locator('#hospitalTask').selectOption('orders');
     await page.locator('#ordersFrom').fill('2026-10-26');
     await page.locator('#ordersTo').fill('2026-10-26');
     await page.locator('#ordersKind').selectOption('Laboratory');
@@ -137,13 +137,13 @@ try {
     await changeRole(actor);
     await rows.getByText(/ED-1001/).waitFor();
     assert.equal(await rows.getByRole('button',{name:'Open care for ED-1001'}).count(),0);
-    await page.locator('[data-tab=patients]').click();
+    await page.locator('#hospitalTask').selectOption('patients');
     await page.locator('#searchMode').selectOption('HospitalNumber');
     await page.locator('#searchValue').fill(patient.HospitalNumber);
     await page.locator('#searchValue').press('Enter');
     await page.locator('[data-patient]').click();
     await page.locator('#status').filter({hasText:'registration loaded'}).waitFor();
-    await page.locator('[data-tab=reception]').click();
+    await page.locator('#hospitalTask').selectOption('reception');
     await page.locator('[name=IdentityEvidence]').fill('Registration and wristband confirmed');
     await page.getByRole('button',{name:'Review patient link'}).click();
     await page.getByRole('button',{name:'Confirm identity and link'}).click();

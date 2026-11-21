@@ -36,7 +36,7 @@ try{
   const fill=async(form,data)=>{for(const [key,value] of Object.entries(data))await page.locator(`#${form} [name="${key}"]`).fill(String(value));};
   const period=async prefix=>{await page.locator(`#${prefix}From`).fill('2026-10-26');await page.locator(`#${prefix}To`).fill('2026-10-26');};
   const openList=async()=>{await period('orders');await page.locator('#ordersFilter button').click();await done('Selected order period loaded');await page.locator('[data-open-order]').first().click();await done('Order loaded');};
-  const issueContext=async()=>{await page.locator('[data-tab=reception]').click();await page.locator('#visitFrom').fill('2026-10-26');await page.locator('#visitTo').fill('2026-10-26');await page.locator('#visitForm button').click();await done('Selected visit period loaded');await page.locator('[data-issue-order]').click();await done('Prescribing context loaded');};
+  const issueContext=async()=>{await page.locator('#hospitalTask').selectOption('reception');await page.locator('#visitFrom').fill('2026-10-26');await page.locator('#visitTo').fill('2026-10-26');await page.locator('#visitForm button').click();await done('Selected visit period loaded');await page.locator('[data-issue-order]').click();await done('Prescribing context loaded');};
   for(const task of ['laboratory','imaging']){
     await login('owner',task);assert.equal(await page.locator('#investigationCatalogPanel').isVisible(),true);
     assert.equal(await page.locator('#investigationCatalogPanel').evaluate(el=>el.open),true);
@@ -71,7 +71,7 @@ try{
   await page.waitForFunction(()=>!document.querySelector('#refresh').disabled);assert.equal(await page.locator('#branch').inputValue(),'main');assert.equal(await page.locator('#issueOrderForm [name=Medicine]').inputValue(),medicine.Medicine);
   await page.locator('#confirmIssue').check();await page.locator('#issueOrderForm button:not([type=button])').click();await done('Order signed and issued');
   const rxOrder=f.rows('Orders')[0];assert.equal(rxOrder.Kind,'Prescription');assert.equal(await page.locator('#reviewRx').isVisible(),false);
-  await login('pharmacist','pharmacy');await openList();assert.equal(await page.locator('[data-tab=care]').isVisible(),false);
+  await login('pharmacist','pharmacy');await openList();assert.equal(await page.locator('[data-tab=care]').evaluate(option=>option.hidden && option.disabled),true);
   await expand('reviewRx');await page.locator('#reviewRxForm [name=Reason]').fill('Prescription and allergies reviewed');await page.locator('#confirmOrder').check();await page.locator('#reviewRxForm button').click();await done('Pharmacy review recorded');
   const reviewWrites=f.commits.length;await page.locator('#reviewRxForm [name=Reason]').fill('Prescription and allergies reviewed');await page.locator('#confirmOrder').check();await page.locator('#reviewRxForm button').click();await done('No changes to save');assert.equal(f.commits.length,reviewWrites,'unchanged review must not write or trigger another details-read audit');
   await page.locator('#stockWorkspace summary').filter({hasText:'Receive a medicine batch'}).click();
@@ -99,7 +99,7 @@ try{
   await page.locator('#usagePrint').click();assert.match(await page.evaluate(()=>window.usagePrinted),/Net issued/);
   await page.locator('#usageFilter button').first().click();
   assert.equal(f.queries.length,usageReads+1);assert.equal(f.commits.length,usageWrites);
-  const readCount=f.reads.length;await page.locator('[data-tab=patients]').click();await page.locator('[data-tab=orders]').click();assert.equal(f.reads.length,readCount,'task switching uses already loaded data');
+  const readCount=f.reads.length;await page.locator('#hospitalTask').selectOption('patients');await page.locator('#hospitalTask').selectOption('orders');assert.equal(f.reads.length,readCount,'task switching uses already loaded data');
   await page.screenshot({path:resolve(output,'pharmacy-desktop.png'),fullPage:true});
   await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'phone layout fits viewport');await page.screenshot({path:resolve(output,'pharmacy-phone.png'),fullPage:true});
   await page.setViewportSize({width:1366,height:960});await login('doctor','reception');await issueContext();await page.locator('#issueKind').selectOption('Laboratory');

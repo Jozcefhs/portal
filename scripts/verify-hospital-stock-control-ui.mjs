@@ -52,6 +52,6 @@ try{
   await fill('scHistoryFilter',{fromDate:'2026-10-26',toDate:'2026-10-26'});await submit('scHistoryFilter');await done('Selected count history loaded');assert.match(await page.locator('#scHistoryRows').textContent(),/Approve physical stock count/);
   await page.setViewportSize({width:1366,height:960});await page.screenshot({path:resolve(output,'approved-desktop.png'),fullPage:true});await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await page.screenshot({path:resolve(output,'approved-mobile.png'),fullPage:true});
   await page.locator('#branch').selectOption('north');await done('Branch changed');assert.equal(await page.locator('#scCountSummary').textContent(),'');assert.equal(await page.locator('#scDetail').isVisible(),false);assert.equal(await page.locator('#scCountsRows').textContent(),'');
-  await login('nurse');assert.equal(await page.locator('[data-tab=stockControl]').isVisible(),false);assert.deepEqual(errors,[]);
+  await login('nurse');assert.equal(await page.locator('[data-tab=stockControl]').evaluate(option=>option.hidden && option.disabled),true);assert.deepEqual(errors,[]);
   console.log(JSON.stringify({ok:true,independentApproval:true,mobile:true,failedSaveRetained:true,cachedRead:true,printWithoutReads:true,branchCleared:true,liveRecordsChanged:false,calls:calls.length}));
 }finally{await browser?.close();await new Promise(r=>server.close(r));}

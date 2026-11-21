@@ -1,9 +1,11 @@
 .hospital-module-dashboard header,.hospital-module-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.75rem}
 .hospital-module-dashboard h2{margin:.25rem 0 .75rem}
 .hospital-module-dashboard .eyebrow{margin:0;color:#176a67}
-.hospital-module-dashboard dl,.hospital-module-links{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,11rem),1fr));gap:.8rem;margin:1rem 0}
+.hospital-module-dashboard dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,11rem),1fr));gap:.8rem;margin:1rem 0}
 .hospital-module-dashboard dl>div{padding:1rem;border:1px solid #c7d9e4;border-radius:.6rem;background:#f5f9fb}
 .hospital-module-dashboard dt{font-weight:600;color:#345268}
 .hospital-module-dashboard dd{font-size:1.75rem;font-weight:700;margin:.3rem 0 0;color:#13445a}
 .hospital-module-actions a{display:inline-block;text-decoration:none}
 .hospital-module-dashboard .muted{margin-bottom:0}
+.hospital-department-picker{display:grid;gap:.25rem;width:fit-content;max-width:100%}
+.hospital-department-picker select{max-width:100%}

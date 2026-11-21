@@ -50,15 +50,18 @@
   function overview(host, tabs, select) {
     const area = element('section', undefined, 'hospital-module-dashboard');
     area.append(element('h2', 'Hospital departments'));
-    const grid = element('div', undefined, 'hospital-module-links');
-    for (const [key, label] of tabs.filter(([key]) => Object.hasOwn(workflows, key))) {
-      const button = element('button', label);
-      button.type = 'button';
-      button.onclick = () => select(key);
-      grid.append(button);
+    const departments = tabs.filter(([key]) => Object.hasOwn(workflows, key));
+    if (departments.length) {
+      const label = element('label', 'Department', 'hospital-department-picker');
+      const picker = element('select');
+      picker.add(new Option('Choose a department', ''));
+      for (const [key, name] of departments) picker.add(new Option(name, key));
+      picker.onchange = () => { if (picker.value) select(picker.value); };
+      label.append(picker);
+      area.append(label);
+    } else {
+      area.append(element('p', 'No hospital departments are assigned to this account.'));
     }
-    if (!grid.childElementCount) grid.append(element('p', 'No hospital departments are assigned to this account.'));
-    area.append(grid);
     host.replaceChildren(area);
   }
   function mount(host, options) {

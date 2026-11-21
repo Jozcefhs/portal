@@ -20630,7 +20630,7 @@ function renderSection(active) {
     }
     const host = document.createElement('div');
     panelEl.replaceChildren(host);
-    import('/js/storekeeping.js?v=1').then(({ mountStorekeeping }) => {
+    import('/js/storekeeping.js?v=2-navigation').then(({ mountStorekeeping }) => {
       if (!host.isConnected) return;
       return mountStorekeeping(host,{ branch, procurement:currentUser.allowedSections.includes('procurement') ? () => selectSection('procurement') : null,
         request:async (action,payload) => procurementResponseResult(await staffFetch('/api/staff-storekeeping',{

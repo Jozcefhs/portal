@@ -31,7 +31,7 @@ try{
   const dates=async prefix=>{await page.locator(`#${prefix}From`).fill('2026-10-26');await page.locator(`#${prefix}To`).fill('2026-10-26');};
   const expand=async id=>{if(!await page.locator('#'+id).evaluate(e=>e.open))await page.locator(`#${id}>summary`).click();};
   const login=async user=>{role=user;const reads=f.queries.length;await page.goto(`http://127.0.0.1:${server.address().port}/hospital.html?task=billing`);await done('Hospital reception ready');assert.equal(f.queries.length,reads);};
-  const visit=async()=>{await page.locator('[data-tab=reception]').click();await page.locator('#visitFrom').fill('2026-10-26');await page.locator('#visitTo').fill('2026-10-26');await page.locator('#visitForm button').click();await done('Selected visit period loaded');await page.locator('[data-billing-visit]').click();await done('Patient billing context loaded');};
+  const visit=async()=>{await page.locator('#hospitalTask').selectOption('reception');await page.locator('#visitFrom').fill('2026-10-26');await page.locator('#visitTo').fill('2026-10-26');await page.locator('#visitForm button').click();await done('Selected visit period loaded');await page.locator('[data-billing-visit]').click();await done('Patient billing context loaded');};
   const invoice=async()=>{await dates('billList');await page.locator('#billRegister button:not([type=button])').click();await done('Selected billing period loaded');await page.locator('[data-invoice]').first().click();await done('Invoice loaded');};
   await login('hmo');await expand('billPlanEditor');await page.locator('#billNewPlan').click();
   await fill('billPlanForm',{Code:'UI-HMO',Insurer:'Synthetic UI insurer'});
@@ -47,7 +47,7 @@ try{
   await page.locator('[data-charge]').check();await page.locator('#billUseHmo').check();assert.match(await page.locator('#billEstimate').textContent(),/20\.00.*60\.00/);
   await page.locator('#billIssue').click();await page.locator('dialog[open]').waitFor();await page.locator('dialog footer .app-decision-confirm').click();await done('Invoice issued');assert.equal(f.rows('Invoices').length,1);
   assert.equal(f.rows('Invoices')[0].PatientCents,2000);assert.equal(f.rows('Invoices')[0].HmoCents,6000);await expand('billPayment');await fill('billPaymentForm',{Amount:'20',Reference:'UI-RECEIPT'});await page.locator('#billConfirm').check();await page.locator('#billPaymentForm button').click();await done('Payment recorded');
-  const count=f.reads.length;await page.locator('[data-tab=patients]').click();await page.locator('[data-tab=billing]').click();assert.equal(f.reads.length,count);
+  const count=f.reads.length;await page.locator('#hospitalTask').selectOption('patients');await page.locator('#hospitalTask').selectOption('billing');assert.equal(f.reads.length,count);
   await page.evaluate(()=>{window.print=()=>window.printed=document.querySelector('#cardPrint').textContent;});await page.locator('#billPrint').click();assert.match(await page.evaluate(()=>window.printed),/Hospital invoice/);
   await page.screenshot({path:resolve(output,'invoice-desktop.png'),fullPage:true});await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await page.screenshot({path:resolve(output,'invoice-phone.png'),fullPage:true});await page.setViewportSize({width:1366,height:960});
   await login('hmo');await invoice();await expand('billClaim');

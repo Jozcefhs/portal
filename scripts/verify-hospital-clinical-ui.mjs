@@ -48,7 +48,7 @@ try{
   const done=async text=>{await page.locator('#status').filter({hasText:text}).waitFor();await page.waitForFunction(()=>!document.querySelector('#refresh').disabled);};
   const expand=async id=>{if(!await page.locator('#'+id).evaluate(el=>el.open))await page.locator('#'+id+' summary').click();};
   await done('Hospital reception ready');assert.equal(f.queries.length,0);
-  await page.locator('[data-tab=reception]').click();
+  await page.locator('#hospitalTask').selectOption('reception');
   await page.locator('#visitFrom').fill('2026-10-26');await page.locator('#visitTo').fill('2026-10-26');
   await page.locator('#visitForm button').click();await done('Selected visit period loaded');
   await page.locator('[data-care]').click();await done('Clinical encounter loaded');
@@ -91,7 +91,7 @@ try{
   await page.locator('#clinicalHistoryForm button').click();await done('3 clinical entries loaded');
   assert.equal(await page.locator('#clinicalEntries article').count(),3);
   const reads=f.reads.length,queries=f.queries.length;
-  await page.locator('[data-tab=reception]').click();await page.locator('[data-tab=care]').click();
+  await page.locator('#hospitalTask').selectOption('reception');await page.locator('#hospitalTask').selectOption('care');
   assert.equal(f.reads.length,reads);assert.equal(f.queries.length,queries);assert.equal(await page.locator('#clinicalEntries article').count(),3);
   await page.screenshot({path:resolve(output,'clinical-desktop.png'),fullPage:true});
   await page.setViewportSize({width:390,height:844});
@@ -101,7 +101,7 @@ try{
   assert.equal(await page.locator('#careName').textContent(),'');assert.equal(await page.locator('#consultationForm [name=History]').inputValue(),'');
   assert.equal(await page.locator('#clinicalEntries article').count(),0);
   await page.locator('#branch').selectOption('main');await done('Branch changed');
-  await page.locator('[data-tab=reception]').click();await page.locator('#visitFrom').fill('2026-10-26');await page.locator('#visitTo').fill('2026-10-26');
+  await page.locator('#hospitalTask').selectOption('reception');await page.locator('#visitFrom').fill('2026-10-26');await page.locator('#visitTo').fill('2026-10-26');
   await page.locator('#visitForm button').click();await done('Selected visit period loaded');await page.locator('[data-care]').click();await done('Clinical encounter loaded');
   expire=true;await page.locator('#refreshCare').click();await done('Staff session expired');
   assert.equal(await page.locator('#workspace').isVisible(),false);assert.equal(await page.locator('#consultationForm [name=History]').inputValue(),'');

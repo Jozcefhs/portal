@@ -6,7 +6,7 @@ export async function mountStorekeeping(root,{request,branch,procurement}) {
   const frame = document.createElement('section');
   frame.className = 'procurement-workspace';
   root.replaceChildren(frame);
-  frame.innerHTML = '<header class="procurement-heading"><div><h2>Storekeeping</h2><p></p></div></header><div data-tabs class="procurement-actions"></div><p role="status"></p><div data-body></div>';
+  frame.innerHTML = '<header class="procurement-heading"><div><h2>Storekeeping</h2><p></p></div></header><div data-tabs class="procurement-actions storekeeping-navigation"></div><p role="status"></p><div data-body></div>';
   frame.querySelector('header p').textContent = branch;
   const body = frame.querySelector('[data-body]'), status = frame.querySelector('[role=status]');
   let access, view, rows=[],cursor='',item='',busy=false,section='';
@@ -101,10 +101,8 @@ export async function mountStorekeeping(root,{request,branch,procurement}) {
     win.document.body.append(heading,win.document.importNode(body.querySelector('table'),true));
     win.document.close();win.print();
   }
-  frame.onclick=e=>{
-    const key=e.target.closest('[data-action]')?.dataset.action;
-    if(!key) return;
-    run(async()=>{
+  function activate(key) {
+    return run(async()=>{
       const [action,index]=key.split(':'),row=rows[Number(index)];
       if(action==='procurement') return procurement();
       if(action==='back') return render();
@@ -136,13 +134,29 @@ export async function mountStorekeeping(root,{request,branch,procurement}) {
         await request(action,{SlipId:row.SlipId}); await load(view);status.textContent=action==='accept'?'Receipt recorded.':'Dispatch cancelled.';
       }
     });
+  }
+  frame.onclick=e=>{
+    const key=e.target.closest('[data-action]')?.dataset.action;
+    if(key) activate(key);
   };
   try {
     access=await request('access',{});
     section=access.sections[0];
-    frame.querySelector('[data-tabs]').innerHTML=(access.keeper?button('stock','Central stock')+button('purchases','Supplier receipts')+button('handovers','Branch handovers')+(access.sections.length>1?'<label>Request section<select data-section>'+options(access.sections)+'</select></label>':'')+button('requests','Approved requests'):'')+
-      button('mine','My handovers')+button('sent','Sent by me')+(access.keeper && !access.readOnly?button('return','Return a Procurement delivery'):'')+
-      (procurement?button('procurement','Procurement'):'');
+    const actions=[];
+    if(access.keeper) actions.push(['stock','Central stock'],['purchases','Supplier receipts'],['handovers','Branch handovers'],['requests','Approved requests']);
+    actions.push(['mine','My handovers'],['sent','Sent by me']);
+    if(access.keeper && !access.readOnly) actions.push(['return','Return a Procurement delivery']);
+    if(procurement) actions.push(['procurement','Procurement']);
+    const sectionFilter=access.keeper && access.sections.length>1
+      ? '<label>Request section<select data-section>'+options(access.sections)+'</select></label>' : '';
+    frame.querySelector('[data-tabs]').innerHTML='<label>Storekeeping action<select data-store-action><option value="">Choose an action</option>'+
+      actions.map(([key,label])=>'<option value="'+key+'">'+esc(label)+'</option>').join('')+'</select></label>'+sectionFilter;
+    const actionPicker=frame.querySelector('[data-store-action]');
+    actionPicker.onchange=async()=>{
+      const key=actionPicker.value;
+      actionPicker.value='';
+      if(key) await activate(key);
+    };
     const picker=frame.querySelector('[data-section]');
     if(picker) picker.onchange=()=>run(async()=>{ section=picker.value;if(view==='requests') await load('requests'); });
     status.textContent=access.keeper?'Use Approved requests for department inventory. Use Central stock or Supplier receipts to hand goods to a storekeeper or a department for internal use.':'Open My handovers to acknowledge deliveries and return items.';

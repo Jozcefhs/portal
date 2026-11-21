@@ -76,10 +76,10 @@ try{
     await page.locator('#sdReviewForm [name=Confirmed]').check();
   };
   await login('pharmacist','stock-control');assert.equal(count('stockDisposalQueue'),0);
-  await page.locator('[data-tab=stockDisposal]').click();await done('Pending disposal queue loaded');
+  await page.locator('#hospitalTask').selectOption('stockDisposal');await done('Pending disposal queue loaded');
   assert.match(await page.locator('#sdBatchesNote').textContent(),/Choose a batch/);
   assert.equal(f.queries.at(-1).limit,31);assert.equal(count('stockDisposalQueue'),1);
-  await page.locator('[data-tab=stockControl]').click();await page.locator('[data-tab=stockDisposal]').click();await done('Pending disposal queue loaded');assert.equal(count('stockDisposalQueue'),1,'opening retained queue uses cache');
+  await page.locator('#hospitalTask').selectOption('stockControl');await page.locator('#hospitalTask').selectOption('stockDisposal');await done('Pending disposal queue loaded');assert.equal(count('stockDisposalQueue'),1,'opening retained queue uses cache');
   await fill('sdBatchesFilter',{fromDate:'2027-12-01',toDate:'2027-12-31'});await submit('sdBatchesFilter');await done('Selected batch expiry period loaded');
   const batchReads=count('stockExpiryRegister');await submit('sdBatchesFilter');await done('Selected batch expiry period loaded');assert.equal(count('stockExpiryRegister'),batchReads);
   await page.locator('[data-sd-batch]').click();await done('Quarantined batch selected');
@@ -143,7 +143,7 @@ try{
   await page.locator('#branch').selectOption('north');await done('Branch changed');assert.equal(await page.locator('#sdSummary').textContent(),'');assert.equal(await page.locator('#sdDetail').isVisible(),false);assert.equal(await page.locator('#sdRegisterRows').textContent(),'');assert.match(await page.locator('#sdQueueRows').textContent(),/No disposals awaiting review/);
   await page.locator('#branch').selectOption('main');await done('Branch changed');assert.equal(await page.locator('#sdQueueRows [data-sd-disposal]').count(),30,'branch change reloads its own queue');
   expired=true;await page.locator('#sdQueueRefresh').click();await done('Synthetic session expired');assert.equal(await page.locator('#workspace').isVisible(),false);assert.equal(await page.locator('#sdQueueRows').textContent(),'');assert.equal(await page.locator('#sdSummary').textContent(),'');expired=false;
-  await login('nurse');assert.equal(await page.locator('[data-tab=stockDisposal]').isVisible(),false);
+  await login('nurse');assert.equal(await page.locator('[data-tab=stockDisposal]').evaluate(option=>option.hidden && option.disabled),true);
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({ok:true,independentWitness:true,submitAndApprovalLostResponse:true,rejectAndCancel:true,staleApprovalBlocked:true,boundedQueue:true,refreshEvictsLaterPages:true,refreshEvictsStaleDetails:true,datedHistoryOnly:true,cacheReuse:true,previewWithoutReads:true,mobile:true,branchAndSessionCleared:true,liveRecordsChanged:false,calls:calls.length}));
 }finally{await browser?.close();await new Promise(r=>server.close(r));}
