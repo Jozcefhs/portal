@@ -11,6 +11,7 @@
   const quantity=()=>input('Quantity','Quantity','type="number" min="0.001" step="0.001" max="1000000" required');
   window.DynamaxHospitalOrders={create({api,run,can,writable,status,navigate}){
     $('orders').innerHTML=`<h2>Prescriptions, pharmacy and investigations</h2><p>Choose dates and an order type before loading. New orders start from a patient’s reception visit.</p>
+      <details id="outstandingInvestigations"></details>
       <div id="medicineCatalogue"></div><details id="investigationCatalogPanel"><summary>Laboratory and imaging catalogue</summary>
         <p>Load reusable services for this branch. Earlier orders retain the name and instructions saved when they were issued.</p>
         <form id="catalogFilter" class="toolbar"><label>Catalogue<select id="catalogKind"><option>Laboratory</option><option>Imaging</option></select></label><label>Service name starts with<input id="catalogQuery" maxlength="120"></label><label class="check-line"><input id="catalogInactive" type="checkbox">Include inactive services</label><button>Load catalogue</button><button id="refreshCatalog" type="button">Refresh catalogue</button><button id="newCatalogItem" type="button">New service</button></form>
@@ -53,6 +54,7 @@
     let issue=null,current=null,scope=null,rows=[],orderCursor=null,orderRange=null,orderKind=null,batches=[],stockCursor=null,stockQuery=null,dispenses=[],dispenseCursor=null,dispenseRange=null,historyCursor=null,historyRange=null,stockHistoryCursor=null,stockHistoryQuery=null;
     let alerts=[],alertCursor=null,releasedCursor=null,releasedRange=null;
     let catalogRows=[],catalogCursor=null,catalogRequest=null,catalogEdit=null,selectedCatalog=null,catalogHistoryCursor=null,catalogHistoryRange=null;
+    const outstanding=window.DynamaxOutstandingInvestigations.create({$,esc,can,api,run,status});
     const catalogCache=new Map();
     const catalogAllowed=kind=>can('orders.read')||can(kind==='Laboratory'?'laboratory.work':'imaging.work')||can(kind==='Laboratory'?'laboratory.configure':'imaging.configure');
     const catalogWritable=kind=>writable(kind==='Laboratory'?'laboratory.work':'imaging.work')||writable(kind==='Laboratory'?'laboratory.configure':'imaging.configure');
@@ -114,6 +116,7 @@
     const kinds=()=>['Prescription','Laboratory','Imaging'].filter(kind=>can('orders.read')||can(kind==='Prescription'?'pharmacy.work':kind==='Laboratory'?'laboratory.work':'imaging.work'));
     function permissions(){
       sharing.permissions();
+      outstanding.permissions();
       const available=kinds(),previous=$('ordersKind').value;$('ordersKind').innerHTML=available.map(kind=>`<option>${kind}</option>`).join('');if(available.includes(previous))$('ordersKind').value=previous;
       medicines.permissions();
       document.querySelector('[data-tab=orders]').hidden=!can('pharmacy.configure')&&!available.length&&!['Laboratory','Imaging'].some(catalogAllowed);$('stockWorkspace').hidden=!can('pharmacy.work');$('ordersFilter').hidden=!available.length;
@@ -138,6 +141,7 @@
       if(issue)$('issueOrderForm').querySelector('button:not([type=button])').disabled=!writable('orders.create');
     }
     function clear(){
+      outstanding.reset();
       sharing.clear();
       medicines.clear();
       catalogCache.clear();catalogRows=[];catalogCursor=catalogRequest=catalogEdit=selectedCatalog=catalogHistoryCursor=catalogHistoryRange=null;
@@ -277,6 +281,6 @@
     async function stockHistory(next=null){if(!next)stockHistoryQuery={BatchId:$('stockHistoryBatch').value,DateRange:{fromDate:$('stockHistoryFrom').value,toDate:$('stockHistoryTo').value}};const data=await api('stockHistory',{...stockHistoryQuery,...(next?{Cursor:next}:{})});stockHistoryCursor=data.next;if(!next)$('stockHistoryRows').replaceChildren();$('stockHistoryRows').insertAdjacentHTML('beforeend',historyRows(data.movements,'stock'));$('nextStockHistory').hidden=!stockHistoryCursor;status('Dated stock movements loaded.');}
     $('stockHistoryFilter').onsubmit=event=>{event.preventDefault();run(()=>stockHistory());};$('nextStockHistory').onclick=()=>run(()=>stockHistory(stockHistoryCursor));
     function selectTask(task){medicines.selectTask(task);const kind={pharmacy:'Prescription',laboratory:'Laboratory',imaging:'Imaging'}[task];if(kind&&kinds().includes(kind))$('ordersKind').value=kind;if(['Laboratory','Imaging'].includes(kind)&&catalogAllowed(kind)){$('catalogKind').value=kind;if(!kinds().length)$('investigationCatalogPanel').open=true;}permissions();}
-    return {openVisit,openOrder,clear,permissions,confirmLeave,selectTask};
+    return {openVisit,openOrder,clear,permissions,confirmLeave,selectTask,outstanding};
   }};
 })();

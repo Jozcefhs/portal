@@ -65,7 +65,7 @@
   window.addEventListener('pagehide', () => { scanController?.abort(); clearRecords(); });
   async function api(action, extra = {}, write = false) {
     const payload = {action, BranchId:$('branch').value, ...extra};
-    const key = JSON.stringify(payload), RequestId = write ? pending.get(key) || crypto.randomUUID() : crypto.randomUUID();
+    const key = JSON.stringify(payload), RequestId = write ? pending.get(key) || crypto.randomUUID() : (extra.RequestId || crypto.randomUUID());
     if (write) pending.set(key, RequestId);
     const result = await fetchJson('/api/staff-hospital', {...payload, RequestId}, $('branch').value);
     if (write) {
@@ -76,6 +76,7 @@
           (action==='clinicQueueAction' && extra.Action==='Start'))attendance.markChanged(extra.VisitId||result.VisitId);
       }
       if(['checkIn','checkInAppointment','updateVisit','clinicQueueAction','saveConsultation','signConsultation','dischargeHospitalPatient'].includes(action))queues?.invalidate();
+      if (!result.Unchanged && ['createOrder','recordSpecimen','recordInvestigationReport','verifyInvestigationReport','releaseInvestigationReport','cancelOrder'].includes(action)) orders?.outstanding.reset();
       if (stockMutations.has(action)) stockDisposal?.invalidate();
       if (['submitStockDisposal','reviewStockDisposal'].includes(action)) stockControl?.invalidate();
     }
@@ -324,6 +325,8 @@
     if (['reception','triage','consultations'].includes(task) && can('visits.read')) showTab('reception');
     else if (['triage','consultations'].includes(task) && can('clinical.read')) showTab('care');
     if(['billing','hmo'].includes(task)&&(can('billing.read')||can('hmo.work')))showTab('billing');
-    if(['orders','pharmacy','laboratory','imaging'].includes(task)&&['orders.read','pharmacy.work','pharmacy.configure','laboratory.work','imaging.work','laboratory.configure','imaging.configure'].some(can)){orders.selectTask(task);showTab('orders');}
+    if(['orders','pharmacy','laboratory','imaging'].includes(task)&&['orders.read','pharmacy.work','pharmacy.configure','laboratory.work','imaging.work','laboratory.configure','imaging.configure'].some(can)){orders.selectTask(task);showTab('orders');
+      if(new URLSearchParams(location.search).get('report')==='outstanding')orders.outstanding.open({laboratory:'Laboratory',imaging:'Imaging',orders:'All'}[task]);
+    }
   });
 })();

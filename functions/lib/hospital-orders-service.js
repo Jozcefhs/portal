@@ -1,3 +1,4 @@
+import { createInvestigationReport } from './hospital-outstanding-investigations.js';
 import {emergencyReference} from './hospital-emergency.js';
 import {clean,fail,id,digest,patientSummary} from './hospital-model.js';
 import {stockReceiptFields,prepareStockReceipt} from './hospital-stock-receipt.js';
@@ -116,6 +117,7 @@ export function createHospitalOrdersService(ctx){
     return row;
   }
   return {
+    getOutstandingInvestigations: createInvestigationReport(ctx),
     async orderVisitContext(body){
       requireCapability('orders.create');const c=await issueContext(body);
       await auditRead(body,'View prescribing context',c.BranchId,c.person,{VisitId:c.visit.VisitId});

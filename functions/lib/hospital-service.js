@@ -106,7 +106,7 @@ export function createHospitalService(env, user, overrides = {}) {
   function requireRevision(row, body) {
     if (!clean(body.Revision) || body.Revision !== row.__updateTime) fail('This patient record changed. Reload before saving.', 409);
   }
-  async function page(name, filters, field, body) {
+  async function page(name, filters, field, body, options = {}) {
     const limit = 30;
     let cursor = {};
     if (body.Cursor) {
@@ -115,7 +115,7 @@ export function createHospitalService(env, user, overrides = {}) {
       cursor = { startAfterName: `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${collection(name)}/${docId}`,
         startAfterFieldValue: body.Cursor.value };
     }
-    const rows = await db.queryCollection(env, collection(name), { filters, limit: limit + 1,
+    const rows = await db.queryCollection(env, collection(name), { ...options, filters, limit: limit + 1,
       orderBy: [{ field }, { field: '__name__' }], ...cursor });
     const shown = rows.slice(0, limit), last = shown.at(-1);
     return { rows: shown, next: rows.length > limit ? { id: last.__id, value: last[field] } : null };

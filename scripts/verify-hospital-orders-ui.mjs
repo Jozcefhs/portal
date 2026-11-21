@@ -100,6 +100,19 @@ try{
 
   await page.locator('#confirmIssue').check();await page.locator('#issueOrderForm button:not([type=button])').click();await done('Order signed and issued');
   const labOrder=f.rows('Orders').find(o=>o.Kind==='Laboratory');
+  await expand('outstandingInvestigations');
+  await period('outstanding');
+  await page.locator('#outstandingFilter button').first().click();
+  await done('Outstanding investigations report loaded');
+  const preview=page.locator('#outstandingPreview');
+  assert.ok((await preview.textContent()).includes(labOrder.OrderNumber));
+  const reportReads=f.queries.length;
+  await page.evaluate(()=>{window.print=()=>{window.reportPrinted=document.querySelector('#cardPrint').textContent;};});
+  await page.locator('#outstandingPrint').click();
+  assert.match(await page.evaluate(()=>window.reportPrinted),/Full selected period/);
+  await page.locator('#outstandingFilter button').first().click();
+  assert.equal(f.queries.length,reportReads,'printing and reopening a loaded report use memory');
+
   await login('laboratory','laboratory');await openList();assert.equal(await page.locator('#stockWorkspace').isVisible(),false);
   await page.evaluate(()=>{window.print=()=>{window.printedLabel=document.querySelector('#cardPrint').textContent;};});await page.locator('#printSpecimen').click();assert.match(await page.evaluate(()=>window.printedLabel),new RegExp(labOrder.OrderNumber));
   await expand('specimenWork');await fill('specimenForm',{SpecimenLabel:labOrder.OrderNumber+'-S01',Note:'Patient identity and specimen label checked'});await page.locator('#confirmOrder').check();await page.locator('#specimenForm button').click();await done('Specimen handling recorded');

@@ -85,7 +85,13 @@
     link.href = '/hospital.html?' + new URLSearchParams({ branch: branchId, task });
     const refresh = element('button', 'Refresh figures');
     refresh.type = 'button';
-    actions.append(link, refresh);
+    actions.append(link);
+    if (['orders','laboratory','imaging'].includes(task)) {
+      const report = element('a', 'Outstanding investigations report', 'btn');
+      report.href = '/hospital.html?' + new URLSearchParams({ branch: branchId, task, report: 'outstanding' });
+      actions.append(report);
+    }
+    actions.append(refresh);
     header.append(actions);
     const metrics = element('dl');
     const message = element('p', '', 'muted');

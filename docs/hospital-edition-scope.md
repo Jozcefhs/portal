@@ -453,3 +453,9 @@ Verification covered empty data, legacy visit identifiers, cancellations, distin
 ### Hospital department dashboards
 
 The staff sidebar and hospital overview open a dashboard for every assigned hospital module. Each dashboard shows branch register counts and links to the corresponding workflow. Counts use the same database snapshot, with a short cache scoped to the staff session, branch and module. Opening the overview does not load departmental registers.
+
+### H14 outstanding investigations
+
+Open Outstanding investigations report from Laboratory, Imaging investigations or Prescriptions and investigations. Filter by department and order dates (WAT). Rejected specimens and draft amendments remain outstanding until release or cancellation. Clinical staff see authorised order details. Department configuration access provides stage and urgency totals only.
+
+The report loads indexed order pages on demand at one database snapshot. Reopening, preview and printing reuse loaded pages. Partial totals are labelled until the last page. Refresh starts a new snapshot. Identifying reads use the hospital access audit.

@@ -34,7 +34,7 @@ export async function onRequestPost({ request, env, data }) {
       'prepareHospitalBed','inpatientWards','inpatientWard','inpatientBeds','saveHospitalWard','saveHospitalBed','inpatientVisit','admitHospitalPatient',
       'inpatientAdmissions','inpatientAdmission','transferHospitalBed','signHospitalDischarge','amendHospitalDischarge','dischargeHospitalPatient','inpatientHistory',
       'clinicalContext','clinicalHistory','recordTriage','saveConsultation','signConsultation','amendClinicalEntry',
-      'orderVisitContext','createOrder','listOrders','orderDetails','orderHistory','releasedReportHistory','cancelOrder','reviewPrescription','receiveMedicine','stockBatches','stockHistory','quarantineStock',
+      'getOutstandingInvestigations','orderVisitContext','createOrder','listOrders','orderDetails','orderHistory','releasedReportHistory','cancelOrder','reviewPrescription','receiveMedicine','stockBatches','stockHistory','quarantineStock',
       'dispensePrescription','returnDispensedMedicine','dispensingHistory','recordSpecimen','recordInvestigationReport','verifyInvestigationReport',
       'releaseInvestigationReport','pendingCriticalAlerts','acknowledgeCriticalResult',
       'billingSettings','saveBillingSettings','saveHmoPlan','findHmoPlans','billingVisit','saveHmoEligibility','createServiceCharge','billingCharges',
