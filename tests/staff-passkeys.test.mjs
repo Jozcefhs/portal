@@ -165,3 +165,30 @@ test('attendance liveness challenges are signed and scoped to the staff member, 
     /valid attendance liveness action/i
   );
 });
+
+
+test('single-capture attendance is opt-in and bound to the signed branch, site and work clock direction', async () => {
+  const { normalizeAttendancePolicy, verifiedAttendanceIdentity } = await import('../functions/lib/staff-time-attendance.js');
+  const user = { username: 'Ada' };
+  const env = { STAFF_SESSION_SECRET: 'attendance-test-secret-that-is-long-enough' };
+  const standard = normalizeAttendancePolicy({ IdentityVerification: 'FACE' });
+  assert.equal(standard.ClockFaceCapture, 'MOVEMENT');
+  const single = normalizeAttendancePolicy({ ClockFaceCapture: 'SINGLE' }, standard);
+  assert.equal(normalizeAttendancePolicy({}, single).ClockFaceCapture, 'SINGLE');
+  assert.throws(() => normalizeAttendancePolicy({ ClockFaceCapture: 'invalid' }));
+  for (const direction of ['IN', 'OUT']) {
+    const scope = { siteId: 'office', branchId: 'west', direction };
+    const challenge = await createStaffAttendanceLivenessChallenge(env, user, { ...scope, action: 'SINGLE_CAPTURE' });
+    const signed = await createStaffAttendanceProof(env, user, { ...scope, method: 'face', livenessAction: 'SINGLE_CAPTURE' });
+    assert.equal((await readStaffAttendanceLivenessChallenge(env, challenge, 'ada', scope)).action, 'SINGLE_CAPTURE');
+    const proof = await readStaffAttendanceProof(env, signed, 'ada', scope);
+    assert.equal(verifiedAttendanceIdentity(single, proof, direction), 'Face recognition (single capture)');
+    assert.throws(() => verifiedAttendanceIdentity(standard, proof, direction));
+    assert.throws(() => verifiedAttendanceIdentity(single, null, direction));
+    assert.throws(() => verifiedAttendanceIdentity(single, proof));
+    for (const change of [{ branchId: 'east' }, { direction: direction === 'IN' ? 'OUT' : 'IN' }, { direction: 'CHECK' }, { siteId: 'meeting:staff' }]) {
+      assert.equal(await readStaffAttendanceLivenessChallenge(env, challenge, 'ada', { ...scope, ...change }), null);
+      assert.equal(await readStaffAttendanceProof(env, signed, 'ada', { ...scope, ...change }), null);
+    }
+  }
+});
