@@ -20,7 +20,7 @@ const modules = {
 
 export function createHospitalDashboards({ env, user, db, branch, collection }) {
   return {
-    async moduleDashboard(body) {
+    async getModuleDashboard(body) {
       const key = body.Module;
       if (!Object.hasOwn(modules, key) || !user.allowedSections?.includes(key)) fail('This dashboard is outside your module access.', 403);
       const branchId = await branch(body);

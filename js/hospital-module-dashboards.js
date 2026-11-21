@@ -28,7 +28,7 @@
     entry.promise = (async () => {
       const response = await fetcher('/api/staff-hospital', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
-        body: JSON.stringify({ action: 'moduleDashboard', BranchId: branchId, Module: key })
+        body: JSON.stringify({ action: 'getModuleDashboard', BranchId: branchId, Module: key })
       });
       const data = await response.json();
       if (!response.ok || !data.ok) throw Error(data.message || 'Unable to load the branch figures.');
@@ -93,7 +93,7 @@
     area.append(metrics, message);
     async function load(refreshRequested) {
       refresh.disabled = true;
-      message.textContent = 'Loading branch figures…';
+      message.textContent = 'Loading branch figuresâ€¦';
       try {
         const data = await snapshot(options, refreshRequested);
         if (!area.isConnected || signal.aborted) return;
@@ -103,7 +103,7 @@
           return card;
         });
         metrics.replaceChildren(...cards);
-        message.textContent = 'Branch register · Updated ' + new Date(data.readTime).toLocaleTimeString();
+        message.textContent = 'Branch register Â· Updated ' + new Date(data.readTime).toLocaleTimeString();
       } catch (error) {
         if (area.isConnected && !signal.aborted) message.textContent = error.message + ' Select Refresh figures to retry.';
       } finally { refresh.disabled = false; }

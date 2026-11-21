@@ -23,7 +23,7 @@ function setup(user, rows) {
       op === 'ARRAY_CONTAINS' ? row[field]?.includes(value) : row[field] === value)).length;
     return { count, readTime };
   }});
-  return { dashboard: (Module, BranchId='main') => service.moduleDashboard({ Module, BranchId }), queries, f };
+  return { dashboard: (Module, BranchId='main') => service.getModuleDashboard({ Module, BranchId }), queries, f };
 }
 for (const [key, name] of Object.entries(registers)) {
   test(key + ' dashboard reads only its branch register and returns empty counts without further reads', async () => {
