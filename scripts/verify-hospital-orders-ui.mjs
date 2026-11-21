@@ -113,6 +113,17 @@ try{
   await page.locator('#outstandingFilter button').first().click();
   assert.equal(f.queries.length,reportReads,'printing and reopening a loaded report use memory');
 
+  await page.locator('#outstandingPeriod').selectOption('all');
+  assert.equal(await page.locator('#outstandingFrom').isVisible(),false);
+  assert.equal(f.queries.length,reportReads,'switching report scope must not read orders');
+  await page.locator('#outstandingFilter button').first().click();
+  await page.waitForFunction(()=>document.querySelector('#outstandingPreview').textContent.includes('Full report'));
+  assert.match(await preview.textContent(),/All order dates/);
+  assert.equal(f.queries.length,reportReads+1);
+  await page.locator('#outstandingPrint').click();
+  assert.match(await page.evaluate(()=>window.reportPrinted),/All order dates/);
+  assert.equal(f.queries.length,reportReads+1);
+
   await login('laboratory','laboratory');await openList();assert.equal(await page.locator('#stockWorkspace').isVisible(),false);
   await page.evaluate(()=>{window.print=()=>{window.printedLabel=document.querySelector('#cardPrint').textContent;};});await page.locator('#printSpecimen').click();assert.match(await page.evaluate(()=>window.printedLabel),new RegExp(labOrder.OrderNumber));
   await expand('specimenWork');await fill('specimenForm',{SpecimenLabel:labOrder.OrderNumber+'-S01',Note:'Patient identity and specimen label checked'});await page.locator('#confirmOrder').check();await page.locator('#specimenForm button').click();await done('Specimen handling recorded');

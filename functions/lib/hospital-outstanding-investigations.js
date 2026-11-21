@@ -18,7 +18,9 @@ export function createInvestigationReport({ capabilities, branch, clock, page, e
   return async function getOutstandingInvestigations(body) {
     const selected = body.Kind === 'All' ? allowed : [body.Kind];
     if (!selected.length || selected.some(kind => !allowed.includes(kind))) fail('This investigation department is outside your access.', 403);
-    const dates = dateFilters(body.DateRange);
+    const allDates = body.AllOrderDates === true;
+    if (allDates && body.DateRange != null) fail('Choose either all order dates or a date range.');
+    const dates = allDates ? [] : dateFilters(body.DateRange);
     const branchId = await branch(body);
     const now = Date.parse(clock());
     const readTime = body.Cursor ? body.ReadTime : new Date(now).toISOString();

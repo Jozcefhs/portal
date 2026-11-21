@@ -65,3 +65,20 @@ test('unauthorised branches and departments and invalid ranges cause no register
   await assert.rejects(createHospitalService(env,actors.pharmacist,f.db).getOutstandingInvestigations(request({Kind:'All',DateRange:period})),{status:403});
   assert.equal(f.queries.length,0);
 });
+
+test('all order dates includes the historical backlog once and keeps queries bounded and branch-scoped', async () => {
+  const f=setup();
+  for (let i=0;i<32;i++) f.add(i,'Requested','Laboratory',{CreatedAt:'2023-01-01T09:00:00.000Z'});
+  f.add(100,'Released'); f.add(101,'Cancelled');
+  f.add(102,'Requested','Laboratory',{BranchId:'north'});
+  const load = extra => f.service.getOutstandingInvestigations(request({Kind:'All',AllOrderDates:true,...extra}));
+  await assert.rejects(load({DateRange:period}), /either all order dates or a date range/);
+  const first = await load({});
+  const second = await load({Cursor:first.next,ReadTime:first.readTime});
+  assert.equal(first.orders.length,30);
+  assert.equal(second.next,null);
+  assert.equal(new Set([...first.orders,...second.orders].map(order=>order.id)).size,32);
+  assert.equal(f.queries.length,2);
+  assert.ok(f.queries.every(q=>q.limit===31 && q.readTime===first.readTime));
+  assert.ok(f.commits.flat().every(write=>write.collectionPath.endsWith('/hospitalAudit')));
+});

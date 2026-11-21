@@ -456,6 +456,6 @@ The staff sidebar and hospital overview open a dashboard for every assigned hosp
 
 ### H14 outstanding investigations
 
-Open Outstanding investigations report from Laboratory, Imaging investigations or Prescriptions and investigations. Filter by department and order dates (WAT). Rejected specimens and draft amendments remain outstanding until release or cancellation. Clinical staff see authorised order details. Department configuration access provides stage and urgency totals only.
+Open Outstanding investigations report from Laboratory, Imaging investigations or Prescriptions and investigations. Choose a department and either a date range (WAT) or **All order dates** to include older unresolved orders. Both options load up to 30 orders per page on request. Rejected specimens and draft amendments remain outstanding until release or cancellation. Clinical staff see authorised order details. Department configuration access provides stage and urgency totals only.
 
 The report loads indexed order pages on demand at one database snapshot. Reopening, preview and printing reuse loaded pages. Partial totals are labelled until the last page. Refresh starts a new snapshot. Identifying reads use the hospital access audit.

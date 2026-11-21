@@ -4,9 +4,10 @@
   function create({ $, esc, can, api, run, status }) {
     const host = $('outstandingInvestigations');
     host.innerHTML = `<summary>Outstanding investigations report</summary>
-      <p>Choose the dates the orders were placed. Results awaiting release and amendments in progress are included.</p>
+      <p>Results awaiting release and amendments in progress are included.</p>
       <form id="outstandingFilter" class="toolbar">
         <label>Department<select id="outstandingKind"></select></label>
+        <label>Order dates<select id="outstandingPeriod"><option value="range">Selected dates</option><option value="all">All order dates</option></select></label>
         <label>From<input id="outstandingFrom" type="date" required></label>
         <label>To<input id="outstandingTo" type="date" required></label>
         <button>Load report</button><button id="outstandingRefresh" type="button" hidden>Refresh report</button>
@@ -43,9 +44,10 @@
       const rows = [...orders.values()].sort((a,b) => Number(b.urgent)-Number(a.urgent) || a.created.localeCompare(b.created) || a.id.localeCompare(b.id));
       const scope = selection;
       const time = new Date(readTime).toLocaleString('en-GB', {timeZone:'Africa/Lagos'});
+      const period = scope.allDates ? 'All order dates' : `${esc(scope.from)} to ${esc(scope.to)} by order date (WAT)`;
       preview.innerHTML = `<h3>Outstanding investigations</h3>
-        <p>${esc(scope.branchName)} · ${esc(departments.join(' and '))} · ${esc(scope.from)} to ${esc(scope.to)} by order date (WAT)</p>
-        <p><strong>${next?'Partial report':'Full selected period'}</strong> · ${count} outstanding · ${urgent} urgent · Snapshot ${esc(time)} WAT</p>
+        <p>${esc(scope.branchName)} · ${esc(departments.join(' and '))} · ${period}</p>
+        <p><strong>${next ? 'Partial report' : scope.allDates ? 'Full report' : 'Full selected period'}</strong> · ${count} outstanding · ${urgent} urgent · Snapshot ${esc(time)} WAT</p>
         ${next?'<p>More orders remain to be checked. Load the next page to extend this report.</p>':''}
         ${summaryOnly.length?`<p>Department totals only for ${esc(summaryOnly.join(' and '))}.</p>`:''}
         ${totals.length?`<div class="table-wrap"><table><caption>Outstanding by stage</caption><thead><tr><th>Department</th><th>Stage</th><th>Outstanding</th><th>Urgent</th></tr></thead><tbody>
@@ -61,12 +63,13 @@
       if (mode==='refresh') reset();
       if (mode==='first' && result) { draw(); return; }
       if (mode==='more' && !result?.next) return;
-      const scope = selection ||= { kind:$('outstandingKind').value, from:$('outstandingFrom').value, to:$('outstandingTo').value,
+      const scope = selection ||= { kind:$('outstandingKind').value, allDates:$('outstandingPeriod').value === 'all', from:$('outstandingFrom').value, to:$('outstandingTo').value,
         branchName:$('branch').selectedOptions[0]?.textContent || $('branch').value };
       const pending = loading = {};
       requestId ||= crypto.randomUUID();
       try {
-        const data = await api('getOutstandingInvestigations', {Kind:scope.kind, DateRange:{fromDate:scope.from,toDate:scope.to}, RequestId:requestId,
+        const data = await api('getOutstandingInvestigations', {Kind:scope.kind, RequestId:requestId,
+          ...(scope.allDates ? {AllOrderDates:true} : {DateRange:{fromDate:scope.from,toDate:scope.to}}),
           ...(result?.next?{Cursor:result.next,ReadTime:result.readTime}:{})});
         if (selection!==scope) return;
         result ||= { groups:new Map(), orders:new Map() };
@@ -81,6 +84,14 @@
         status(data.next?'Report page loaded. More orders are available.':'Outstanding investigations report loaded.');
       } finally { if (loading===pending) loading=null; }
     }
+    $('outstandingPeriod').addEventListener('change', () => {
+      const range = $('outstandingPeriod').value === 'range';
+      for (const field of [$('outstandingFrom'), $('outstandingTo')]) {
+        field.required = range;
+        field.closest('label').hidden = !range;
+      }
+      reset();
+    });
     $('outstandingFilter').addEventListener('input',reset);
     $('outstandingFilter').onsubmit=e=>{e.preventDefault();run(()=>load('first'));};
     $('outstandingMore').onclick=()=>run(()=>load('more'));
