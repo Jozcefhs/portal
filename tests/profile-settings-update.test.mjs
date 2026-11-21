@@ -34,7 +34,7 @@ test('desktop profile persistence merges the stored profile before applying supp
 test('web settings keep landing content in a dedicated canonical document', async () => {
   const settingsApi = await readFile(new URL('../functions/api/settings.js', import.meta.url), 'utf8');
   assert.match(settingsApi, /getDocument\(env, 'settings', PUBLIC_PORTAL_CONTENT_DOCUMENT\)/);
-  assert.match(settingsApi, /upsertDocument\(env, 'settings', PUBLIC_PORTAL_CONTENT_DOCUMENT/);
+  assert.match(settingsApi, /patchDocumentFields\(env, 'settings', PUBLIC_PORTAL_CONTENT_DOCUMENT/);
   assert.match(settingsApi, /PortalNotice: mergedProfileText\(existing, incoming, 'PortalNotice'\)/);
 });
 

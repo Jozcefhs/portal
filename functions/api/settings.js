@@ -14,6 +14,7 @@ import { retainedOrganisationEntranceSubjects, normalizeEntranceSubjects } from 
 import { getWebBranding, saveWebBranding } from '../lib/web-branding.js';
 import { getSchoolStructure } from '../lib/school-scope.js';
 import { saveBranchSchoolSection } from '../lib/branch-school-presentation.js';
+import { homepageEditor, publishedHomepagePhoto } from '../lib/school-homepage.js';
 import {
   assertConfiguredProfileBranch,
   effectiveBranchProfile,
@@ -246,7 +247,12 @@ async function loadProfile(env, options = {}) {
       profile[field] = clean(profile[field] || savedBrevo?.[field]);
     });
     legacyBrevoApiKeyConfigured = Boolean(clean(savedBrevo?.BrevoApiKey));
-    profile = applyPublicPortalContent(profile, savedPublicContent);
+    if (!savedPublicContent?.HomepageWorkspace || savedPublicContent.HomepageWorkspace === deployment.workspaceId) {
+      profile = applyPublicPortalContent(profile, savedPublicContent);
+    }
+    if (deployment.edition === 'school' && savedPublicContent?.HomepageWorkspace === deployment.workspaceId) {
+      profile.SchoolHomepage = savedPublicContent.HomepageDetails;
+    }
     const identity = deploymentIdentityDetails({
       env,
       identity: deployment,
@@ -343,7 +349,7 @@ function publicProfile(profile = {}) {
   const keys = [
     'WorkspaceId', 'OrganisationEdition', 'OrganisationName', 'OrganisationCode',
     'SchoolName', 'SchoolAddress', 'SchoolPhone', 'SchoolEmail',
-    'PortalHeadline', 'PortalSubheading', 'PortalNotice', 'NameFormat',
+    'PortalHeadline', 'PortalSubheading', 'PortalNotice', 'SchoolHomepage', 'NameFormat',
     'ResultDisplayMode', 'ShowResultsOnline', 'DeclarationStatement',
     'WebLogoUrl', 'WebLogoConfigured', 'TurnstileSiteKey', 'EffectiveBranchId',
     'TutorialLinks', 'TutorialChannelUrl'
@@ -367,6 +373,9 @@ function profileForSettingsAccess(profile = {}, access = {}) {
 export async function onRequestGet(context) {
   const metric = startRequestMetric(context.request, '/api/settings');
   const url = new URL(context.request.url);
+  if (url.searchParams.has('homepagePhoto')) {
+    return publishedHomepagePhoto(context.env, requiredDeploymentIdentity(context.env), url.searchParams);
+  }
   const branchId = clean(url.searchParams.get('branchId') || url.searchParams.get('branch'));
   const freshRequested = url.searchParams.get('fresh') === '1';
   const staff = freshRequested
@@ -404,6 +413,16 @@ export async function onRequestPost(context) {
     );
     const settingsScope = settingsAccess.scope;
     const branchId = settingsAccess.branchId;
+    if (['loadHomepage', 'saveHomepageDraft', 'publishHomepage'].includes(body.action)) {
+      action = body.action;
+      if (deployment.edition !== 'school' || settingsAccess.scopeLocked || settingsScope !== 'organisation') {
+        throw Object.assign(new Error('School-wide administrator access is required to edit the public homepage.'), { status: 403 });
+      }
+      const result = await homepageEditor(env, deployment.workspaceId, action, body, actor.username);
+      if (action === 'publishHomepage') invalidateProfileCache();
+      finishRequestMetric(metric, { status: 200, action });
+      return Response.json({ ok: true, ...result }, { headers: { 'Cache-Control': 'no-store' } });
+    }
     if (clean(body.action || body.Action) === 'saveBranchSchoolSection') {
       if (settingsAccess.scopeLocked || settingsScope === 'branch') {
         throw Object.assign(new Error('Only an organisation-wide Super Administrator can change branch terminology.'), { status: 403 });
@@ -593,6 +612,7 @@ export async function onRequestPost(context) {
     }
     validatePaymentSettings(profile);
     delete profile.WebLogoUrl;
+    delete profile.SchoolHomepage;
     delete profile.WebLogoConfigured;
     delete profile.TurnstileSiteKey;
     delete profile.PaystackConnectionMode;
@@ -622,6 +642,8 @@ export async function onRequestPost(context) {
     }, {
       UpdatedAt: profile.UpdatedAt, UpdatedBy: 'Setup'
     }));
+    const landingText = Object.fromEntries(Object.entries(publicPortalContent(profile))
+      .filter(([field]) => Object.hasOwn(incoming, field)));
     await Promise.all([
       upsertDocument(env, 'settings', 'schoolProfile', profile),
       patchDocumentFields(env, 'settings', 'brevo', {
@@ -629,8 +651,8 @@ export async function onRequestPost(context) {
         UpdatedAt: profile.UpdatedAt,
         UpdatedBy: 'Setup'
       }),
-      upsertDocument(env, 'settings', PUBLIC_PORTAL_CONTENT_DOCUMENT, {
-        ...publicPortalContent(profile),
+      Object.keys(landingText).length && patchDocumentFields(env, 'settings', PUBLIC_PORTAL_CONTENT_DOCUMENT, {
+        ...landingText,
         UpdatedAt: profile.UpdatedAt,
         UpdatedBy: 'Setup'
       })

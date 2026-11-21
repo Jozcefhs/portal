@@ -957,9 +957,11 @@ function profileFromForm() {
     AdmissionSignatoryName: data.get('AdmissionSignatoryName'),
     AdmissionSignatoryTitle: data.get('AdmissionSignatoryTitle'),
     EmailGreetingTemplate: data.get('EmailGreetingTemplate'),
-    PortalHeadline: data.get('PortalHeadline'),
-    PortalSubheading: data.get('PortalSubheading'),
-    PortalNotice: data.get('PortalNotice'),
+    ...(document.getElementById('edit-homepage').hidden ? {
+      PortalHeadline: data.get('PortalHeadline'),
+      PortalSubheading: data.get('PortalSubheading'),
+      PortalNotice: data.get('PortalNotice')
+    } : {}),
     ResultDisplayMode: data.get('ResultDisplayMode'),
     ShowResultsOnline: data.get('ShowResultsOnline'),
     OrganisationEdition: document.getElementById('organisationEdition').value,
@@ -1089,6 +1091,8 @@ function updateSettingsScopeUI(profile = {}) {
   }
   const branchMode = settingsScopeField.value === 'branch';
   document.getElementById('branch-school-terminology').hidden = activeSettingsEdition !== 'school' || branchMode || scopeLocked;
+  window.HomepageEditor.configure(profile, !branchMode && !scopeLocked && profile.OrganisationEdition === 'school',
+    () => unlockedPassword);
   document.getElementById('entranceExamSubjects').disabled = !branchMode;
   if (academicPolicyScopeMode) academicPolicyScopeMode.hidden = !branchMode;
   settingsScopeField.disabled = scopeLocked;

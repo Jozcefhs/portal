@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="css/style.css?v=20260903-hotel-tabs">
   <link rel="stylesheet" href="css/school-landing.css?v=20261012-menu-dismissal">
   <script src="js/school-menu.js?v=20261012-menu-dismissal" defer></script>
+  <link rel="stylesheet" href="css/school-homepage.css">
 </head>
 <body data-fresh-site-profile>
   <main class="landing-page">
@@ -60,6 +61,7 @@
           <span><b aria-hidden="true">&#10003;</b> Mobile friendly</span>
         </div>
       </div>
+      <figure id="homepage-cover" hidden></figure>
       <div class="hero-service-panel" aria-label="Portal services">
         <div class="service-panel-heading">
           <span class="service-panel-kicker">Secure self-service</span>
@@ -122,7 +124,11 @@
         </a>
       </div>
     </section>
+    <section id="homepage-about" class="service-directory" hidden><h2>About our school</h2><p></p></section>
+    <section id="homepage-links" class="service-directory" hidden><h2>School links</h2><ul></ul></section>
+    <section id="homepage-gallery" class="service-directory" hidden><h2>School gallery</h2><div></div></section>
   </main>
+  <script src="js/school-homepage.js"></script>
   <script src="js/site-config.js?v=20260809-fresh-landing-notice"></script>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20261016-grouped-form-validation"></script>

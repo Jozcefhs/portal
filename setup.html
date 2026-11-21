@@ -470,10 +470,11 @@
             <div>
               <p class="settings-eyebrow">Public experience</p>
               <h2>Landing page</h2>
-              <p>Edit the headline and notice shown before a visitor signs in.</p>
+              <p id="landing-help">Edit the headline and notice shown before a visitor signs in.</p>
             </div>
           </div>
-          <div class="settings-fields">
+          <button id="edit-homepage" type="button" hidden>Edit school homepage</button>
+          <div class="settings-fields" id="landing-text-fields">
             <div class="settings-field"><label for="portalHeadline">Headline</label><input id="portalHeadline" name="PortalHeadline"></div>
             <div class="settings-field"><label for="portalSubheading">Subheading</label><textarea id="portalSubheading" name="PortalSubheading" rows="3"></textarea></div>
             <div class="settings-field"><label for="portalNotice">Optional notice</label><textarea id="portalNotice" name="PortalNotice" rows="2" placeholder="Example: Add an important public announcement." data-edition-placeholder="portal-notice"></textarea></div>
@@ -622,10 +623,41 @@
     </form>
   </main>
 
+  <dialog id="homepage-editor" class="homepage-dialog" aria-labelledby="homepage-editor-title">
+    <h2 id="homepage-editor-title">School homepage</h2>
+    <form id="homepage-form">
+      <fieldset id="homepage-fields">
+        <legend>Welcome</legend>
+        <label>Headline<input name="PortalHeadline" maxlength="180"></label>
+        <label>Welcome message<textarea name="PortalSubheading" rows="2" maxlength="600"></textarea></label>
+        <label>Announcement<textarea name="PortalNotice" rows="2" maxlength="500"></textarea></label>
+        <label>About our school<textarea name="about" rows="4" maxlength="2400"></textarea></label>
+        <div id="homepage-photos"></div>
+        <h3>Related links</h3><div id="homepage-link-rows"></div>
+        <button type="button" id="homepage-add-link">Add link</button>
+      </fieldset>
+      <p id="homepage-status" role="status"></p>
+      <div class="homepage-actions">
+        <button type="button" id="homepage-show-preview">Preview</button>
+        <button type="button" id="homepage-save">Save draft</button>
+        <button type="submit" id="homepage-publish">Publish homepage</button>
+        <button type="button" id="homepage-close">Close</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="homepage-preview" class="homepage-dialog" aria-labelledby="homepage-preview-title">
+    <h2 id="homepage-preview-title">Homepage preview</h2>
+    <label>Screen size<select id="homepage-screen"><option value="375">Phone</option><option value="1100">Desktop</option></select></label>
+    <div class="frame-scroll"><iframe title="School homepage preview" sandbox="allow-same-origin"></iframe></div>
+    <button type="button" id="homepage-preview-close">Back to editor</button>
+  </dialog>
+  <link rel="stylesheet" href="css/school-homepage.css">
+  <script src="js/school-homepage.js"></script>
+  <script src="js/homepage-editor.js"></script>
   <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20261016-grouped-form-validation"></script>
   <script src="js/paystack-connection-status.js?v=20261013-paystack-activation"></script>
-  <script src="js/setup.js?v=20261121-email-session"></script>
+  <script src="js/setup.js?v=20261121-homepage"></script>
 </body>
 </html>
