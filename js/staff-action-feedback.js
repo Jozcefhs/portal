@@ -3,6 +3,7 @@
   'use strict';
   let activeActions = 0;
   let lastServerResult = 0;
+  const storekeepingReads = new Set(['access', 'stock', 'purchases', 'handovers', 'mine', 'sent', 'card', 'requests']);
   const readActions = new Set(['bootstrap', 'list', 'shell', 'section', 'status', 'adminstatus', 'quick',
     'presencequick', 'detail', 'recorddetail', 'records', 'document', 'catalog', 'findings', 'reports',
     'report', 'statement', 'analysis', 'balance', 'balances', 'context', 'taxbreakdown', 'lookupinventory',
@@ -15,6 +16,7 @@
     let body = {};
     try { body = typeof init.body === 'string' ? JSON.parse(init.body) : {}; } catch (_) { return false; }
     const action = String(body.action || body.Action || body.mode || url.searchParams.get('action') || '').toLowerCase().replace(/[^a-z]/g, '');
+    if (url.pathname === '/api/staff-storekeeping' && storekeepingReads.has(action)) return false;
     if (readActions.has(action) || /^(?:get|list|search|lookup|preview|validate|check|download|export|poll|verify|prepare)/.test(action)) return false;
     // Meeting setup only reads the department roster and saved settings.
     if (url.pathname === '/api/staff-meetings' && action === 'setup') return false;
