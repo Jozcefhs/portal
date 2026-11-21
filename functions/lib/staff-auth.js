@@ -30,7 +30,7 @@ const APPROVAL_PROOF_COOKIE = 'staff_approval_proof';
 const APPROVAL_PROOF_SECONDS = 3 * 60;
 const ATTENDANCE_PROOF_SECONDS = 2 * 60;
 const ATTENDANCE_LIVENESS_CHALLENGE_SECONDS = 90;
-const ATTENDANCE_LIVENESS_ACTIONS = new Set(['BLINK', 'TURN_LEFT', 'TURN_RIGHT', 'CHIN_UP']);
+const ATTENDANCE_LIVENESS_ACTIONS = new Set(['BLINK', 'TURN_LEFT', 'TURN_RIGHT', 'CHIN_UP', 'SINGLE_CAPTURE']);
 const WEB_PASSWORD_ITERATIONS = 10000;
 const WEB_PASSWORD_HASH_VERSION = 'pbkdf2-sha256-v1';
 const ACCESS_CONFIG_CACHE_MS = 60 * 1000;
@@ -784,6 +784,7 @@ export async function createStaffAttendanceProof(env, user, scope = {}) {
     siteId: clean(scope.siteId),
     direction: clean(scope.direction).toUpperCase(),
     method,
+    ...(scope.livenessAction === 'SINGLE_CAPTURE' ? { branchId: clean(scope.branchId) } : {}),
     livenessAction: method === 'face' ? clean(scope.livenessAction).toUpperCase() : '',
     exp: Math.floor(Date.now() / 1000) + ATTENDANCE_PROOF_SECONDS,
     nonce: crypto.randomUUID()
@@ -798,6 +799,7 @@ export async function createStaffAttendanceLivenessChallenge(env, user, scope = 
   const payload = {
     username: lower(user.username),
     purpose: 'staff-attendance-liveness',
+    ...(action === 'SINGLE_CAPTURE' ? { branchId: clean(scope.branchId) } : {}),
     siteId: clean(scope.siteId),
     direction: clean(scope.direction).toUpperCase(),
     action,
@@ -817,6 +819,7 @@ export async function readStaffAttendanceLivenessChallenge(env, token, username,
     clean(payload.siteId) === clean(scope.siteId) &&
     clean(payload.direction).toUpperCase() === clean(scope.direction).toUpperCase() &&
     ATTENDANCE_LIVENESS_ACTIONS.has(clean(payload.action).toUpperCase()) &&
+    (payload.action !== 'SINGLE_CAPTURE' || (scope.branchId && payload.branchId === scope.branchId && ['IN', 'OUT'].includes(payload.direction))) &&
     (!expectedAction || clean(payload.action).toUpperCase() === expectedAction) &&
     Number(payload.exp) > Math.floor(Date.now() / 1000);
   return valid ? payload : null;
@@ -829,6 +832,7 @@ export async function readStaffAttendanceProof(env, token, username, scope = {})
     lower(payload.username) === lower(username) &&
     clean(payload.siteId) === clean(scope.siteId) &&
     clean(payload.direction).toUpperCase() === clean(scope.direction).toUpperCase() &&
+    (payload.livenessAction !== 'SINGLE_CAPTURE' || (scope.branchId && payload.branchId === scope.branchId && ['IN', 'OUT'].includes(payload.direction))) &&
     ['passkey', 'face'].includes(lower(payload.method)) &&
     Number(payload.exp) > Math.floor(Date.now() / 1000);
   return valid ? payload : null;

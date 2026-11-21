@@ -1283,7 +1283,7 @@ async function attendancePasskeyProof(siteId, direction) {
 
 function attendanceFaceModule() {
   if (!attendanceFaceModulePromise) {
-    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions-quick-lookup-auto-start-camera-defaults-vendor-pos-lookup-bounded-camera').catch((error) => {
+    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions-quick-lookup-auto-start-camera-defaults-vendor-pos-lookup-bounded-camera-clock-capture').catch((error) => {
       attendanceFaceModulePromise = null;
       throw error;
     });
@@ -1308,7 +1308,7 @@ async function attendanceIdentityProof(policy, siteId, direction) {
   if (required === 'NONE') return '';
   if (required === 'FACE') {
     const module = await attendanceFaceModule();
-    const result = await module.captureStaffAttendanceFace({ mode: 'verify', siteId, direction });
+    const result = await module.captureStaffAttendanceFace({ mode: 'verify', siteId, direction, branchId: attendanceBranchId(), requestSingleCapture: policy.ClockFaceCapture === 'SINGLE' });
     if (!result) throw new Error('Face verification was cancelled.');
     const proof = clean(result.attendanceProof);
     if (!proof) throw new Error('Face recognition did not return an attendance proof.');
@@ -8867,13 +8867,16 @@ async function openStaffMeetingWorkspace() {
   });
 }
 
-async function staffAttendanceRequest(action, payload = {}) {
-  const idempotencyKey = clean(payload.idempotencyKey) || newIdempotencyKey();
-  const requestedBranchId = clean(payload.BranchId || payload.branchId);
-  const effectiveBranchId = requestedBranchId
+function attendanceBranchId(payload = {}) {
+  return clean(payload.BranchId || payload.branchId)
     || (clean(selectedBranchId) && selectedBranchId !== 'all' ? selectedBranchId : '')
     || clean(currentUser?.activeBranchId || currentUser?.branchId)
     || 'main';
+}
+
+async function staffAttendanceRequest(action, payload = {}) {
+  const idempotencyKey = clean(payload.idempotencyKey) || newIdempotencyKey();
+  const effectiveBranchId = attendanceBranchId(payload);
   const response = await staffFetch('/api/staff-attendance', {
     method: 'POST',
     credentials: 'same-origin',
@@ -9246,8 +9249,11 @@ async function loadStaffAttendance() {
             <label class="check-row config-switch"><input type="checkbox" name="AutoRecordAbsence" value="YES" ${clean(policy.AutoRecordAbsence).toUpperCase() !== 'NO' ? 'checked' : ''}><span>Automatically record absence after closing time when there is no clock-in</span></label>
           </section>
           <section class="attendance-settings-panel" id="attendancePolicyPanelIdentity" role="tabpanel" aria-labelledby="attendancePolicyTabIdentity" data-attendance-policy-panel="identity" hidden>
-            <div class="config-grid"><label>Clock identity verification <select name="IdentityVerification"><option value="NONE"${selectedOption(identityMode, 'NONE')}>Location/network only</option><option value="PASSKEY"${selectedOption(identityMode, 'PASSKEY')}>Device unlock required</option><option value="FACE"${selectedOption(identityMode, 'FACE')}>Live face recognition required</option></select></label></div>
-            <p class="attendance-settings-note"><strong>Device unlock</strong> uses the phone or computer PIN, password, fingerprint or built-in face unlock. <strong>Live face recognition</strong> uses the staff member's encrypted mathematical face template and one gentle head movement, with visual and spoken camera guidance.</p>
+            <div class="config-grid"><label>Clock identity verification <select name="IdentityVerification"><option value="NONE"${selectedOption(identityMode, 'NONE')}>Location/network only</option><option value="PASSKEY"${selectedOption(identityMode, 'PASSKEY')}>Device unlock required</option><option value="FACE"${selectedOption(identityMode, 'FACE')}>Live face recognition required</option></select></label>
+              <label data-clock-face-setting${identityMode === 'FACE' ? '' : ' hidden'}>Face capture for clock-in and clock-out
+                <select name="ClockFaceCapture"><option value="MOVEMENT"${selectedOption(policy.ClockFaceCapture || 'MOVEMENT', 'MOVEMENT')}>Movement check</option><option value="SINGLE"${selectedOption(policy.ClockFaceCapture, 'SINGLE')}>Single capture</option></select>
+              </label></div>
+            <p class="attendance-settings-note"><strong>Device unlock</strong> uses the phone or computer PIN, password, fingerprint or built-in face unlock. <strong>Live face recognition</strong> matches the camera image to the staff member’s enrolled face. Single capture takes one clear image while the person looks straight ahead. A movement check provides stronger protection against a still photo.</p>
           </section>
           <section class="attendance-settings-panel" id="attendancePolicyPanelPresence" role="tabpanel" aria-labelledby="attendancePolicyTabPresence" data-attendance-policy-panel="presence" hidden>
             <div class="config-grid">
@@ -9437,6 +9443,9 @@ async function loadStaffAttendance() {
     bindHrPersonPickers(panelEl);
     hrFormStaffNameSync(document.getElementById('staffAttendanceManualForm'), data.staffDirectory || []);
     const policyForm = document.getElementById('staffAttendancePolicyForm');
+    policyForm?.elements.IdentityVerification.addEventListener('change', event => {
+      policyForm.querySelector('[data-clock-face-setting]').hidden = event.target.value !== 'FACE';
+    });
     const policyTabButtons = [...(policyForm?.querySelectorAll('[data-attendance-policy-tab]') || [])];
     const policyTabPanels = [...(policyForm?.querySelectorAll('[data-attendance-policy-panel]') || [])];
     const policyTabNames = policyTabButtons.map((button) => clean(button.dataset.attendancePolicyTab));
@@ -9582,7 +9591,7 @@ async function loadStaffAttendance() {
       try {
         const proof = await attendancePasskeyProof('SELF', 'ENROLL');
         const module = await attendanceFaceModule();
-        const result = await module.captureStaffAttendanceFace({ mode: 'enroll', attendanceProof: proof });
+        const result = await module.captureStaffAttendanceFace({ mode: 'enroll', branchId: attendanceBranchId(), attendanceProof: proof });
         if (result) setStatus(status, result.message, 'ok');
       } catch (error) {
         setStatus(status, friendlyDeviceUnlockError(error), 'bad');
@@ -9604,7 +9613,7 @@ async function loadStaffAttendance() {
       try {
         const proof = await attendancePasskeyProof('SELF', 'REVOKE');
         const module = await attendanceFaceModule();
-        const result = await module.revokeStaffAttendanceFace(proof);
+        const result = await module.revokeStaffAttendanceFace(proof, attendanceBranchId());
         setStatus(status, result.message, 'ok');
       } catch (error) {
         setStatus(status, friendlyDeviceUnlockError(error), 'bad');
@@ -11295,7 +11304,7 @@ function preloadRecordsDeskFaceRecognition() {
   recordsDeskFacePreloadScheduled = true;
   const preload = () => {
     recordsDeskFacePreloadScheduled = false;
-    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions-quick-lookup-auto-start-camera-defaults-vendor-pos-lookup-bounded-camera')
+    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions-quick-lookup-auto-start-camera-defaults-vendor-pos-lookup-bounded-camera-clock-capture')
       .then((module) => module.preloadFaceRecognitionModel())
       .catch(() => {
         recordsDeskFacePreloadPromise = null;
@@ -11309,7 +11318,7 @@ function preloadRecordsDeskFaceRecognition() {
 }
 
 async function openStudentFaceLookupDialog(options = {}) {
-  const module = await import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions-quick-lookup-auto-start-camera-defaults-vendor-pos-lookup-bounded-camera');
+  const module = await import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions-quick-lookup-auto-start-camera-defaults-vendor-pos-lookup-bounded-camera-clock-capture');
   return module.openStudentFaceLookup(options);
 }
 

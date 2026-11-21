@@ -39,6 +39,7 @@ const DEFAULT_ATTENDANCE_POLICY = Object.freeze({
   TimeZone: 'Africa/Lagos',
   AutoRecordAbsence: 'YES',
   IdentityVerification: 'NONE',
+  ClockFaceCapture: 'MOVEMENT',
   PresenceCheckMode: 'NONE',
   PresenceCheckMinimumMinutes: 90,
   PresenceCheckMaximumMinutes: 180,
@@ -194,6 +195,8 @@ export function normalizeAttendancePolicy(input = {}, existing = {}) {
     ? 'PASSKEY'
     : requestedIdentityVerification;
   if (!IDENTITY_VERIFICATION_MODES.has(identityVerification)) fail('Choose a valid attendance identity verification method.');
+  const clockFaceCapture = clean(input.ClockFaceCapture ?? existing.ClockFaceCapture ?? DEFAULT_ATTENDANCE_POLICY.ClockFaceCapture).toUpperCase();
+  if (!['MOVEMENT', 'SINGLE'].includes(clockFaceCapture)) fail('Choose a valid clock face capture method.');
   const presenceCheckMode = clean(input.PresenceCheckMode ?? existing.PresenceCheckMode ?? DEFAULT_ATTENDANCE_POLICY.PresenceCheckMode).toUpperCase();
   if (!PRESENCE_CHECK_MODES.has(presenceCheckMode)) fail('Choose a valid presence-check mode.');
   const presenceCheckMinimumMinutes = boundedWholeNumber(
@@ -230,6 +233,7 @@ export function normalizeAttendancePolicy(input = {}, existing = {}) {
     TimeZone: timeZone,
     AutoRecordAbsence: activeValue(input.AutoRecordAbsence ?? existing.AutoRecordAbsence, true) ? 'YES' : 'NO',
     IdentityVerification: identityVerification,
+    ClockFaceCapture: clockFaceCapture,
     PresenceCheckMode: presenceCheckMode,
     PresenceCheckMinimumMinutes: presenceCheckMinimumMinutes,
     PresenceCheckMaximumMinutes: presenceCheckMaximumMinutes,
@@ -431,7 +435,7 @@ export function evaluateAttendancePresence(site = {}, location = {}, clientIp = 
   };
 }
 
-export function verifiedAttendanceIdentity(policy = {}, proof = null) {
+export function verifiedAttendanceIdentity(policy = {}, proof = null, clockDirection = '') {
   const required = clean(policy.IdentityVerification || 'NONE').toUpperCase();
   if (required === 'NONE') return 'Session identity';
   const method = lower(proof?.method);
@@ -443,6 +447,12 @@ export function verifiedAttendanceIdentity(policy = {}, proof = null) {
     fail(`Verify your identity with ${verification} before completing this attendance action.`, 403);
   }
   if (method !== 'face') return 'Device unlock';
+  if (proof.livenessAction === 'SINGLE_CAPTURE') {
+    if (policy.ClockFaceCapture !== 'SINGLE' || !['IN', 'OUT'].includes(clockDirection) || proof.direction !== clockDirection) {
+      fail('The current attendance policy requires a movement check. Verify your face again.', 403);
+    }
+    return 'Face recognition (single capture)';
+  }
   const actionLabels = {
     BLINK: 'blink challenge',
     TURN_LEFT: 'left-turn challenge',
@@ -1121,7 +1131,7 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
     }
   }
   const site = workspace.site;
-  const identityMethod = verifiedAttendanceIdentity(workspace.policy, requestContext.identityProof);
+  const identityMethod = verifiedAttendanceIdentity(workspace.policy, requestContext.identityProof, direction);
   const presence = evaluateAttendancePresence(site, body.Location || body, requestContext.clientIp || '');
   if (!presence.passed) {
     const details = presence.accuracyMetres && presence.accuracyMetres > Number(site.MaxAccuracyMetres)

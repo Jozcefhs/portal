@@ -413,10 +413,10 @@ test('mobile attendance sequences location and configured identity checks withou
   assert.match(adminJs, /const attendanceProof = await attendanceIdentityProof\(policy, siteId, direction\)/);
   assert.match(adminJs, /warmAttendanceIdentity\(policy/);
   assert.match(adminJs, /function attendanceFaceModule\(\)/);
-  assert.match(adminJs, /captureStaffAttendanceFace\(\{ mode: 'verify', siteId, direction \}\)/);
+  assert.match(adminJs, /captureStaffAttendanceFace\(\{ mode: 'verify', siteId, direction, branchId: attendanceBranchId\(\), requestSingleCapture: policy\.ClockFaceCapture === 'SINGLE' \}\)/);
   assert.match(adminJs, /preloadStaffAttendanceFace\(\)/);
-  assert.match(adminJs, /captureStaffAttendanceFace\(\{ mode: 'enroll', attendanceProof: proof \}\)/);
-  assert.match(adminJs, /revokeStaffAttendanceFace\(proof\)/);
+  assert.match(adminJs, /captureStaffAttendanceFace\(\{ mode: 'enroll', branchId: attendanceBranchId\(\), attendanceProof: proof \}\)/);
+  assert.match(adminJs, /revokeStaffAttendanceFace\(proof, attendanceBranchId\(\)\)/);
   assert.match(clockHandlerSource, /getStaffAttendanceActionState/);
   assert.doesNotMatch(clockHandlerSource, /listStaffAttendance|listCollection|queryCollection/);
   assert.match(passkeyApiSource, /getDocument\(env, 'staffPasskeys', await documentIdForCredential\(credentialId\)\)/);

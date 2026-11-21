@@ -1,5 +1,6 @@
 import { requireFirestoreEnv } from '../lib/firestore.js';
 import { readStaffAttendanceProof, readStaffSession, requireStaffSession } from '../lib/staff-auth.js';
+import { resolveStaffAttendanceBranch } from '../lib/staff-attendance-storage.js';
 import { handleStaffAttendanceAction } from '../lib/staff-time-attendance.js';
 import {
   beginIdempotentRequest,
@@ -59,6 +60,7 @@ export async function onRequestPost(context) {
     const identityProof = ['clock', 'presence'].includes(action)
       ? await readStaffAttendanceProof(context.env, body.AttendanceProof, user.username, {
         siteId: body.SiteId,
+        branchId: resolveStaffAttendanceBranch(user, body.BranchId || body.branchId || 'main'),
         direction: proofDirection
       })
       : null;

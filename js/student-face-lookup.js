@@ -598,10 +598,13 @@ function averageDescriptors(samples) {
   return average.map((value) => Math.round((value / samples.length) * 1e6) / 1e6);
 }
 
-// Assisted search is not authentication or attendance verification. It uses a
-// clear, steady frontal sample and still requires staff to confirm the match.
-// Keep this separate from captureDescriptor's live movement/evidence pipeline.
-export async function captureLookupDescriptor(dialog, human) {
+export function captureLookupDescriptor(dialog, human) {
+  return captureFrontalDescriptor(dialog, human, false);
+}
+
+// Both flows need one clear frontal descriptor. The attendance API separately
+// verifies the signed challenge and compares the descriptor with the staff template.
+export async function captureFrontalDescriptor(dialog, human, attendance) {
   const video = dialog.querySelector('[data-face-video]');
   const progress = dialog.querySelector('[data-face-progress]');
   if (!video.srcObject) throw new Error('Start the camera first.');
@@ -609,7 +612,7 @@ export async function captureLookupDescriptor(dialog, human) {
   const generation = dialog.cameraGeneration;
   const ensureActive = () => {
     if (!dialog.open || !dialog.isConnected || video.srcObject !== stream || dialog.cameraGeneration !== generation || stream.getVideoTracks().some((track) => track.readyState === 'ended')) {
-      throw new Error('Face lookup was cancelled.');
+      throw new Error(attendance ? 'Face verification was cancelled.' : 'Face lookup was cancelled.');
     }
   };
   const started = Date.now();
@@ -652,7 +655,7 @@ export async function captureLookupDescriptor(dialog, human) {
         if (stableFrames >= NEUTRAL_POSE_FRAMES && embeddingReady) {
           progress.value = ROUTINE_SAMPLE_COUNT;
           setGuideState(dialog, 'capture');
-          setStatus(dialog, 'Clear face sample captured. Searching for a possible match...', 'good');
+          setStatus(dialog, attendance ? 'Face captured. Verifying your identity…' : 'Clear face sample captured. Searching for a possible match...', 'good');
           return averageDescriptors([face.embedding.map(Number)]);
         }
         lastGuidance = 'Look straight at the camera and hold still. No head turn is needed.';
@@ -663,7 +666,7 @@ export async function captureLookupDescriptor(dialog, human) {
     }
     ensureActive();
     setGuideState(dialog, 'warning');
-    throw new Error(`Capture paused. ${lastGuidance} Tap Retry scan to retry.`);
+    throw new Error(`Capture paused. ${lastGuidance} Tap ${attendance ? 'Capture face' : 'Retry scan'} to retry.`);
   } finally {
     progress.hidden = true;
   }
@@ -1114,11 +1117,11 @@ export function staffAttendanceFaceStatus() {
   return staffAttendanceFaceRequest('status');
 }
 
-export function revokeStaffAttendanceFace(attendanceProof) {
-  return staffAttendanceFaceRequest('revoke', { AttendanceProof: attendanceProof });
+export function revokeStaffAttendanceFace(attendanceProof, branchId) {
+  return staffAttendanceFaceRequest('revoke', { AttendanceProof: attendanceProof, BranchId: branchId });
 }
 
-function attendanceFaceDialogMarkup(mode) {
+function attendanceFaceDialogMarkup(mode, singleCapture) {
   const enrollment = mode === 'enroll';
   const sampleCount = enrollment ? ENROLLMENT_SAMPLE_COUNT : ROUTINE_SAMPLE_COUNT;
   return `<dialog class="student-face-dialog staff-attendance-face-dialog" data-staff-attendance-face-dialog aria-modal="true" aria-labelledby="attendanceFaceDialogTitle">
@@ -1131,7 +1134,7 @@ function attendanceFaceDialogMarkup(mode) {
     </header>
     <div class="student-face-notice">
       <span aria-hidden="true">&#128737;</span>
-      <p><strong>Private face capture</strong><small>Camera frames stay on this device. Follow one gentle head movement, then we capture automatically. Only an encrypted face template is saved.</small></p>
+      <p><strong>Private face capture</strong><small>Camera frames stay on this device. ${singleCapture ? 'Look straight ahead for one automatic capture.' : 'Follow one gentle head movement, then we capture automatically.'}</small></p>
     </div>
     <div class="student-face-camera-toolbar">
       <label class="student-face-camera-field"><span>Camera</span><select data-face-camera-select aria-label="Choose camera for face capture"><option value="user" selected>Front camera</option><option value="environment">Back camera</option></select></label>
@@ -1157,7 +1160,8 @@ export function captureStaffAttendanceFace(options = {}) {
     stopAudioGuidance(activeDialog);
     activeDialog.close();
   }
-  document.body.insertAdjacentHTML('beforeend', attendanceFaceDialogMarkup(mode));
+  const singleCapture = mode === 'verify' && options.requestSingleCapture === true && ['IN', 'OUT'].includes(options.direction) && !options.siteId?.startsWith('meeting:');
+  document.body.insertAdjacentHTML('beforeend', attendanceFaceDialogMarkup(mode, singleCapture));
   const dialog = document.body.lastElementChild;
   activeDialog = dialog;
   const video = dialog.querySelector('[data-face-video]');
@@ -1205,21 +1209,30 @@ export function captureStaffAttendanceFace(options = {}) {
         const human = await loadHuman(dialog);
         if (mode === 'verify' && !activeChallenge) {
           activeChallenge = await staffAttendanceFaceRequest('challenge', {
+            BranchId: options.branchId,
             SiteId: options.siteId,
-            Direction: options.direction
+            Direction: options.direction,
+            RequestSingleCapture: singleCapture
           });
           setLivenessChallenge(dialog, activeChallenge);
         }
         let livenessEvidence = null;
-        const descriptor = await captureDescriptor(dialog, human, sampleCount, {
-          challenge: mode === 'verify' ? activeChallenge : { action: 'TURN_LEFT' },
-          onLivenessEvidence: (evidence) => { livenessEvidence = evidence; }
-        });
+        let descriptor;
+        if (mode === 'verify' && activeChallenge?.action === 'SINGLE_CAPTURE') {
+          guideCaptureStep(dialog, activeChallenge.instruction);
+          descriptor = await captureFrontalDescriptor(dialog, human, true);
+        } else {
+          descriptor = await captureDescriptor(dialog, human, sampleCount, {
+            challenge: mode === 'verify' ? activeChallenge : { action: 'TURN_LEFT' },
+            onLivenessEvidence: (evidence) => { livenessEvidence = evidence; }
+          });
+        }
         stopAudioGuidance(dialog);
         const result = await staffAttendanceFaceRequest(mode === 'enroll' ? 'enroll' : 'verify', {
           modelId: MODEL_ID,
           descriptor,
           sampleCount,
+          BranchId: options.branchId,
           SiteId: options.siteId,
           Direction: options.direction,
           AttendanceProof: options.attendanceProof,

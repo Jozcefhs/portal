@@ -50,7 +50,7 @@ function workspaceId(env = {}) {
 }
 
 function branchFor(user, body = {}) {
-  return resolveStaffAttendanceBranch(user, body.BranchId || body.branchId || 'main');
+  return resolveStaffAttendanceBranch(user, body.BranchId || body.branchId || user.branchId || user.BranchId || 'main');
 }
 
 function usernameFor(user = {}) {
@@ -151,11 +151,19 @@ export function randomLivenessChallenge() {
 async function challenge(env, user, body) {
   ensureConfigured(env);
   const { direction, siteId } = attendanceScope(body);
-  const selected = randomLivenessChallenge();
+  const branchId = branchFor(user, body);
+  let selected = randomLivenessChallenge();
+  if (body.RequestSingleCapture === true && ['IN', 'OUT'].includes(direction) && !siteId.startsWith('meeting:')) {
+    const policy = await getStaffAttendanceDocument(env, 'policy', branchId, 'default');
+    if (policy?.IdentityVerification === 'FACE' && policy.ClockFaceCapture === 'SINGLE') {
+      selected = { action: 'SINGLE_CAPTURE', instruction: 'Look straight at the camera and hold still.' };
+    }
+  }
   const challengeToken = await createStaffAttendanceLivenessChallenge(env, user, {
     siteId,
     direction,
-    action: selected.action
+    action: selected.action,
+    branchId
   });
   return {
     ok: true,
@@ -273,18 +281,18 @@ async function revoke(env, user, body) {
 async function verify(env, user, body) {
   ensureConfigured(env);
   const { direction, siteId } = attendanceScope(body);
+  const branchId = branchFor(user, body);
   const issuedChallenge = await readStaffAttendanceLivenessChallenge(
     env,
     body.LivenessChallengeToken,
     usernameFor(user),
-    { siteId, direction }
+    { siteId, direction, branchId }
   );
   if (!issuedChallenge) failure('The live face instruction has expired or does not belong to this attendance action. Try again.', 403);
   const livenessAction = clean(issuedChallenge.action).toUpperCase();
-  validateLivenessEvidence(livenessAction, body.LivenessEvidence);
+  if (livenessAction !== 'SINGLE_CAPTURE') validateLivenessEvidence(livenessAction, body.LivenessEvidence);
   if (clean(body.modelId) !== STUDENT_FACE_MODEL_ID) failure('The captured face template uses an unsupported model.');
   const query = validateFaceDescriptor(body.descriptor);
-  const branchId = branchFor(user, body);
   const username = usernameFor(user);
   const saved = await getStaffAttendanceDocument(env, 'faceTemplates', branchId, templateId(username));
   if (!saved || !faceTemplateIsUsable(saved)) failure('No active attendance face enrollment was found for this staff account.', 404);
@@ -309,6 +317,7 @@ async function verify(env, user, body) {
     siteId,
     direction,
     method: 'face',
+    branchId,
     livenessAction
   });
   return {

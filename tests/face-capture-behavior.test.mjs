@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
-import { eyeOpenness, blinkFrameState, waitForCameraFrames, captureReadiness, captureDescriptor, captureLookupDescriptor, faceGuideSize } from '../js/student-face-lookup.js';
+import { eyeOpenness, blinkFrameState, waitForCameraFrames, captureReadiness, captureDescriptor, captureLookupDescriptor, captureFrontalDescriptor, faceGuideSize } from '../js/student-face-lookup.js';
 import { randomLivenessChallenge, validateLivenessEvidence } from '../functions/api/staff-attendance-face.js';
 
 function faceEyes(gap, rotation = 0) {
@@ -408,4 +408,10 @@ test('lookup refuses to capture before a camera stream is started', async t => {
   video.srcObject = null;
   await assert.rejects(captureLookupDescriptor(dialog, human), /Start the camera first/);
   assert.equal(detections.length, 0);
+});
+
+test('a single attendance capture accepts a stationary face and takes one descriptor', async t => {
+  const { dialog, human, detections } = captureHarness(t, [liveFrame()]);
+  assert.equal((await captureFrontalDescriptor(dialog, human, true)).length, 1024);
+  assert.deepEqual(detections, [false, false, true]);
 });
