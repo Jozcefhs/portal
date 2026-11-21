@@ -90,6 +90,15 @@ try{
   await fill('quarantineStockForm',{Quantity:1,Reason:'Synthetic damaged stock'});await page.locator('#quarantineStockForm button').click();await done('Stock moved to quarantine');
   assert.equal(f.rows('MedicineBatches')[0].OnHand,15);assert.equal(f.rows('MedicineBatches')[0].Quarantined,2);
   await page.locator('#stockSearchForm button:not([type=button])').click();await done('Matching batches loaded');await period('stockHistory');await page.locator('#stockHistoryFilter button').click();await done('Dated stock movements loaded');assert.equal(await page.locator('#stockHistoryRows article').count(),4);
+  const usageReads=f.queries.length, usageWrites=f.commits.length;
+  await expand('medicineUsage');await period('usage');
+  assert.equal(f.queries.length,usageReads);
+  await page.locator('#usageFilter button').first().click();await done('Medicine usage report loaded');
+  assert.deepEqual(await page.locator('#usagePreview tbody tr td').allTextContents(),[medicine.Medicine,medicine.Strength,medicine.Form,medicine.Unit,'4','1','3']);
+  await page.evaluate(()=>{window.print=()=>{window.usagePrinted=document.querySelector('#cardPrint').textContent;}});
+  await page.locator('#usagePrint').click();assert.match(await page.evaluate(()=>window.usagePrinted),/Net issued/);
+  await page.locator('#usageFilter button').first().click();
+  assert.equal(f.queries.length,usageReads+1);assert.equal(f.commits.length,usageWrites);
   const readCount=f.reads.length;await page.locator('[data-tab=patients]').click();await page.locator('[data-tab=orders]').click();assert.equal(f.reads.length,readCount,'task switching uses already loaded data');
   await page.screenshot({path:resolve(output,'pharmacy-desktop.png'),fullPage:true});
   await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'phone layout fits viewport');await page.screenshot({path:resolve(output,'pharmacy-phone.png'),fullPage:true});

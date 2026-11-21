@@ -1,3 +1,4 @@
+import { createMedicineUsageReport, usageMedicine } from './hospital-medicine-usage.js';
 import { createInvestigationReport } from './hospital-outstanding-investigations.js';
 import {emergencyReference} from './hospital-emergency.js';
 import {clean,fail,id,digest,patientSummary} from './hospital-model.js';
@@ -117,6 +118,7 @@ export function createHospitalOrdersService(ctx){
     return row;
   }
   return {
+    getMedicineUsage: createMedicineUsageReport({...ctx,read}),
     getOutstandingInvestigations: createInvestigationReport(ctx),
     async orderVisitContext(body){
       requireCapability('orders.create');const c=await issueContext(body);
@@ -268,7 +270,7 @@ export function createHospitalOrdersService(ctx){
           ExpiryDate:batch.ExpiryDate,Quantity,Unit:c.order.Fields.Unit,UnitPriceCents:batch.UnitPriceCents,AmountCents,ReturnedQuantity:0,...stamp()};
         return {writes:[...changes(key,c,'Dispense prescription',{DispensedQuantity:total,Status:total===c.order.Fields.Quantity?'Dispensed':'Partially dispensed'},{DispenseId:key,Quantity,BatchNumber:batch.BatchNumber}),
           ...(c.arrival?[]:[careLock(c)]),write('MedicineBatches',batch.BatchId,{...strip(batch),OnHand:qty(batch.OnHand-Quantity),UpdatedAt:clock()},batch),write('Dispenses',key,dispensing,null),
-          write('StockMovements',key,{...wristband(c.order),MovementId:key,BatchId:batch.BatchId,BranchId:c.BranchId,Type:'Dispense',Quantity:-Quantity,OrderId:c.order.OrderId,...stamp()},null),
+          write('StockMovements',key,{...wristband(c.order),MovementId:key,BatchId:batch.BatchId,BranchId:c.BranchId,Type:'Dispense',UsageMedicine:usageMedicine(batch),Quantity:-Quantity,OrderId:c.order.OrderId,...stamp()},null),
           write('ChargeEvents',key,{...wristband(c.order),ChargeId:key,OrderId:c.order.OrderId,PatientId:c.person.PatientId,VisitId:c.order.VisitId,BranchId:c.BranchId,Source:'Dispense',SourceId:key,
             ServiceCode:`MED-${c.order.Fields.MedicineKey.slice(0,20).toUpperCase()}`,Description:`${c.order.Fields.Medicine} ${c.order.Fields.Strength} (${c.order.Fields.Unit})`,Quantity,
             AmountCents,Currency:'NGN',Status:'Awaiting billing',...stamp()},null)],result:{...result(c),DispenseId:key}};
@@ -290,7 +292,7 @@ export function createHospitalOrdersService(ctx){
           write('Dispenses',original.DispenseId,{...strip(original),ReturnedQuantity:returned},original),
           write('MedicineBatches',batch.BatchId,{...strip(batch),Quarantined:qty(batch.Quarantined+Quantity),UpdatedAt:clock()},batch),
           write('MedicineReturns',key,{...wristband(c.order),ReturnId:key,DispenseId:original.DispenseId,OrderId:c.order.OrderId,PatientId:c.person.PatientId,BranchId:c.BranchId,Quantity,Reason,Disposition:'Quarantined',...stamp()},null),
-          write('StockMovements',key,{...wristband(c.order),MovementId:key,BatchId:batch.BatchId,BranchId:c.BranchId,Type:'Patient return',OrderId:c.order.OrderId,Quantity:0,QuarantinedQuantity:Quantity,...stamp()},null),
+          write('StockMovements',key,{...wristband(c.order),MovementId:key,BatchId:batch.BatchId,BranchId:c.BranchId,Type:'Patient return',UsageMedicine:usageMedicine(batch),OrderId:c.order.OrderId,Quantity:0,QuarantinedQuantity:Quantity,...stamp()},null),
           write('ChargeEvents',key,{...wristband(c.order),ChargeId:key,OrderId:c.order.OrderId,PatientId:c.person.PatientId,VisitId:c.order.VisitId,BranchId:c.BranchId,Source:'Return',SourceId:key,
             OriginalChargeId:original.DispenseId,AmountCents:-credit,Currency:'NGN',Status:'Awaiting billing',...stamp()},null)],result:result(c)};
       });

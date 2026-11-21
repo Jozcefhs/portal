@@ -91,6 +91,11 @@
       report.href = '/hospital.html?' + new URLSearchParams({ branch: branchId, task, report: 'outstanding' });
       actions.append(report);
     }
+    if (task === 'pharmacy') {
+      const report = element('a', 'Medicine usage report', 'btn');
+      report.href = '/hospital.html?' + new URLSearchParams({ branch: branchId, task, report: 'usage' });
+      actions.append(report);
+    }
     actions.append(refresh);
     header.append(actions);
     const metrics = element('dl');

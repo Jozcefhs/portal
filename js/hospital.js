@@ -77,6 +77,7 @@
       }
       if(['checkIn','checkInAppointment','updateVisit','clinicQueueAction','saveConsultation','signConsultation','dischargeHospitalPatient'].includes(action))queues?.invalidate();
       if (!result.Unchanged && ['createOrder','recordSpecimen','recordInvestigationReport','verifyInvestigationReport','releaseInvestigationReport','cancelOrder'].includes(action)) orders?.outstanding.reset();
+      if (!result.Unchanged && ['dispensePrescription','returnDispensedMedicine'].includes(action)) orders?.usage.reset();
       if (stockMutations.has(action)) stockDisposal?.invalidate();
       if (['submitStockDisposal','reviewStockDisposal'].includes(action)) stockControl?.invalidate();
     }
@@ -326,6 +327,7 @@
     else if (['triage','consultations'].includes(task) && can('clinical.read')) showTab('care');
     if(['billing','hmo'].includes(task)&&(can('billing.read')||can('hmo.work')))showTab('billing');
     if(['orders','pharmacy','laboratory','imaging'].includes(task)&&['orders.read','pharmacy.work','pharmacy.configure','laboratory.work','imaging.work','laboratory.configure','imaging.configure'].some(can)){orders.selectTask(task);showTab('orders');
+      if(new URLSearchParams(location.search).get('report')==='usage')orders.usage.open();
       if(new URLSearchParams(location.search).get('report')==='outstanding')orders.outstanding.open({laboratory:'Laboratory',imaging:'Imaging',orders:'All'}[task]);
     }
   });

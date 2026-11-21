@@ -459,3 +459,7 @@ The staff sidebar and hospital overview open a dashboard for every assigned hosp
 Open Outstanding investigations report from Laboratory, Imaging investigations or Prescriptions and investigations. Choose a department and either a date range (WAT) or **All order dates** to include older unresolved orders. Both options load up to 30 orders per page on request. Rejected specimens and draft amendments remain outstanding until release or cancellation. Clinical staff see authorised order details. Department configuration access provides stage and urgency totals only.
 
 The report loads indexed order pages on demand at one database snapshot. Reopening, preview and printing reuse loaded pages. Partial totals are labelled until the last page. Refresh starts a new snapshot. Identifying reads use the hospital access audit.
+
+### H14 medicine usage
+
+Open **Pharmacy → Medicine usage report**, choose a branch and dates (WAT), then load the report. Each stock movement is counted on its recorded date. Net issued is dispensing less patient returns, so a period with returns of earlier supplies can have a negative net. The figures describe pharmacy issues, not bedside doses. Receipts, quarantines and disposals are excluded. Reports group by medicine, strength, form and unit. Further pages use the same snapshot, and printing reuses the displayed totals.

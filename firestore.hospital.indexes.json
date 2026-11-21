@@ -1,5 +1,6 @@
 {
   "indexes": [
+    {"collectionGroup": "hospitalStockMovements", "queryScope": "COLLECTION", "fields": [{"fieldPath": "BranchId", "order": "ASCENDING"}, {"fieldPath": "Type", "order": "ASCENDING"}, {"fieldPath": "CreatedAt", "order": "ASCENDING"}, {"fieldPath": "__name__", "order": "ASCENDING"}]},
     {"collectionGroup": "hospitalOrders", "queryScope": "COLLECTION", "fields": [{"fieldPath": "BranchId", "order": "ASCENDING"}, {"fieldPath": "Kind", "order": "ASCENDING"}, {"fieldPath": "Status", "order": "ASCENDING"}, {"fieldPath": "CreatedAt", "order": "ASCENDING"}, {"fieldPath": "__name__", "order": "ASCENDING"}]},
     {"collectionGroup":"hospitalPortalGrants","queryScope":"COLLECTION","fields":[{"fieldPath":"BranchId","order":"ASCENDING"},{"fieldPath":"PatientId","order":"ASCENDING"},{"fieldPath":"__name__","order":"ASCENDING"}]},
     {"collectionGroup":"hospitalInvoices","queryScope":"COLLECTION","fields":[{"fieldPath":"BranchId","order":"ASCENDING"},{"fieldPath":"PatientId","order":"ASCENDING"},{"fieldPath":"CreatedAt","order":"ASCENDING"},{"fieldPath":"__name__","order":"ASCENDING"}]},
