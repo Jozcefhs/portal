@@ -25116,7 +25116,7 @@ async function openSchoolStructureSettings() {
     const { openSettings } = await import('./school-structure-settings.js');
     if (!session.aborted) await openSettings(staffFetch, session);
   } catch (error) {
-    if (!session.aborted) window.alert(error.message || 'School settings could not be opened.');
+    if (!session.aborted) void window.DynamaxDialogs.alert({ title: 'School settings could not be opened', message: error.message || 'Please try again.', tone: 'danger' });
   }
 }
 document.getElementById('schoolStructureSettings').addEventListener('click', openSchoolStructureSettings);

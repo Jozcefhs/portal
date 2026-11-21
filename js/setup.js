@@ -1619,11 +1619,13 @@ installAcademicPolicyTutorial();
 const portalDomainPanel = document.getElementById('portalDomainPanel');
 if (portalDomainPanel) {
   const domainField = id => document.getElementById('portalDomain' + id);
-  const buttons = ['Attach', 'Check', 'Activate'].map(domainField);
+  const buttons = ['Attach', 'Check', 'Activate', 'Review', 'Import', 'Prepare'].map(domainField);
+  let currentStep = '';
   const statusLabels = {
     'not-configured': 'No custom address configured',
     'not-attached': 'Ready to connect the address to your portal',
-    'awaiting-zone': 'Waiting for Dynamax Support to prepare and approve the DNS zone',
+    'awaiting-ownership': 'Add the ownership record at your current DNS provider',
+    'review-dns': 'Review DNS before moving your nameservers',
     'awaiting-nameservers': 'Waiting for Cloudflare to activate the DNS zone',
     initializing: 'Waiting for DNS', pending: 'Waiting for DNS or certificate verification',
     active: 'DNS and HTTPS active', deactivated: 'Domain deactivated',
@@ -1637,10 +1639,16 @@ if (portalDomainPanel) {
   }
 
   function showDomainState(data) {
+    currentStep = data.status;
+    domainField('ReviewPanel').hidden = currentStep !== 'review-dns';
+    domainField('Reviewed').checked = false;
+    domainField('Records').hidden = !Array.isArray(data.records);
+    domainField('Records').textContent = data.records?.map(r => [r.type, r.name, r.priority, r.content || JSON.stringify(r.data)].filter(x => x != null).join('  ')).join('\n') || 'No records found in the new zone.';
+    domainField('Check').textContent = currentStep === 'awaiting-ownership' ? 'Verify TXT record' : 'Check status';
     domainField('Status').textContent = statusLabels[data.status] || 'Verification pending';
     domainField('Details').hidden = !data.hostname;
     domainField('Host').value = data.hostname || domainField('Host').value;
-    domainField('Host').readOnly = Boolean(data.hostname);
+    domainField('Host').readOnly = Boolean(data.hostname && currentStep !== 'awaiting-ownership');
     if (data.hostname) domainField('Kind').value = data.domainKind;
     domainField('Kind').disabled = Boolean(data.hostname);
     updateDomainKind();
@@ -1653,12 +1661,20 @@ if (portalDomainPanel) {
     steps.replaceChildren();
     if (root) {
       const guidance = document.createElement('p');
-      guidance.textContent = data.nameservers.length
+      guidance.textContent = data.proof
+        ? 'Create this TXT record with your current DNS provider, then choose Verify TXT record. If your provider appends the domain, enter _dynamax-verify as the name.'
+        : currentStep === 'review-dns' ? 'Compare the preview with your existing provider. Include mail, DKIM, verification and subdomains. Import any missing records before preparing the connection. If DNSSEC is enabled, remove the old DS record at the registrar before moving nameservers.'
+        : data.nameservers.length
         ? data.zoneStatus === 'active'
           ? 'Cloudflare has verified the nameservers for this DNS zone.'
           : 'After confirming your website and email records have been copied, sign in to your domain registrar and replace its nameservers with the values below. Then select Check status.'
-        : 'Give Dynamax Support this subscriber reference and domain so they can prepare your DNS zone. ' + data.registrationReference + ' · ' + data.hostname;
+        : 'Select Check status to continue.';
       steps.append(guidance);
+      if (data.proof) {
+        const record = document.createElement('code');
+        record.textContent = [data.proof.type, data.proof.name, data.proof.value].join('  ');
+        steps.append(record);
+      }
       if (data.nameservers.length) {
         const nameservers = document.createElement('ul');
         data.nameservers.forEach(value => {
@@ -1690,7 +1706,7 @@ if (portalDomainPanel) {
     instructions.textContent = !here
       ? 'Sign in on the new address, then open Application Settings there and check status.'
       : data.paymentRequired
-        ? 'Complete a standard school-fee or store checkout on this address, then enter its payment reference. Use an authorised payment or your existing Paystack test environment.'
+        ? 'Complete a supported checkout on this address, then enter its payment reference. Use an authorised payment or your existing Paystack test environment.'
         : 'Your staff session on this address will be checked when you make it primary.';
     domainField('PaymentLabel').hidden = !ready || !here || !data.paymentRequired;
     domainField('Activate').hidden = !ready || !here;
@@ -1703,10 +1719,14 @@ if (portalDomainPanel) {
     }
     buttons.forEach(button => { button.disabled = true; });
     try {
+      if (action === 'prepare' && (!domainField('Reviewed').checked || domainField('Records').hidden)) throw new Error('Preview the DNS records and confirm your review first.');
+      const file = action === 'import' && domainField('File').files[0];
+      if (action === 'import' && (!file || file.size > 120000)) throw new Error('Choose a DNS zone export of up to 120 KB. Larger exports can be imported in sections.');
       const response = await fetch('/api/portal-domain', {
         method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, password: unlockedPassword,
-          hostname: domainField('Host').value, domainKind: domainField('Kind').value, paymentReference: domainField('Payment').value })
+          hostname: domainField('Host').value, domainKind: domainField('Kind').value, paymentReference: domainField('Payment').value,
+          ...(file ? { zoneFile: await file.text() } : {}) })
       });
       const data = await response.json();
       if (!response.ok || data.ok !== true) throw new Error(data.message || 'Domain setup could not be completed.');
@@ -1720,6 +1740,7 @@ if (portalDomainPanel) {
 
   domainField('Kind').addEventListener('change', updateDomainKind);
   domainField('Attach').addEventListener('click', () => runDomainAction('attach'));
-  domainField('Check').addEventListener('click', () => runDomainAction('status'));
+  domainField('Check').addEventListener('click', () => runDomainAction(currentStep === 'awaiting-ownership' ? 'verify' : 'status'));
+  for (const name of ['Review', 'Import', 'Prepare']) domainField(name).addEventListener('click', () => runDomainAction(name.toLowerCase()));
   domainField('Activate').addEventListener('click', () => runDomainAction('activate'));
 }

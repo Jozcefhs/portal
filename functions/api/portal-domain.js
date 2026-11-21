@@ -1,5 +1,4 @@
 import { getDocument } from '../lib/firestore.js';
-import { requiredDeploymentIdentity } from '../lib/deployment-identity.js';
 import { paystackCredentialFingerprint } from '../lib/paystack-environment.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { requireSetupAdministrator, resolveSetupSettingsAccess } from '../lib/setup-auth.js';
@@ -9,8 +8,8 @@ import { customPortalHostname, domainError, paymentReferenceId } from '../lib/te
 async function managePortalDomain(env, request) {
   const url = new URL(request.url);
   if (request.headers.get('Origin') !== url.origin) throw domainError('Open domain setup directly in the portal.', 403);
-  const body = await readJsonBody(request, { maxBytes: 4096 });
-  if (!['status', 'attach', 'activate'].includes(body.action)) throw domainError('Unknown domain setup action.');
+  const body = await readJsonBody(request, { maxBytes: 256 * 1024 });
+  if (!['status', 'attach', 'activate', 'verify', 'review', 'import', 'prepare'].includes(body.action)) throw domainError('Unknown domain setup action.');
   const actor = await requireSetupAdministrator(env, request, body.password).catch(error => {
     if (error.status === 503 && !String(env.ADMIN_WEB_PASSWORD || '').trim()) {
       throw domainError('Sign in as a Super Administrator to manage the portal address.', 401);
@@ -21,24 +20,25 @@ async function managePortalDomain(env, request) {
       || !['', 'all'].includes(String(actor.schoolSectionAccess || '').toLowerCase())) {
     throw domainError('Custom domains require an organisation-wide Super Administrator.', 403);
   }
-  const identity = requiredDeploymentIdentity(env);
-  if (!env.TENANT_CONTROL_PLANE_PRIVATE_KEY || !env.PUBLIC_PORTAL_URL || !env.CANONICAL_PORTAL_URL) {
+  const workspaceId = String(env.DYNAMAX_WORKSPACE_ID || '').trim().toLowerCase();
+  if (!workspaceId || !env.TENANT_CONTROL_PLANE_PRIVATE_KEY || !env.CANONICAL_PORTAL_URL) {
     throw domainError('Custom domain setup is not enabled for this deployment.', 503);
   }
-  const original = new URL(env.PUBLIC_PORTAL_URL);
+  const original = env.PUBLIC_PORTAL_URL ? new URL(env.PUBLIC_PORTAL_URL) : null;
   const central = new URL('/api/tenant-custom-domain', env.CANONICAL_PORTAL_URL);
-  if (central.protocol !== 'https:' || central.origin === url.origin || original.protocol !== 'https:'
-      || !/^[a-z0-9-]+\.pages\.dev$/.test(original.hostname)) throw domainError('The domain control plane is unavailable.', 503);
+  if (central.protocol !== 'https:' || central.origin === url.origin || (original && (original.protocol !== 'https:'
+      || !/^[a-z0-9-]+\.pages\.dev$/.test(original.hostname)))) throw domainError('The domain control plane is unavailable.', 503);
   const details = {
-    action: 'domain-' + body.action, workspaceId: identity.workspaceId,
-    portalHost: original.hostname, observedOrigin: url.origin,
+    action: 'domain-' + body.action, workspaceId,
+    portalHost: original?.hostname || '', observedOrigin: url.origin,
     requestId: crypto.randomUUID(), issuedAt: new Date().toISOString()
   };
-  if (body.action === 'attach') {
+  if (body.action === 'attach' || body.action === 'verify') {
     details.domainKind = body.domainKind ?? 'subdomain';
     if (!['root', 'subdomain'].includes(details.domainKind)) throw domainError('Choose Root domain or Subdomain.');
     details.hostname = customPortalHostname(body.hostname, details.domainKind);
   }
+  if (body.action === 'import') details.zoneFile = String(body.zoneFile || '');
   if (body.action === 'activate') {
     if (actor.source !== 'staff-session') throw domainError('Sign in to the staff portal on the custom address first.', 403);
     if (url.protocol !== 'https:' || url.origin !== 'https://' + customPortalHostname(url.hostname, 'either')) {

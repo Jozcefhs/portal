@@ -71,6 +71,7 @@ export async function tenantControlCanonicalRequest(details = {}) {
   }
   if (action.startsWith('domain-')) {
     canonical.push(clean(details.hostname), clean(details.observedOrigin), clean(details.paymentCheck), clean(details.domainKind));
+    if (action === 'domain-import') canonical.push(await tenantControlSecretHash(details.zoneFile));
   }
   return JSON.stringify(canonical);
 }

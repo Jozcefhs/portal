@@ -56,7 +56,7 @@ export async function pagesDomain(env, project, host, { attach = false, fetcher 
 export async function readRootPortalZone(env, hostname, zoneId, fetcher = fetch) {
   const host = customPortalHostname(hostname, 'root');
   const account = String(env.CLOUDFLARE_ACCOUNT_ID || '').trim();
-  const token = String(env.CLOUDFLARE_ZONE_READ_API_TOKEN || env.CLOUDFLARE_PAGES_API_TOKEN || '').trim();
+  const token = String(env.CLOUDFLARE_ZONE_READ_API_TOKEN || env.DYNAMAX_ROOT_DNS_TOKEN || env.CLOUDFLARE_PAGES_API_TOKEN || '').trim();
   if (!account || !token) throw domainError('Cloudflare zone verification is unavailable.', 503);
   if (!/^[a-f0-9]{32}$/i.test(zoneId || '')) throw domainError('Enter the Cloudflare zone ID.');
   const response = await fetcher('https://api.cloudflare.com/client/v4/zones/' + zoneId, {
