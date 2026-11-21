@@ -55,6 +55,8 @@
     '/api/staff-admission-forms': ['genericqr', ''],
     '/api/staff-stores': ['genericqr'],
     '/api/staff-church-payments': ['genericqr'],
+    // Every face challenge and proof needs a fresh response, even when staff retry.
+    '/api/staff-attendance-face': ['', 'challenge', 'verify'],
     '/api/staff-meetings': ['bootstrap', 'setup', 'list', 'report'],
     '/api/staff-session': ['activity'],
     '/api/staff-academics': [
