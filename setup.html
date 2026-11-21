@@ -542,7 +542,7 @@
                 <option value="subdomain">Subdomain</option>
                 <option value="root">Root domain</option>
               </select>
-              <p id="portalDomainRootIntro" hidden>A root domain needs a DNS zone in Dynamax’s Cloudflare account. Dynamax Support will verify ownership and help prepare your website and email records before you change nameservers.</p>
+              <p id="portalDomainRootIntro" hidden>Verify your domain with a TXT record. Then review your DNS records and move the nameservers at your registrar.</p>
               <label for="portalDomainHost">Your domain</label>
               <input id="portalDomainHost" type="text" maxlength="253" placeholder="portal.sampleacademy.com" autocomplete="off" spellcheck="false">
               <div class="paystack-connection-controls">
@@ -552,6 +552,16 @@
               <p id="portalDomainStatus" class="status" role="status"></p>
               <div id="portalDomainDetails" hidden>
                 <div id="portalDomainRootSteps" hidden></div>
+                <div id="portalDomainReviewPanel" hidden>
+                  <button type="button" id="portalDomainReview">Preview DNS records</button>
+                  <pre id="portalDomainRecords" hidden></pre>
+                  <label>Copy missing records from your provider’s BIND zone export
+                    <input type="file" id="portalDomainFile" accept=".txt,.zone,text/plain">
+                  </label>
+                  <button type="button" id="portalDomainImport">Import records</button>
+                  <label><input type="checkbox" id="portalDomainReviewed"> I checked the records for email, subdomains and verification. The root website can point to this portal.</label>
+                  <button type="button" id="portalDomainPrepare">Prepare connection and show nameservers</button>
+                </div>
                 <p id="portalDomainDnsHelp"></p>
                 <code id="portalDomainDns"></code>
                 <p id="portalDomainCertificate" hidden></p>
@@ -615,6 +625,6 @@
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20261016-grouped-form-validation"></script>
   <script src="js/paystack-connection-status.js?v=20261013-paystack-activation"></script>
-  <script src="js/setup.js?v=20261111-root-portal-domain"></script>
+  <script src="js/setup.js?v=20261121-domain-self-service"></script>
 </body>
 </html>

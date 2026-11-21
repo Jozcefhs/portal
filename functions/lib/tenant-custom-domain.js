@@ -32,7 +32,7 @@ export async function pagesDomain(env, project, host, { attach = false, fetcher 
     + '/pages/projects/' + project + '/domains';
   const request = async (method, url, body) => {
     const response = await fetcher(url, {
-      method, redirect: 'error', signal: AbortSignal.timeout(12000),
+      method, redirect: 'manual', signal: AbortSignal.timeout(12000),
       headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
       ...(body ? { body: JSON.stringify(body) } : {})
     });
@@ -44,7 +44,7 @@ export async function pagesDomain(env, project, host, { attach = false, fetcher 
   if (attach && result.response.status === 404) {
     result = await request('POST', domains, { name: host });
     // A simultaneous setup request may have attached this exact hostname.
-    if (!result.response.ok && result.response.status < 500) result = await request('GET', url);
+    if (result.response.status >= 400 && result.response.status < 500) result = await request('GET', url);
   }
   if (result.response.status === 404 && !attach) return null;
   if (!result.response.ok || result.data?.success !== true || result.data.result?.name !== host) {
@@ -56,11 +56,11 @@ export async function pagesDomain(env, project, host, { attach = false, fetcher 
 export async function readRootPortalZone(env, hostname, zoneId, fetcher = fetch) {
   const host = customPortalHostname(hostname, 'root');
   const account = String(env.CLOUDFLARE_ACCOUNT_ID || '').trim();
-  const token = String(env.CLOUDFLARE_ZONE_READ_API_TOKEN || env.CLOUDFLARE_PAGES_API_TOKEN || '').trim();
+  const token = String(env.CLOUDFLARE_ZONE_READ_API_TOKEN || env.DYNAMAX_ROOT_DNS_TOKEN || env.CLOUDFLARE_PAGES_API_TOKEN || '').trim();
   if (!account || !token) throw domainError('Cloudflare zone verification is unavailable.', 503);
   if (!/^[a-f0-9]{32}$/i.test(zoneId || '')) throw domainError('Enter the Cloudflare zone ID.');
   const response = await fetcher('https://api.cloudflare.com/client/v4/zones/' + zoneId, {
-    redirect: 'error', signal: AbortSignal.timeout(12000), headers: { Authorization: 'Bearer ' + token }
+    redirect: 'manual', signal: AbortSignal.timeout(12000), headers: { Authorization: 'Bearer ' + token }
   });
   const data = await response.json().catch(() => null);
   if (!response.ok || data?.success !== true) throw domainError('Cloudflare could not read the approved DNS zone. Check the zone and Zone Read access.', 502);

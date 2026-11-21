@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 import { customPortalHostname, domainError, domainSetupState, pagesDomain, paymentReferenceId, readRootPortalZone } from '../functions/lib/tenant-custom-domain.js';
 import { tenantControlCanonicalRequest } from '../functions/lib/tenant-control-plane.js';
+import { ownershipRecord } from '../functions/lib/root-domain-setup.js';
 
 test('setup accepts real subdomains and rejects root domains, reserved hosts and URL input', () => {
   assert.equal(customPortalHostname('Portal.SampleAcademy.co.uk.'), 'portal.sampleacademy.co.uk');
@@ -23,6 +24,7 @@ test('Pages setup checks for an existing attachment before adding and reports DN
     validation_data: { method: 'txt', txt_name: '_verify.portal.example.com', txt_value: 'challenge' } };
   const provider = await pagesDomain({ CLOUDFLARE_ACCOUNT_ID: 'account', CLOUDFLARE_PAGES_API_TOKEN: 'token' },
     'tenant-one', host, { attach: true, fetcher: async (url, init) => {
+      assert.equal(init.redirect, 'manual');
       calls.push([url, init.method, init.body]);
       return init.method === 'GET' ? Response.json({}, { status: 404 }) : Response.json({ success: true, result: pending });
     } });
@@ -47,12 +49,13 @@ test('control signature binds the chosen hostname, observed origin and payment o
 function route(file, globals) {
   const source = readFileSync(new URL('../functions/api/' + file + '.js', import.meta.url), 'utf8');
   return vm.runInNewContext(source.replace(/^import .*;$/gm, '').replace('export async', 'async') + '\nonRequestPost',
-    { Response, URL, Date, crypto, AbortSignal, domainError, customPortalHostname, paymentReferenceId, ...globals });
+    { Response, URL, Date, crypto, AbortSignal, domainError, customPortalHostname, paymentReferenceId, ownershipRecord,
+      MANAGED_ORGANISATION_COLLECTION: 'managedOrganisations', ...globals });
 }
 
 test('primary switch checks a staff session and a recent verified payment on the actual custom host', async () => {
   const host = 'https://portal.example.com';
-  const env = { TENANT_CONTROL_PLANE_PRIVATE_KEY: 'configured', PUBLIC_PORTAL_URL: 'https://tenant-one.pages.dev',
+  const env = { DYNAMAX_WORKSPACE_ID: 'tenant-one', TENANT_CONTROL_PLANE_PRIVATE_KEY: 'configured', PUBLIC_PORTAL_URL: 'https://tenant-one.pages.dev',
     CANONICAL_PORTAL_URL: 'https://dynamax.cc', PAYSTACK_SECRET_KEY: 'configured' };
   let actor = { source: 'setup-password' };
   let intent = { Reference: 'valid-reference', Status: 'Completed', PortalCheckoutOrigin: host,
@@ -67,7 +70,7 @@ test('primary switch checks a staff session and a recent verified payment on the
     requiredDeploymentIdentity: () => ({ workspaceId: 'tenant-one' }), readJsonBody: request => request.json(),
     getDocument: async () => intent, paystackCredentialFingerprint: async () => 'current',
     signTenantControlRequest: async (_key, details) => { signed.push(details); return 'signed'; },
-    fetch: async () => Response.json({ ok: true })
+    fetch: async (_url, init) => { assert.equal(init.redirect, 'manual'); return Response.json({ ok: true }); }
   });
   const run = (origin = host, headerOrigin = origin) => post({ env, request: new Request(origin + '/api/portal-domain', {
     method: 'POST', headers: { Origin: headerOrigin }, body: JSON.stringify({ action: 'activate', paymentReference: 'valid-reference' })
@@ -129,6 +132,7 @@ test('root zone inspection checks the exact domain and the Pages account', async
   const zone = { id: zoneId, name: hostname, type: 'full', account: { id: 'pages-account' },
     status: 'pending', name_servers: ['one.ns.cloudflare.com', 'two.ns.cloudflare.com'] };
   const read = result => readRootPortalZone(env, hostname, zoneId, async (url, request) => {
+    assert.equal(request.redirect, 'manual');
     assert.equal(url, 'https://api.cloudflare.com/client/v4/zones/' + zoneId);
     assert.equal(request.headers.Authorization, 'Bearer read-only');
     return Response.json({ success: true, result });
@@ -136,6 +140,25 @@ test('root zone inspection checks the exact domain and the Pages account', async
   assert.deepEqual(await read(zone), { status: 'pending', nameservers: zone.name_servers });
   await assert.rejects(read({ ...zone, account: { id: 'different-account' } }), { status: 409 });
   await assert.rejects(read({ ...zone, name: 'another.example.com' }), { status: 409 });
+});
+
+test('a redirected control-plane response cannot confirm domain status', async () => {
+  const origin = 'https://tenant-one.pages.dev';
+  const post = route('portal-domain', {
+    readJsonBody: request => request.json(), requireSetupAdministrator: async () => ({}),
+    resolveSetupSettingsAccess: () => ({ scope: 'organisation' }),
+    requiredDeploymentIdentity: () => ({ workspaceId: 'tenant-one' }), signTenantControlRequest: async () => 'signed',
+    fetch: async (_url, options) => {
+      assert.equal(options.redirect, 'manual');
+      return Response.redirect('https://other.example.org', 307);
+    }
+  });
+  const response = await post({
+    env: { DYNAMAX_WORKSPACE_ID: 'tenant-one', PUBLIC_PORTAL_URL: origin, CANONICAL_PORTAL_URL: 'https://dynamax.cc', TENANT_CONTROL_PLANE_PRIVATE_KEY: 'configured' },
+    request: new Request(origin + '/api/portal-domain', { method: 'POST', headers: { Origin: origin }, body: JSON.stringify({ action: 'status' }) })
+  });
+  assert.equal(response.status, 502);
+  assert.match((await response.json()).message, /redirected/);
 });
 
 test('root setup waits for approved active DNS before Pages attachment and still gates the primary switch', async () => {
@@ -161,7 +184,7 @@ test('root setup waits for approved active DNS before Pages attachment and still
       body: JSON.stringify({ action, hostname: host, domainKind: 'root', portalHost: 'tenant-one.pages.dev',
       observedOrigin: 'https://' + host, workspaceId: 'tenant-one', ...extra }) }) });
   assert.equal((await run('domain-attach', { domainKind: 'either' })).status, 400);
-  assert.equal((await (await run('domain-attach')).json()).status, 'awaiting-zone');
+  assert.equal((await (await run('domain-attach')).json()).status, 'awaiting-ownership');
   assert.equal((await run('domain-activate', { paymentCheck: 'checkout-verified' })).status, 409);
   registration.CustomPortalRootZoneId = 'a'.repeat(32);
   const pending = await (await run('domain-attach')).json();
@@ -179,4 +202,65 @@ test('root setup waits for approved active DNS before Pages attachment and still
   pagesStatus = 'active';
   assert.equal((await run('domain-activate', { paymentCheck: 'checkout-verified' })).status, 200);
   assert.equal(writes[0].PrimaryPortalUrl, 'https://' + host);
+});
+
+test('root onboarding requires the workspace TXT proof, previews records and resumes without duplicate imports or preparation', async () => {
+  const host = 'sampleacademy.org';
+  const reg = { Reference: 'ORG-1', WorkspaceId: 'tenant-one', PortalUrl: 'https://tenant-one.pages.dev',
+    AdminActivatedAt: 'yes', CloudflareProject: 'tenant-one', TenantControlPublicKey: 'key', __updateTime: 'v0' };
+  let verified = false, imports = 0, prepares = 0, creates = 0, attachments = 0, version = 0;
+  const post = route('tenant-custom-domain', {
+    requirePlatformFirestoreEnv: () => ({}), readJsonBody: r => r.json(), assertFreshTenantControlRequest() {},
+    queryCollection: async () => [{ ...reg }], verifyTenantControlRequest: async () => true, assertTenantProjectAssignment() {},
+    domainSetupState, hasRootProof: async () => verified, provisionRoot: async () => { creates++; return 'a'.repeat(32); },
+    readRootPortalZone: async () => ({ status: 'pending', nameservers: ['one.ns.cloudflare.com'] }),
+    reviewRootRecords: async () => [{ name: host, type: 'MX', content: 'mail.example.org' }],
+    tenantControlSecretHash: async s => s, importRootRecords: async () => { imports++; },
+    prepareRootRecords: async () => { prepares++; }, pagesDomain: async () => { attachments++; return {}; },
+    patchDocumentFieldsIfCurrent: async (_db, _collection, id, fields, current) => {
+      assert.equal(id, reg.Reference); assert.equal(current.__updateTime || current.updateTime, reg.__updateTime);
+      Object.assign(reg, fields, { __updateTime: 'v' + ++version }); return { updateTime: reg.__updateTime };
+    }
+  });
+  const run = async (action, extra = {}) => (await post({env: {}, request: new Request('https://dynamax.cc/api/tenant-custom-domain', {
+    method: 'POST', headers: { 'X-Dynamax-Tenant-Signature': 'signed' }, body: JSON.stringify({ action: 'domain-' + action,
+      hostname: host, domainKind: 'root', workspaceId: 'tenant-one', portalHost: 'tenant-one.pages.dev', ...extra })
+  })})).json();
+  const preview = await run('attach');
+  assert.equal(preview.status, 'awaiting-ownership');
+  assert.equal(preview.proof.name, '_dynamax-verify.' + host);
+  assert.equal((await run('verify')).status, 'awaiting-ownership');
+  assert.deepEqual([version, creates], [0, 0]);
+  verified = true;
+  assert.equal((await run('verify')).status, 'review-dns');
+  assert.deepEqual((await run('status')).nameservers, []);
+  assert.equal((await run('review')).records[0].type, 'MX');
+  await run('import', {zoneFile:'sample'}); await run('import', {zoneFile:'sample'});
+  const ready = await run('prepare');
+  assert.deepEqual(ready.nameservers, ['one.ns.cloudflare.com']);
+  assert.equal((await run('status')).status, 'awaiting-nameservers');
+  await run('prepare');
+  assert.deepEqual([creates, imports, prepares, attachments], [1, 1, 1, 1]);
+  assert.equal(reg.PrimaryPortalUrl, undefined);
+});
+
+test('managed workspaces across editions can start setup only from their assigned portal with a valid signature', async () => {
+  const project = 'managed-tenant';
+  for (const edition of ['faith','school','organization','hospital','hotel']) {
+    const row = { Id: project, WorkspaceId: 'workspace', Edition: edition, PortalUrl: 'https://'+project+'.pages.dev', CloudflareProject: project };
+    let signatureValid = true;
+    const post = route('tenant-custom-domain', {
+      readJsonBody: r => r.json(), requirePlatformFirestoreEnv: () => ({}), assertFreshTenantControlRequest() {},
+      queryCollection: async (_db, collection) => collection === 'managedOrganisations' ? [row] : [],
+      verifyTenantControlRequest: async () => signatureValid, domainSetupState
+    });
+    const run = observedOrigin => post({env:{}, request:new Request('https://dynamax.cc/api/tenant-custom-domain',{
+      method:'POST',headers:{'X-Dynamax-Tenant-Signature':'signed'},body:JSON.stringify({action:'domain-attach',hostname:'sampleacademy.org',
+        workspaceId:row.WorkspaceId,portalHost:'',domainKind:'root',observedOrigin})
+    })});
+    assert.equal((await (await run(row.PortalUrl)).json()).status, 'awaiting-ownership');
+    assert.equal((await run('https://other.pages.dev')).status, 403);
+    signatureValid = false;
+    assert.equal((await run(row.PortalUrl)).status, 401);
+  }
 });
