@@ -29,6 +29,18 @@ test('staff mutations across modules get results; reads, previews and authentica
     assert.equal(check('/api/staff-vendor-settlements',action),false,'reviewed bulk refunds own a single completion/error dialogue');
 });
 
+test('opening Storekeeping and browsing its registers stay quiet while stock changes report their outcome', () => {
+  const { api } = harness();
+  const endpoint = new URL('https://school.example/api/staff-storekeeping');
+  const reportsOutcome = action => api.isMutation(endpoint, { method: 'POST', body: JSON.stringify({ action, BranchId: 'main' }) });
+  for (const action of ['access', 'stock', 'purchases', 'handovers', 'mine', 'sent', 'card', 'requests']) {
+    assert.equal(reportsOutcome(action), false, action);
+  }
+  for (const action of ['issue', 'issueRequest', 'accept', 'cancel', 'return', 'replace']) {
+    assert.equal(reportsOutcome(action), true, action);
+  }
+});
+
 test('only explicit server success is reported as success, with exact details and no consumed response body', async () => {
   const { api, alerts } = harness();
   const response = Response.json({ ok: true, message: 'Transfer request saved; approval is still required.' });
