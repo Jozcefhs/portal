@@ -213,3 +213,84 @@ test('competing bedside administration and return cannot both use the same units
   assert.equal((updated.AdministeredQuantity||0)+updated.ReturnedQuantity,2);
   assert.equal(f.rows('EmergencyCareEntries').filter(row=>row.Type==='Medication administration').length,f.rows('MedicineReturns').length?0:1);
 });
+
+async function signedDose(){
+  const ctx=await bedside(),{f,nurse,input}=ctx;
+  const original=await nurse.signEmergencyMedication(input);
+  const scope={Reference,EntryId:original.EntryId};
+  const open=(extra={})=>nurse.emergencyMedicationCorrection(request({...scope,...extra}));
+  const {Version,lots,Content}=await open();
+  const draft={...scope,Version,ConfirmedReference:Reference,Reason:'Verified against the medication record',
+    ObservedAt:Content.ObservedAt,Note:Content.Note||'',Lots:lots.map(l=>({DispenseId:l.DispenseId,Quantity:l.Quantity}))};
+  return {...ctx,original,open,draft};
+}
+test('signed corrections use the last effective dose, update only changed lots and preserve every signature after identification',async()=>{
+  const {f,nurse,draft,open,original}=await signedDose();
+  const row=()=>f.rows('EmergencyCareEntries').find(r=>r.EntryId===original.EntryId);
+  const signed=structuredClone(row()),finance=['MedicineBatches','StockMovements','ChargeEvents'].map(k=>f.rows(k));
+  const [first,second]=draft.Lots;
+  const untouched=f.rows('Dispenses').find(r=>r.DispenseId===second.DispenseId).__updateTime;
+  const change=request({...draft,Lots:[{...first,Quantity:1},second]});
+  const correction=await nurse.correctEmergencyMedication(change);
+  const commits=f.commits.length,reads=f.reads.length;
+  assert.equal((await nurse.correctEmergencyMedication(change)).EntryId,correction.EntryId);
+  assert.equal(f.reads.length-reads,1);assert.equal(f.commits.length,commits);
+  await assert.rejects(nurse.correctEmergencyMedication(request({...change,RequestId:crypto.randomUUID()})),/newer version/);
+  assert.equal(f.rows('Dispenses').find(r=>r.DispenseId===second.DispenseId).__updateTime,untouched);
+  const current=await open();assert.equal(current.Content.Given,'1.5 tablet');
+  const readsBefore=f.reads.length,writesBefore=f.commits.length;
+  assert.ok((await nurse.correctEmergencyMedication(request({...draft,Version:current.Version,Lots:change.Lots}))).Unchanged);
+  assert.equal(f.commits.length,writesBefore);
+  assert.ok(!f.reads.slice(readsBefore).some(r=>r[0].endsWith('hospitalDispenses')));
+  await identify(f);
+  await assert.rejects(open(),/identified patient visit/);
+  await assert.rejects(open({...f.scope,PatientId:'another-patient'}),/identified patient visit/);
+  const linked=await open(f.scope);
+  const amendNote=request({...draft,...f.scope,Version:linked.Version,Lots:change.Lots,Note:'Corrected bedside note'});
+  const start=f.reads.length;
+  const note=await nurse.correctEmergencyMedication(amendNote);
+  assert.ok(!f.reads.slice(start).some(r=>r[0].endsWith('hospitalDispenses')));
+  const zero=await nurse.correctEmergencyMedication(request({...draft,...f.scope,Version:note.EntryId,Lots:[],ConfirmZero:true}));
+  const last=await open(f.scope);assert.equal(last.Version,zero.EntryId);assert.equal(last.Content.Given,'0 tablet');
+  assert.ok(f.rows('Dispenses').every(r=>r.AdministeredQuantity===0));
+  assert.deepEqual(row(),signed);assert.deepEqual(['MedicineBatches','StockMovements','ChargeEvents'].map(k=>f.rows(k)),finance);
+  const history=await f.doctor.emergencyCareHistory(request({...f.scope,Reference}));
+  assert.deepEqual(history.entries.filter(r=>r.OriginalEntryId===original.EntryId).map(r=>r.Content.Given),['1.5 tablet','1.5 tablet','0 tablet']);
+});
+test('correction scope, lot limits, explicit zero and concurrent saves are enforced',async()=>{
+  const {f,nurse,draft}=await signedDose(),[lot]=draft.Lots;
+  for(const [extra,pattern] of [[{Reason:''},/Reason/],[{ConfirmedReference:'OTHER'},/Confirm/],[{Lots:[]},/confirm/],
+    [{Lots:[lot,lot]},/once/],[{Lots:[{...lot,Quantity:3}]},/exceeds/],[{Lots:[{...lot,DispenseId:'foreign-dispense'}]},/does not belong/],
+    [{EntryId:'another-entry'},/original medication/],[{VisitId:f.scope.VisitId},/wristband/]]){
+    await assert.rejects(nurse.correctEmergencyMedication(request({...draft,...extra})),pattern);
+  }
+  await assert.rejects(f.service.correctEmergencyMedication(request(draft)),{status:403});
+  await assert.rejects(nurse.correctEmergencyMedication(request({...draft,BranchId:'north'})),{status:403});
+  const both=await Promise.allSettled([1,1.5].map(Quantity=>nurse.correctEmergencyMedication(request({...draft,Lots:[{...lot,Quantity}]}))));
+  assert.equal(both.filter(r=>r.status==='fulfilled').length,1);
+  assert.equal(f.rows('EmergencyCareEntries').filter(r=>r.OriginalEntryId===draft.EntryId).length,1);
+});
+test('corrected administration time reserves the minute without changing supply a second time',async()=>{
+  const {f,nurse,draft,input,open}=await signedDose();
+  f.db.now=()=>new Date('2026-10-26T12:10:00Z');
+  // The fixture service captures its clock at construction; create a service with this later time.
+  const later=createHospitalService(env,{...actor,role:'Nurse',allowedSections:[...actor.allowedSections,'hospitalNursing','hospitalTriage']},f.db);
+  const observed='2026-10-26T12:05:00.000Z',prior=f.rows('Dispenses');
+  const changed=await later.correctEmergencyMedication(request({...draft,ObservedAt:observed}));
+  assert.deepEqual(f.rows('Dispenses'),prior);
+  const fresh=await later.emergencyMedicationSupplies(request({Reference,OrderId:input.OrderId}));
+  await assert.rejects(later.signEmergencyMedication(request({...input,RequestId:crypto.randomUUID(),Revision:fresh.Revision,ObservedAt:observed})),/already has/);
+  assert.equal((await open()).Version,changed.EntryId);
+});
+
+test('increasing a corrected dose competes atomically with a pharmacy return for the same remaining units',async()=>{
+  const {f,order,nurse,draft}=await signedDose(),[lot,other]=draft.Lots;
+  const stored=f.rows('Dispenses').find(r=>r.DispenseId===lot.DispenseId);
+  const refund=await f.body(order,{DispenseId:lot.DispenseId,DispenseRevision:stored.__updateTime,Quantity:1.5,Reason:'Unused supply'});
+  const operations=await Promise.allSettled([nurse.correctEmergencyMedication(request({...draft,Lots:[{...lot,Quantity:2},other]})),
+    f.pharmacist.returnDispensedMedicine(refund)]);
+  assert.equal(operations.filter(r=>r.status==='fulfilled').length,1);
+  const after=f.rows('Dispenses').find(r=>r.DispenseId===lot.DispenseId);
+  assert.equal(after.AdministeredQuantity+after.ReturnedQuantity,2);
+  assert.equal(f.rows('EmergencyCareEntries').filter(r=>r.Type==='Medication administration correction').length,after.ReturnedQuantity?0:1);
+});

@@ -29,6 +29,7 @@ export function fixture(user = actor, environment = env) {
       });
       const field = options.orderBy?.[0]?.field;
       rows.sort((a, b) => String(a[field]).localeCompare(String(b[field])) || a.__id.localeCompare(b.__id));
+      if (options.orderBy?.[0]?.direction === 'DESCENDING') rows.reverse();
       if (options.startAfterName) {
         const last = options.startAfterName.split('/').at(-1);
         rows = rows.filter(row => row[field] > options.startAfterFieldValue || row[field] === options.startAfterFieldValue && row.__id > last);

@@ -69,6 +69,71 @@
     };
     form.hidden=true;host.append(toggle,form);return host;
   }
+  function correctionEditor(scope,entry,{api,run,status},canSign,onSigned){
+    const host=el('section'),form=el('form'),identity=el('p'),lots=el('div');
+    const request={...scope,EntryId:entry.OriginalEntryId||entry.EntryId};
+    const amounts=new Map();
+    let version,cursor,priorTime,inputTime;
+    if(!canSign){
+      const latest=el('p');
+      const show=button('View current signed dose',()=>run(async()=>{
+        const data=await api('emergencyMedicationCorrection',request);
+        latest.textContent=[data.Content.Medicine,data.Content.Given,'Given at '+new Date(data.Content.ObservedAt).toLocaleString('en-GB',{timeZone:'Africa/Lagos'})+' WAT',data.Content.Note,data.Content.Reason].filter(Boolean).join(' / ');
+      }));
+      host.append(show,latest);return host;
+    }
+    const toggle=button('Review or correct dose',()=>run(async()=>{
+      const data=await api('emergencyMedicationCorrection',request);
+      if(!host.isConnected)return;
+      form.reset();amounts.clear();lots.replaceChildren();cursor=null;version=data.Version;
+      identity.textContent=[scope.Reference,data.HospitalNumber,data.Content.Medicine,data.Content.OrderNumber,'Currently signed: '+data.Content.Given].filter(Boolean).join(' / ');
+      for(const lot of data.lots)addLot(lot);
+      priorTime=data.Content.ObservedAt;
+      inputTime=new Date(Date.parse(priorTime)+3600000).toISOString().slice(0,16);
+      form.elements.ObservedAt.value=inputTime;
+      form.elements.Note.value=data.Content.Note||'';
+      more.textContent='Choose other dispensed lots';more.hidden=false;
+      form.hidden=false;toggle.hidden=true;
+    }));
+    function addLot(lot){
+      if(amounts.has(lot.DispenseId))return;
+      const label=el('label','Batch '+lot.BatchNumber+' / expiry '+lot.ExpiryDate+' / dispensing '+lot.DispenseId.slice(-8));
+      const input=el('input');input.type='number';input.min='0';input.max='1000000';input.step='0.001';
+      input.value=String(lot.Quantity||0);input.required=true;
+      label.append(input);lots.append(label);amounts.set(lot.DispenseId,input);
+    }
+    const more=button('Choose other dispensed lots',()=>run(async()=>{
+      const data=await api('emergencyMedicationCorrection',{...request,LoadLots:true,...(cursor?{Cursor:cursor}:{})});
+      if(!form.isConnected)return;
+      for(const lot of data.lots)addLot(lot);
+      cursor=data.next;more.hidden=!cursor;more.textContent='More dispensed lots';
+    }));
+    const inputs=el('div');inputs.className=lots.className='form-grid';
+    inputs.innerHTML='<label>Given at (WAT)<input type="datetime-local" name="ObservedAt" required></label><label>Corrected administration note<textarea name="Note" maxlength="2000"></textarea></label><label>Reason for correction<textarea name="Reason" maxlength="2000" required></textarea></label><label>Confirm wristband reference<input name="ConfirmedReference" maxlength="40" required autocomplete="off"></label><label><input type="checkbox" name="ConfirmZero"> I confirm that no dose was given</label>';
+    const sign=el('button','Review correction');sign.type='submit';
+    form.append(el('h4','Correct signed medication administration'),identity,el('p','Enter the corrected quantity for each lot. Set a lot to zero to remove its usage from this dose.'),lots,more,inputs,sign,
+      button('Close correction',()=>{form.hidden=true;toggle.hidden=false;}));
+    form.onsubmit=event=>{
+      event.preventDefault();run(async()=>{
+        const fields=form.elements;
+        const Lots=[...amounts].filter(([,input])=>Number(input.value)>0).map(([DispenseId,input])=>({DispenseId,Quantity:input.value}));
+        const ConfirmZero=fields.ConfirmZero.checked;
+        if((Lots.length===0)!==ConfirmZero)throw Error('Confirm no dose was given only when all quantities are zero.');
+        const ConfirmedReference=fields.ConfirmedReference.value.trim().toUpperCase();
+        if(ConfirmedReference!==scope.Reference)throw Error('The entered wristband does not match this dose.');
+        const data={...request,Version:version,Lots,ConfirmZero,ConfirmedReference,
+          Note:fields.Note.value.trim(),Reason:fields.Reason.value.trim(),
+          ObservedAt:fields.ObservedAt.value===inputTime?priorTime:fields.ObservedAt.value+'+01:00'};
+        const total=Lots.reduce((sum,l)=>Math.round((sum+Number(l.Quantity))*1000)/1000,0);
+        const ok=await window.DynamaxDialogs.confirm({title:'Sign medication correction',message:identity.textContent+' / corrected total: '+total+' / reason: '+data.Reason,confirmText:'Sign correction'});
+        if(!ok || !form.isConnected)return;
+        const result=await api('correctEmergencyMedication',data,true);
+        if(result.Unchanged){status('The entered dose matches the current signed version.');return;}
+        onSigned(result);status('Medication correction signed for '+scope.Reference+'.');
+      });
+    };
+    form.hidden=true;host.append(toggle,form);return host;
+  }
   function attach(host, scope, {api,run,writable,status,issueOrder,openOrder}) {
     const panel = el('section');
     let sequence, cursor;
@@ -89,7 +154,12 @@
       more.hidden = !cursor;
       list.replaceChildren();
       for(const entry of data.entries){
-        list.insertAdjacentHTML('beforeend',window.DynamaxHospitalClinical.entryMarkup(entry));
+        list.insertAdjacentHTML('beforeend',window.DynamaxHospitalClinical.entryMarkup(entry.Type==='Medication administration'?{...entry,Type:'Medication administration (original)'}:entry));
+        if(entry.Type==='Medication administration' || entry.OriginalEntryId){
+          list.append(correctionEditor(scope,entry,{api,run,status},writable('nursing.write'),result=>{
+            sequence=result.Sequence;more.hidden=true;list.textContent='Correction signed. Refresh signed entries to view the history.';
+          }));
+        }
         if(!scope.VisitId && entry.Type==='Prescription order' && writable('nursing.write')){
           list.append(medicationEditor(scope,entry,{api,run,status},result=>{
             sequence=result.Sequence;more.hidden=true;

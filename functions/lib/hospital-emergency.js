@@ -1,3 +1,4 @@
+import {emergencyMedicationCorrections} from './hospital-emergency-medication-corrections.js';
 import {allergySnapshot, quantity, qty, watDay, field} from './hospital-orders-model.js';
 import { observationTime, triageFields } from './hospital-clinical-model.js';
 import { clean, digest, fail, id, patientName } from './hospital-model.js';
@@ -39,6 +40,7 @@ export function createEmergencyReception({env, user, db, collection, branch, req
   }
   const available=supply=>qty(supply.Quantity-(supply.ReturnedQuantity||0)-(supply.AdministeredQuantity||0));
   return {
+    ...emergencyMedicationCorrections({env,db,collection,branch,requireCapability,operation,auditRead,auditWrite,actor,user,clock,condition,strip,page,emergencyReference,arrivalId}),
     async emergencyMedicationSupplies(body){
       requireCapability('nursing.write');
       const branchId=await branch(body),ref=emergencyReference(body.Reference);
@@ -126,7 +128,7 @@ export function createEmergencyReception({env, user, db, collection, branch, req
       if (result.rows.some(entry => entry.ArrivalId !== rid || entry.BranchId !== branchId)) fail('Emergency entry linkage needs review.',409);
       if (result.rows.length) await auditRead(body,'View signed emergency care',branchId,person,{ArrivalId:rid,VisitId:row.VisitId || ''});
       return {ok:true,arrivalId:rid,sequence:row.CareSequence || 0,entries:result.rows.map(entry => ({
-        EntryId:entry.EntryId,OrderId:entry.OrderId,Type:entry.Type,Content:entry.Content,SignedAt:entry.SignedAt,AuthorName:entry.AuthorName
+        EntryId:entry.EntryId,OriginalEntryId:entry.OriginalEntryId,OrderId:entry.OrderId,Type:entry.Type,Content:entry.Content,SignedAt:entry.SignedAt,AuthorName:entry.AuthorName
       })),next:result.next};
     },
     async signEmergencyCare(body) {
