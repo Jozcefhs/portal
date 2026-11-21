@@ -135,7 +135,7 @@ export async function saveManagedOrganisationControlIdentity(platformEnv, value 
   return publicManagedOrganisation(document);
 }
 
-export async function findManagedOrganisationForTenant(platformEnv, workspaceId, portalHost) {
+export async function findManagedOrganisationForTenant(platformEnv, workspaceId, portalHost, { includeCustomHost = false } = {}) {
   const workspace = safeWorkspace(workspaceId);
   const host = lower(portalHost);
   if (!workspace || !host) return null;
@@ -147,6 +147,7 @@ export async function findManagedOrganisationForTenant(platformEnv, workspaceId,
     .filter((row) => lower(row.Status || 'active') === 'active')
     .filter((row) => safeWorkspace(row.WorkspaceId) === workspace)
     .filter((row) => {
+      if (includeCustomHost && lower(row.CustomPortalHostname) === host) return true;
       try { return new URL(clean(row.PortalUrl)).hostname.toLowerCase() === host; } catch (_error) { return false; }
     })
     .sort((left, right) => clean(right.UpdatedAt || right.CreatedAt).localeCompare(clean(left.UpdatedAt || left.CreatedAt)))[0] || null;

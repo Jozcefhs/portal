@@ -4,6 +4,7 @@ import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { assertFreshTenantControlRequest, verifyTenantControlRequest } from '../lib/tenant-control-plane.js';
 import { emailProviderBranchId } from '../lib/branch-email-provider.js';
+import { pagesDomain } from '../lib/tenant-custom-domain.js';
 import {
   findTenantEmailControlRegistration,
   stageBrevoEmailProviderTransition
@@ -12,6 +13,14 @@ import {
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 const OAUTH_STATE_COLLECTION = 'tenantEmailOAuthStates';
+
+export async function confirmGooglePortalHost(env, registration, host, lookup = pagesDomain) {
+  const canonical = new URL(registration.PortalUrl);
+  if (canonical.protocol === 'https:' && canonical.hostname === host) return;
+  if (host && lower(registration.CustomPortalHostname) === host &&
+      (await lookup(env, registration.CloudflareProject, host))?.status === 'active') return;
+  throw Object.assign(new Error('Open Email delivery at the registered portal address, or finish connecting this custom domain first.'), { status:409, code:'GOOGLE_EMAIL_PORTAL_UNVERIFIED' });
+}
 
 async function requireSignedTenantRequest(platformEnv, request, details) {
   assertFreshTenantControlRequest(details);
@@ -23,6 +32,7 @@ async function requireSignedTenantRequest(platformEnv, request, details) {
     error.code = 'TENANT_CONTROL_SIGNATURE_INVALID';
     throw error;
   }
+  if (details.action === 'start-google-email') await confirmGooglePortalHost(platformEnv, registration, lower(details.portalHost));
   const requestRecord = await createDocumentIfAbsent(platformEnv, 'tenantControlRequests', clean(details.requestId), {
     RequestId: clean(details.requestId),
     WorkspaceId: clean(details.workspaceId),
@@ -51,7 +61,7 @@ async function startGoogleEmailConnection(platformEnv, request, env, details, re
     WorkspaceId: clean(details.workspaceId),
     BranchId: registration.__emailBranchId || '',
     SettingsScope: registration.__emailBranchId ? 'branch' : 'organisation',
-    PortalHost: clean(details.portalHost).toLowerCase(),
+    PortalHost: new URL(registration.PortalUrl).hostname,
     CloudflareProject: clean(registration.CloudflareProject),
     RegistrationCollection: clean(registration.__controlCollection || 'tenantRegistrations'),
     RegistrationId: registrationId,

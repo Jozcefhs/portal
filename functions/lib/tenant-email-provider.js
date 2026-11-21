@@ -75,13 +75,14 @@ export function activeTenantControlRecord(record = {}, now = Date.now()) {
 export async function findTenantEmailControlRegistration(platformEnv, details = {}) {
   const workspaceId = clean(details.workspaceId);
   const host = lower(details.portalHost);
+  const includeCustomHost = details.action === 'start-google-email' && Boolean(host);
   const rows = await queryCollection(platformEnv, 'tenantRegistrations', {
     filters: [{ field: 'WorkspaceId', op: '==', value: workspaceId }],
     limit: 20
   });
   const registration = rows
     .filter(activeTenantControlRecord)
-    .filter((row) => portalHost(row.PortalUrl) === host)
+    .filter((row) => portalHost(row.PortalUrl) === host || (includeCustomHost && lower(row.CustomPortalHostname) === host))
     .sort((left, right) => clean(right.UpdatedAt || right.CreatedAt).localeCompare(clean(left.UpdatedAt || left.CreatedAt)))[0];
   if (registration) {
     return {
@@ -90,7 +91,7 @@ export async function findTenantEmailControlRegistration(platformEnv, details = 
       __managedOrganisation: false
     };
   }
-  const managed = await findManagedOrganisationForTenant(platformEnv, workspaceId, host);
+  const managed = await findManagedOrganisationForTenant(platformEnv, workspaceId, host, { includeCustomHost });
   if (managed) {
     return {
       ...managed,

@@ -47,9 +47,7 @@ support messages.
 5. The deployment scheduler normally applies the provider within five minutes.
    Reload Settings and send one test email before relying on the connection.
 
-Branches inherit the organisation provider. They may retain branch-specific
-sender names and reply-to addresses, but cannot replace organisation
-credentials. A Google message is delivered from the connected mailbox; a
+A branch can inherit the organisation provider or connect its own account in branch settings. Google onboarding can start from the registered portal or an active custom domain attached to that same project. After Google sign-in the administrator returns to the registered portal’s Settings page. A Google message is delivered from the connected mailbox; a
 different configured sender address becomes Reply-To unless Google has approved
 that identity for the connected account.
 

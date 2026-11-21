@@ -22,6 +22,16 @@ function safeCode(error, fallback = 'GOOGLE_EMAIL_CONNECTION_FAILED') {
   return /^[A-Z0-9_]{3,80}$/.test(code) ? code : fallback;
 }
 
+const connectionHelp = {
+  GOOGLE_EMAIL_OAUTH_ACCESS_DENIED: 'Google email access was declined. To connect, approve the permission to send email from the chosen mailbox.',
+  GOOGLE_EMAIL_CLIENT_REJECTED: 'Google rejected the Dynamax OAuth client. Ask Dynamax support to check the client credentials and registered callback address.',
+  GOOGLE_EMAIL_GRANT_EXPIRED: 'This Google sign-in code is no longer valid. Open Email delivery and start a fresh connection.',
+  GOOGLE_EMAIL_OAUTH_STATE_EXPIRED: 'This connection expired. Start again from Email delivery and complete Google sign-in within nine minutes.',
+  GOOGLE_EMAIL_OAUTH_STATE_REPLAYED: 'This connection link has already been used. Reload Email delivery to see its status before starting again.',
+  GOOGLE_EMAIL_TOKEN_EXCHANGE_FAILED: 'Google did not issue offline permission to send email. Reconnect and approve sending email for the selected mailbox.',
+  GOOGLE_EMAIL_IDENTITY_INVALID: 'Google did not confirm a verified email address. Reconnect with a verified Google mailbox.'
+};
+
 export function shouldRevokeIssuedGoogleToken(refreshToken, retained, error = {}) {
   // Google revocation can invalidate every token for this user's project
   // grant, including working organisation/other-branch connections. A failed
@@ -222,9 +232,7 @@ export async function onRequestGet({ request, env }) {
       request,
       env,
       'error',
-      error?.code === 'GOOGLE_EMAIL_OAUTH_ACCESS_DENIED'
-        ? 'Google email access was not approved. No provider change was made.'
-        : 'Google email could not be connected. Start a new connection and try again.'
+      connectionHelp[safeCode(error)] || 'Google email setup could not finish. Reload Email delivery to check its status or contact Dynamax support.'
     );
   }
 }

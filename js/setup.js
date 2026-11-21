@@ -42,6 +42,8 @@ const requestedEmailMessage = String(
   requestedSettingsParams.get('emailMessage') || requestedSettingsParams.get('emailCode') || ''
 ).trim().slice(0, 240);
 let unlockedPassword = '';
+let settingsUnlocked = false;
+let unlockingSettings = false;
 let terminologyBranches = [];
 const terminologyBranchField = document.getElementById('terminologyBranch');
 const branchSchoolSectionModeField = document.getElementById('branchSchoolSectionMode');
@@ -885,7 +887,7 @@ async function requestAcademicPolicy(action, extra = {}) {
 }
 
 async function loadAcademicPolicy({ silent = false } = {}) {
-  if (!unlockedPassword || activeSettingsEdition !== 'school') return null;
+  if (!settingsUnlocked || activeSettingsEdition !== 'school') return null;
   const session = policyField('academicPolicySession')?.value.trim();
   const term = policyField('academicPolicyTerm')?.value.trim();
   if (!session || !term) {
@@ -1154,22 +1156,18 @@ function updateSettingsScopeUI(profile = {}) {
 
 async function loadProfile(password = '', { scope = settingsScopeField.value, branchId = settingsBranchField.value } = {}) {
   try {
-    const response = password
-      ? await fetch('/api/settings', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'load',
-            password,
-            SettingsScope: scope,
-            BranchId: scope === 'branch' ? branchId : ''
-          })
-        })
-      : await fetch('/api/settings');
+    const response = await fetch('/api/settings', {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'load', password, SettingsScope: scope, BranchId: scope === 'branch' ? branchId : '' })
+    });
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load setup.');
     applyProfile(data.profile || {}, data.settingsAccess);
-    if (password && activeSettingsEdition === 'school') {
+    settingsUnlocked = true;
+    if (activeSettingsEdition === 'school') {
       void preloadAcademicPolicyTutorial();
       await loadAcademicPolicy({ silent: true });
     }
@@ -1180,30 +1178,38 @@ async function loadProfile(password = '', { scope = settingsScopeField.value, br
   }
 }
 
-setupLoginForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const button = event.submitter || setupLoginForm.querySelector('button[type="submit"]');
-  if (!window.DynamaxActionFeedback.begin(button, 'Unlocking settings...')) return;
+const staffSessionButton = document.getElementById('useStaffSession');
+const passwordUnlockButton = setupLoginForm.querySelector('button[type="submit"]');
+
+async function unlockSettings(password, { automatic = false } = {}) {
+  if (unlockingSettings || settingsUnlocked) return;
+  unlockingSettings = true;
+  staffSessionButton.disabled = passwordUnlockButton.disabled = true;
   try {
-    setLoginStatus('Checking password...', '');
-    unlockedPassword = document.getElementById('setupPassword').value;
+    unlockedPassword = password;
+    if (!automatic) setLoginStatus(password ? 'Checking password...' : 'Checking staff session...', '');
     settingsScopeField.value = requestedSettingsScope;
-    await loadProfile(unlockedPassword, {
-      scope: requestedSettingsScope,
-      branchId: requestedSettingsBranch
-    });
+    await loadProfile(password, { scope: requestedSettingsScope, branchId: requestedSettingsBranch });
     setupLoginForm.hidden = true;
     setupForm.hidden = false;
     setStatus('Settings loaded and ready to edit.', 'ok');
     handleEmailConnectionCallback();
     revealRequestedSettingsSection();
   } catch (error) {
+    settingsUnlocked = false;
     unlockedPassword = '';
-    setLoginStatus(error.message, 'bad');
+    if (!automatic) setLoginStatus(password ? error.message : 'Sign in as a Super Administrator in the staff portal, then continue here.', 'bad');
   } finally {
-    if (button?.isConnected) window.DynamaxActionFeedback.end(button);
+    unlockingSettings = false;
+    staffSessionButton.disabled = passwordUnlockButton.disabled = false;
   }
+}
+
+setupLoginForm.addEventListener('submit', event => {
+  event.preventDefault();
+  void unlockSettings(document.getElementById('setupPassword').value);
 });
+staffSessionButton.addEventListener('click', () => unlockSettings(''));
 
 document.getElementById('webLogoFile').addEventListener('change', async (event) => {
   const file = event.target.files && event.target.files[0];
@@ -1549,7 +1555,7 @@ inheritAcademicPolicyButton?.addEventListener('click', async (event) => {
 });
 
 async function reloadSelectedSettingsScope() {
-  if (!unlockedPassword) return;
+  if (!settingsUnlocked) return;
   try {
     setStatus('Loading the selected settings scope...', '');
     await loadProfile(unlockedPassword);
@@ -1744,3 +1750,5 @@ if (portalDomainPanel) {
   for (const name of ['Review', 'Import', 'Prepare']) domainField(name).addEventListener('click', () => runDomainAction(name.toLowerCase()));
   domainField('Activate').addEventListener('click', () => runDomainAction('activate'));
 }
+
+void unlockSettings('', { automatic: true });

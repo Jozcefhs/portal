@@ -19,6 +19,9 @@ try {
         if (url.hostname !== 'branch-settings.test') return route.abort();
         if (url.pathname === '/api/settings') {
           const request = route.request().postDataJSON() || {};
+          if (route.request().method() === 'GET') return route.fulfill({ json: { ok: true, profile: { OrganisationEdition: edition } } });
+          assert.equal(request.action, 'load');
+          if (width === 390 && !request.password) return route.fulfill({ status: 401, json: { ok: false } });
           const branch = request.SettingsScope === 'branch' ? request.BranchId : '';
           return route.fulfill({ json: { ok: true, settingsAccess: { scope: branch ? 'branch' : 'organisation', branchId: branch, scopeLocked: false }, profile: {
             OrganisationEdition: edition, SchoolName: 'Example organisation', SchoolEmail: 'office@example.invalid',
@@ -41,8 +44,10 @@ try {
         } catch { return route.fulfill({ status: 404, body: '' }); }
       });
       await page.goto('https://branch-settings.test/setup.html?scope=branch&branch=area-1#document-settings');
-      await page.locator('#setupPassword').fill('synthetic');
-      await page.locator('#setupLoginForm button[type=submit]').click();
+      if (width === 390) {
+        await page.locator('#setupPassword').fill('synthetic');
+        await page.locator('#setupLoginForm button[type=submit]').click();
+      }
       await page.locator('#setupForm').waitFor({ state: 'visible' });
       await page.locator('#emailProviderPanel').scrollIntoViewIfNeeded();
       assert.match(await page.locator('#emailProviderScopeTitle').innerText(), /Inherit organisation provider/i);

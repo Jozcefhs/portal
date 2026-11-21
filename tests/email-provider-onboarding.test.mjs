@@ -25,6 +25,8 @@ import { shouldRevokeIssuedGoogleToken } from '../functions/api/google-email-cal
 
 if (!globalThis.crypto) globalThis.crypto = webcrypto;
 
+const { confirmGooglePortalHost } = await import('../functions/api/tenant-email-provider.js');
+
 const localApi = await readFile(new URL('../functions/api/email-provider-connection.js', import.meta.url), 'utf8');
 const centralApi = await readFile(new URL('../functions/api/tenant-email-provider.js', import.meta.url), 'utf8');
 const callbackApi = await readFile(new URL('../functions/api/google-email-callback.js', import.meta.url), 'utf8');
@@ -663,3 +665,25 @@ test('pooled and managed tenants expose independent email deployment queue metad
     'registration metadata and pool pending flag must finalize in the same guarded commit');
   assert.match(completion, /updateTime: slot\.__updateTime/);
   assert.match(completion, /updateTime: registration\.__updateTime/);});
+
+test('Google connection accepts an active custom host on the assigned project and skips lookups on the registered host', async () => {
+  const row = { PortalUrl:'https://tenant-example.pages.dev', CloudflareProject:'tenant-example', CustomPortalHostname:'academy.example.org' };
+  const calls = [];
+  const active = async (_env, project, host) => { calls.push([project,host]); return { status:'active' }; };
+  await confirmGooglePortalHost({},row,'tenant-example.pages.dev',active);
+  await assert.rejects(confirmGooglePortalHost({},row,'different.example.org',active),{code:'GOOGLE_EMAIL_PORTAL_UNVERIFIED'});
+  assert.deepEqual(calls,[]);
+  await confirmGooglePortalHost({},row,'academy.example.org',active);
+  assert.deepEqual(calls,[['tenant-example','academy.example.org']]);
+  for (const result of [null,{status:'pending'}]) {
+    await assert.rejects(confirmGooglePortalHost({},row,'academy.example.org',async()=>result),{code:'GOOGLE_EMAIL_PORTAL_UNVERIFIED'});
+  }
+});
+
+test('OAuth exchange distinguishes rejected platform credentials from an expired mailbox grant', async () => {
+  for(const [error,code] of [['invalid_client','GOOGLE_EMAIL_CLIENT_REJECTED'],['invalid_grant','GOOGLE_EMAIL_GRANT_EXPIRED']]){
+    const fetcher=async()=>Response.json({error,error_description:'private provider diagnostic'},{status:400});
+    await assert.rejects(exchangeGoogleAuthorizationCode(oauthEnv,{code:'sample',codeVerifier:'sample',redirectUri:'https://dynamax.cc/api/google-email-callback'},fetcher),
+      err=>err.code===code && !err.message.includes('private'));
+  }
+});

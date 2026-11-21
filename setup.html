@@ -29,13 +29,14 @@
       <div class="settings-unlock-copy">
         <p class="settings-eyebrow">Restricted area</p>
         <h2 data-edition-copy="unlock-title">Unlock organisation settings</h2>
-        <p>Enter the setup password to view and update configuration.</p>
+        <p>Sign in to the <a href="admin.html" target="_blank" rel="noopener">staff portal</a> as a Super Administrator, then continue here. You can also use your setup password.</p>
       </div>
       <div class="settings-unlock-control">
         <label for="setupPassword">Setup password <span class="required">*</span></label>
         <input id="setupPassword" type="password" autocomplete="current-password" required>
       </div>
-      <button type="submit">Unlock settings</button>
+      <button type="button" id="useStaffSession">Continue with staff session</button>
+      <button type="submit">Unlock with password</button>
       <p id="setupLoginStatus" class="status settings-login-status"></p>
     </form>
 
@@ -625,6 +626,6 @@
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20261016-grouped-form-validation"></script>
   <script src="js/paystack-connection-status.js?v=20261013-paystack-activation"></script>
-  <script src="js/setup.js?v=20261121-domain-self-service"></script>
+  <script src="js/setup.js?v=20261121-email-session"></script>
 </body>
 </html>

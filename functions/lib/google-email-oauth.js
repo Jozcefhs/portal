@@ -168,6 +168,12 @@ export async function exchangeGoogleAuthorizationCode(env, {
   });
   const data = await response.json().catch(() => ({}));
   const grantedScopes = new Set(clean(data.scope).split(/\s+/).filter(Boolean));
+  if (!response.ok && ['invalid_client','unauthorized_client','redirect_uri_mismatch'].includes(data.error)) {
+    throw oauthError('Google rejected the platform OAuth client configuration.', 502, 'GOOGLE_EMAIL_CLIENT_REJECTED');
+  }
+  if (!response.ok && data.error === 'invalid_grant') {
+    throw oauthError('Google rejected the one-time authorization code.', 409, 'GOOGLE_EMAIL_GRANT_EXPIRED');
+  }
   if (!response.ok || !clean(data.access_token) || !clean(data.refresh_token)
       || !grantedScopes.has('https://www.googleapis.com/auth/gmail.send')) {
     throw oauthError(
