@@ -441,3 +441,11 @@ Identification preserves the signed entry under **Clinical encounter → Emergen
 From the wristband’s signed history or the identified patient’s linked visit, clinical staff can review the current signed dose. Nurses can correct its dispensing lots, quantities, administration time and note. A signature requires a reason and the wristband reference. Zero usage requires explicit confirmation. Each correction links to the previous version and original signature. One atomic commit adjusts only affected dispensing counters and appends the signed before-and-after record. Retried requests reuse a receipt. Time changes preserve duplicate-dose protection. Unchanged submissions create no writes. Note-only changes require no dispensing reads or writes.
 
 Tests cover branch access, identification, version conflicts, simultaneous pharmacy returns, split lots, reversals, read limits and desktop and phone browser workflows.
+
+### H14 patient attendance by department
+
+In Reception visits, choose a branch and date range, load visits, and open **Patient attendance report**. Non-cancelled visits in Waiting, In progress and Completed count toward attendance. Repeat visits count separately, while each known patient counts once across departments. Cancelled and unrecognised statuses appear separately. The reporting period uses the visit arrival date in West Africa Time. Emergency arrivals enter through a registered visit.
+
+The preview uses the existing authorised reception pages. Print, preview and tab changes require no database requests. Staff can load remaining visits explicitly. A failed page can be retried from the last successful cursor. Visit IDs prevent double counting. The report and printout identify partial coverage until the end of the selected period. Branch and date changes clear the previous selection. The report creates no patient, billing or reporting records. The existing visit access audit applies.
+
+Verification covered empty data, legacy visit identifiers, cancellations, distinct patients across departments, partial and full printing, duplicate rows, failed-page recovery, and branch isolation on desktop and phone widths. H14 remains open for further operational reports, including outstanding investigations.

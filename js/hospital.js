@@ -10,7 +10,13 @@
   const can = name => state.capabilities?.includes(name);
   const formValues = form => Object.fromEntries([...form.elements].filter(field => field.name).map(field => [field.name,field.value]));
   const writable = name => can(name) && !state.readOnly;
+  const attendance=window.DynamaxHospitalAttendance.create({$,esc,print:()=>window.print()});
+  function clearVisitPeriod(){
+    visitCursor=null;lastVisitRange=null;$('visitRows').replaceChildren();$('moreVisits').hidden=true;
+    attendance.clear();
+  }
   function clearRecords() {
+    clearVisitPeriod();$('visitAttendance').open=false;
     $('emergencyPanel').open = false;
     $('emergencyIntake').reset();
     $('emergencyFind').reset();
@@ -64,6 +70,11 @@
     const result = await fetchJson('/api/staff-hospital', {...payload, RequestId}, $('branch').value);
     if (write) {
       pending.delete(key);
+      if(!result.Unchanged){
+        if(['checkIn','checkInAppointment'].includes(action) || (action==='identifyEmergencyArrival' && !result.ReusedVisit))attendance.markChanged();
+        else if(['updateVisit','saveConsultation','admitHospitalPatient','dischargeHospitalPatient'].includes(action) ||
+          (action==='clinicQueueAction' && extra.Action==='Start'))attendance.markChanged(extra.VisitId||result.VisitId);
+      }
       if(['checkIn','checkInAppointment','updateVisit','clinicQueueAction','saveConsultation','signConsultation','dischargeHospitalPatient'].includes(action))queues?.invalidate();
       if (stockMutations.has(action)) stockDisposal?.invalidate();
       if (['submitStockDisposal','reviewStockDisposal'].includes(action)) stockControl?.invalidate();
@@ -189,9 +200,11 @@
     await api('checkIn',{PatientId:selected.PatientId,Department:$('checkInForm').elements.Department.value},true);
     status('Patient checked in. The visit is available in Reception visits.');
   });};
-  async function loadVisits(cursor = null) {
-    if (!cursor) lastVisitRange = {fromDate:$('visitFrom').value,toDate:$('visitTo').value};
+  async function loadVisits(cursor = null, deferReport = false) {
+    if (!cursor) {clearVisitPeriod();lastVisitRange = {fromDate:$('visitFrom').value,toDate:$('visitTo').value};}
     const data = await api('visits',{DateRange:lastVisitRange,...(cursor ? {Cursor:cursor} : {})});
+    attendance.add(data.visits,{...lastVisitRange,branch:$('branch').selectedOptions[0]?.textContent || loadedBranch},data.next);
+    if(!deferReport)attendance.draw();
     visitCursor = data.next; $('moreVisits').hidden = !visitCursor;
     $('visitRows').innerHTML = `<table><thead><tr><th>Patient</th><th>Department</th><th>Arrival (WAT)</th><th>Status</th><th>Actions</th></tr></thead><tbody>${data.visits.map((row,index) => `<tr><td>${esc(row.PatientName)}<br>${esc(row.HospitalNumber)}</td><td>${esc(row.Department)}</td><td>${esc(new Date(row.CreatedAt).toLocaleString('en-GB',{timeZone:'Africa/Lagos'}))}</td><td>${esc(row.Status)}${row.ClinicalState?`<br><small>${esc(row.ClinicalState)}</small>`:''}</td><td>${writable('consultations.write')&&['Waiting','In progress'].includes(row.Status)?`<button data-referral-visit="${index}">Refer patient</button>`:''}${writable('appointments.write')?`<button data-followup-visit="${index}">Follow-up appointment</button>`:''}${writable('theatre.schedule')&&['Waiting','In progress'].includes(row.Status)?`<button data-procedure-visit="${index}">Plan procedure</button>`:''}${can('inpatient.read')?`<button data-inpatient-visit="${index}">${row.AdmissionId?'Open admission':'Ward admission'}</button>`:''}${can('billing.read')||can('hmo.work')?`<button data-billing-visit="${index}">Open billing / HMO</button>`:''}${can('clinical.read')?`<button data-care="${index}">Open care record</button>`:''}${writable('orders.create') && ['Waiting','In progress'].includes(row.Status)?`<button data-issue-order="${index}">Prescribe / request investigation</button>`:''}${writable('visits.write') && ['Waiting','In progress'].includes(row.Status) ? `<button data-visit="${index}" data-status="In progress">Start visit</button><button data-visit="${index}" data-status="Completed">Complete reception visit</button><button data-visit="${index}" data-status="Cancelled">Cancel visit</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="5">No visits in this period.</td></tr>'}</tbody></table>`;
     $('visitRows').querySelectorAll('[data-referral-visit]').forEach(button=>{button.onclick=()=>run(()=>referrals.openVisit(data.visits[Number(button.dataset.referralVisit)]));});
@@ -267,6 +280,12 @@
   $('emergencyFind').onsubmit = event => { event.preventDefault(); run(()=>loadEmergency(formValues($('emergencyFind')))); };
   $('emergencyPending').onclick = () => run(()=>loadEmergency());
   $('emergencyNext').onclick = () => run(()=>loadEmergency({Cursor:emergencyCursor}));
+  for(const id of ['visitFrom','visitTo'])$(id).addEventListener('input',clearVisitPeriod);
+  $('attendanceRest').onclick=()=>run(async()=>{
+    try {
+      while(visitCursor && $('visitAttendance').open)await loadVisits(visitCursor,true);
+    } finally {attendance.draw();}
+  });
   $('visitForm').onsubmit = event => {event.preventDefault();run(() => loadVisits());}; $('moreVisits').onclick = () => run(() => loadVisits(visitCursor));
   $('printCard').onclick = () => {
     if (!selected) return;

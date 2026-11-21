@@ -277,7 +277,7 @@ export function createHospitalService(env, user, overrides = {}) {
       const result = await page('Visits', [eq('BranchId', branchId),
         { field: 'CreatedAt', op: '>=', value: start.toISOString() }, { field: 'CreatedAt', op: '<', value: end.toISOString() }], 'CreatedAt', body);
       await auditRead(body, 'View reception visits', branchId, {}, { ResultCount: result.rows.length, FromDate: range.fromDate, ToDate: range.toDate });
-      return { ok: true, visits: result.rows.map(row => ({ ...strip(row), Revision: row.__updateTime })), next: result.next };
+      return { ok: true, visits: result.rows.map(row => ({ ...strip(row), VisitId:row.VisitId || row.__id, Revision: row.__updateTime })), next: result.next };
     },
     async updateVisit(body) {
       requireCapability('visits.write'); const branchId = await branch(body);

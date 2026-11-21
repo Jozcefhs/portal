@@ -30,7 +30,8 @@
   <script src="/js/hospital-clinic-queues.js?v=540" defer></script>
   <script src="/js/hospital-portal-access.js?v=541" defer></script>
   <script src="/js/hospital-messages-ui.js?v=544" defer></script>
-  <script src="/js/hospital.js?v=557-emergency-orders" defer></script>
+  <script src="/js/hospital-attendance.js?v=561" defer></script>
+  <script src="/js/hospital.js?v=561-attendance" defer></script>
 </head>
 <body>
   <main>
@@ -115,6 +116,11 @@
           <button type="button" hidden id="emergencyNext">Next arrivals</button>
         </details>
         <form id="visitForm" class="toolbar"><label>From<input id="visitFrom" type="date" required></label><label>To<input id="visitTo" type="date" required></label><button type="submit">Load visits</button></form>
+        <details id="visitAttendance">
+          <summary>Patient attendance report</summary>
+          <div id="attendanceBody"></div>
+          <div class="toolbar"><button id="attendanceRest" type="button" hidden>Load remaining visits</button><button id="attendancePrint" type="button" class="secondary" hidden>Print report</button></div>
+        </details>
         <div id="visitRows" class="table-wrap"></div><button id="moreVisits" type="button" hidden>Next visits</button>
       </section>
       <section id="care" hidden>
