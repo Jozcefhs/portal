@@ -3074,10 +3074,8 @@ function renderModuleSummary(active, liveData = null) {
     renderSummary(dashboardData?.summary || {});
     return;
   }
-  if (['hospitalPatients', 'hospitalReception', 'hospitalTriage', 'hospitalConsultations','hospitalOrders','hospitalPharmacy','hospitalLaboratory','hospitalImaging','hospitalBilling','hospitalHmo','hospitalInpatients','hospitalNursing','hospitalTheatre'].includes(active)) {
+  if (window.DynamaxHospitalDashboards?.has(active)) {
     summaryEl.replaceChildren();
-    const task={hospitalPatients:'patients',hospitalReception:'reception',hospitalTriage:'triage',hospitalConsultations:'consultations',hospitalOrders:'orders',hospitalPharmacy:'pharmacy',hospitalLaboratory:'laboratory',hospitalImaging:'imaging',hospitalBilling:'billing',hospitalHmo:'hmo',hospitalInpatients:'inpatients',hospitalNursing:'nursing',hospitalTheatre:'theatre'}[active];
-    panelEl.innerHTML = `<h2>${escapeHtml(staffTabLabel(active, 'Hospital workspace'))}</h2><p>Search patients by name, hospital number or NFC card. Choose a period to load visits and open the selected care record.</p><a class="btn" href="/hospital.html?branch=${encodeURIComponent(selectedBranchId || 'main')}&task=${task}">Open Hospital workspace</a>`;
     return;
   }
   const departments = dashboardData?.departments || {};
@@ -3379,7 +3377,7 @@ function renderWorkspace(active, options = {}) {
   welcomeEl.hidden = false;
   welcomeEl.classList.toggle('branch-context-only', !overview);
   dashboardStatus.hidden = !overview;
-  panelEl.hidden = overview;
+  panelEl.hidden = overview && resolveDashboardEdition(currentUser || {}) !== 'hospital';
   staffMainContent.classList.toggle('module-view-active', !overview);
   renderModuleSummary(active);
   setDashboardClockActive(overview, options);
@@ -20562,6 +20560,21 @@ function renderSection(active) {
     return;
   }
   panelEl.classList.toggle('school-store-panel', active === 'bookstore' || active === 'uniformStore' || active === 'organizationStore');
+  if (resolveDashboardEdition(currentUser || {}) === 'hospital') {
+    const dashboards = window.DynamaxHospitalDashboards;
+    if (dashboards.has(active) && activeTabs.some(([key]) => key === active)) {
+      dashboards.mount(panelEl, {
+        key: active, title: staffTabLabel(active, activeTabs.find(([key]) => key === active)[1]),
+        branchId: selectedBranchId, branchName: branchSelector.selectedOptions[0]?.textContent,
+        selectBranch: () => branchSelector.focus(), fetcher: staffFetch, signal: staffSessionAbortController.signal
+      });
+      return;
+    }
+    if (active === 'overview') {
+      dashboards.overview(panelEl, activeTabs, selectSection);
+      return;
+    }
+  }
   if (active === 'overview') {
     panelEl.innerHTML = '';
     return;

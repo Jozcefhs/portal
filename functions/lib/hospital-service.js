@@ -1,3 +1,4 @@
+import { createHospitalDashboards } from './hospital-module-dashboards.js';
 import { createEmergencyReception } from './hospital-emergency.js';
 import {createHospitalPortalClinical} from './hospital-portal-clinical.js';
 import {createHospitalPortalAccess} from './hospital-portal-access.js';
@@ -8,7 +9,7 @@ import { createHospitalStockDisposal } from './hospital-stock-disposal.js';
 import { createHospitalInvestigationsService } from './hospital-investigations-service.js';
 import { createHospitalMedicinesService } from './hospital-medicines-service.js';
 import { createHospitalReferralsService } from './hospital-referrals-service.js';
-import { getDocument, queryCollection, batchCommitLiteralDocuments } from './firestore.js';
+import { countCollection, getDocument, queryCollection, batchCommitLiteralDocuments } from './firestore.js';
 import { requiredDeploymentIdentity } from './deployment-identity.js';
 import { getSchoolStructure } from './school-scope.js';
 import { configuredStaffBranches } from './staff-branch-context.js';
@@ -32,7 +33,7 @@ const strip = row => Object.fromEntries(Object.entries(row || {}).filter(([key])
 const eq = (field, value) => ({ field, op: '==', value });
 
 export function createHospitalService(env, user, overrides = {}) {
-  const db = { getDocument, queryCollection, batchCommitLiteralDocuments, getSchoolStructure, ...overrides };
+  const db = { countCollection, getDocument, queryCollection, batchCommitLiteralDocuments, getSchoolStructure, ...overrides };
   const identity = requiredDeploymentIdentity(env);
   if (identity.edition !== 'hospital' || user.edition !== 'hospital') fail('This workspace is available only in the Hospital edition.', 403);
   if (user.subscriptionActive === false) fail('This subscription does not permit Hospital access.', 403);
@@ -120,6 +121,7 @@ export function createHospitalService(env, user, overrides = {}) {
     return { rows: shown, next: rows.length > limit ? { id: last.__id, value: last[field] } : null };
   }
   return {
+    ...createHospitalDashboards({env,user,db,branch,collection}),
     ...createHospitalClinicQueues({env,user,db,collection,capabilities,branch,clock,actor,condition,strip,eq,operation,auditWrite,page}),
     ...createHospitalStockControl({env,user,db,collection,capabilities,requireCapability,branch,clock,actor,condition,strip,eq,auditWrite,operation,page}),
     ...createHospitalStockDisposal({env,user,db,collection,capabilities,requireCapability,branch,clock,actor,condition,strip,eq,auditWrite,operation,page}),

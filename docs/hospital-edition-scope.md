@@ -449,3 +449,7 @@ In Reception visits, choose a branch and date range, load visits, and open **Pat
 The preview uses the existing authorised reception pages. Print, preview and tab changes require no database requests. Staff can load remaining visits explicitly. A failed page can be retried from the last successful cursor. Visit IDs prevent double counting. The report and printout identify partial coverage until the end of the selected period. Branch and date changes clear the previous selection. The report creates no patient, billing or reporting records. The existing visit access audit applies.
 
 Verification covered empty data, legacy visit identifiers, cancellations, distinct patients across departments, partial and full printing, duplicate rows, failed-page recovery, and branch isolation on desktop and phone widths. H14 remains open for further operational reports, including outstanding investigations.
+
+### Hospital department dashboards
+
+The staff sidebar and hospital overview open a dashboard for every assigned hospital module. Each dashboard shows branch register counts and links to the corresponding workflow. Counts use the same database snapshot, with a short cache scoped to the staff session, branch and module. Opening the overview does not load departmental registers.

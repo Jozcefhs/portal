@@ -322,7 +322,8 @@
     if(task==='nursing'&&can('nursing.read'))showTab('nursing');
     if(task==='inpatients'&&can('inpatient.read'))showTab('inpatients');
     if (['reception','triage','consultations'].includes(task) && can('visits.read')) showTab('reception');
+    else if (['triage','consultations'].includes(task) && can('clinical.read')) showTab('care');
     if(['billing','hmo'].includes(task)&&(can('billing.read')||can('hmo.work')))showTab('billing');
-    if(['orders','pharmacy','laboratory','imaging'].includes(task)&&['orders.read','pharmacy.work','laboratory.work','imaging.work','laboratory.configure','imaging.configure'].some(can)){orders.selectTask(task);showTab('orders');}
+    if(['orders','pharmacy','laboratory','imaging'].includes(task)&&['orders.read','pharmacy.work','pharmacy.configure','laboratory.work','imaging.work','laboratory.configure','imaging.configure'].some(can)){orders.selectTask(task);showTab('orders');}
   });
 })();
