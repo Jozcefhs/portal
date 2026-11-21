@@ -75,6 +75,53 @@ export function createHospitalBillingService(ctx){
     await auditRead(body,`View dated hospital ${name.toLowerCase()}`,BranchId,{}, {ResultCount:result.rows.length});
     return {ok:true,rows:result.rows.map(view),next:result.next};
   }
+  // Ownership follows the verified band. The original charge ID and dispensing ledger never move.
+  function chargeOwnerResolver(BranchId){
+    const bands=new Map();
+    return async row=>{
+      if(!row || row.BranchId!==BranchId || !row.EmergencyArrivalId || row.VisitId!==row.EmergencyArrivalId || row.PatientId!==row.EmergencyArrivalId)return row;
+      if(!bands.has(row.EmergencyArrivalId))bands.set(row.EmergencyArrivalId,read('EmergencyArrivals',row.EmergencyArrivalId));
+      const band=await bands.get(row.EmergencyArrivalId);
+      if(!band || band.BranchId!==BranchId || band.Reference!==row.EmergencyReference)fail('Review the wristband on this charge.',409);
+      if(band.Status!=='Identified')return {...row,Status:'Awaiting identification'};
+      return {...row,VisitId:band.VisitId,PatientId:band.PatientId};
+    };
+  }
+  async function visitChargePage(body){
+    any('billing.read','hmo.work');
+    const BranchId=await branch(body),VisitId=id(body.VisitId),dates=dateFilters(body.DateRange);
+    async function nextBand(after=''){
+      const prefix=VisitId+'|';
+      const rows=await db.queryCollection(env,collection('EmergencyArrivals'),{filters:[
+        {field:'BillingLinkKey',op:'>=',value:prefix+(after?after+'~':'')},{field:'BillingLinkKey',op:'<',value:prefix+'~'}
+      ],orderBy:[{field:'BillingLinkKey'}],limit:1});
+      if(!rows.length)return null;
+      const band=rows[0];
+      if(band.BranchId!==BranchId || band.Status!=='Identified' || band.VisitId!==VisitId || band.BillingLinkKey!==prefix+band.__id)
+        fail('Review the visit linked to this emergency wristband.',409);
+      return {band:band.__id};
+    }
+    const chargePage=(source,cursor)=>page('ChargeEvents',[eq('BranchId',BranchId),eq('VisitId',source),...dates],'CreatedAt',{Cursor:cursor});
+    let cursor=body.Cursor,rows=[],next;
+    if(!cursor?.band){
+      const regular=await chargePage(VisitId,cursor);
+      rows=regular.rows;next=regular.next || (body.IncludeEmergencyCharges===false?null:await nextBand());
+      if(!rows.length && next?.band)cursor=next;
+    }
+    if(cursor?.band){
+      const rid=id(cursor.band),band=await read('EmergencyArrivals',rid);
+      if(!band || band.BranchId!==BranchId || band.Status!=='Identified' || band.VisitId!==VisitId || band.BillingLinkKey!==VisitId+'|'+rid)
+        fail('This wristband is unavailable for the selected visit.',404);
+      const history=await chargePage(rid,cursor.page);
+      rows=history.rows.map(row=>{
+        if(row.EmergencyArrivalId!==rid || row.PatientId!==rid || row.EmergencyReference!==band.Reference)fail('Review the wristband charge reference.',409);
+        return {...row,PatientId:band.PatientId,VisitId};
+      });
+      next=history.next?{band:rid,page:history.next}:await nextBand(rid);
+    }
+    await auditRead(body,'View dated hospital chargeevents',BranchId,{}, {ResultCount:rows.length});
+    return {ok:true,rows:rows.map(view),next};
+  }
   const corporate=createHospitalCorporateService({...ctx,read,write,view,stamp,revision,confirmed,unchanged,keyFor,visit});
   return {
     ...corporate.actions,
@@ -111,7 +158,7 @@ export function createHospitalBillingService(ctx){
     async billingVisit(body){
       any('billing.read','hmo.work');const c=await visit(body),coverage=await read('HmoEligibility',await keyFor('eligibility',c.BranchId,c.visit.VisitId));
       await auditRead(body,'View patient billing context',c.BranchId,c.person,{VisitId:c.visit.VisitId});
-      return {ok:true,patient:patientSummary(c.person),visit:{VisitId:c.visit.VisitId,Department:c.visit.Department,Status:c.visit.Status},coverage:view(coverage)};
+      return {ok:true,patient:patientSummary(c.person),visit:{VisitId:c.visit.VisitId,Department:c.visit.Department,Status:c.visit.Status,HasPreIdentificationCare:!!c.visit.HasPreIdentificationCare},coverage:view(coverage)};
     },
     async saveHmoEligibility(body){
       requireCapability('hmo.work');confirmed(body);const fields=eligibility(body.Eligibility);await branch(body);
@@ -158,7 +205,14 @@ export function createHospitalBillingService(ctx){
         return {writes:[write('ChargeEvents',row.ChargeId,{...strip(row),Status:'Voided',VoidReason:Reason,VoidedAt:clock(),VoidedBy:actor},row),event(key,c,'Void unbilled service charge',{ChargeId:row.ChargeId,Reason}),audit(key,c,'Void unbilled service charge')],result:{ChargeId:row.ChargeId}};
       });
     },
-    async billingCharges(body){const extra=body.VisitId?[eq('VisitId',id(body.VisitId))]:[];return dated(body,'ChargeEvents',extra);},
+    async billingCharges(body){
+      if(body.VisitId)return visitChargePage(body);
+      const data=await dated(body,'ChargeEvents');
+      if(data.rows.some(row=>row.EmergencyArrivalId)){
+        const resolve=chargeOwnerResolver(await branch(body));data.rows=await Promise.all(data.rows.map(resolve));
+      }
+      return data;
+    },
     async billingInvoices(body){return dated(body,'Invoices');},
     async hmoClaims(body){requireCapability('hmo.work');return dated(body,'Claims');},
     async issueHospitalInvoice(body){
@@ -166,7 +220,8 @@ export function createHospitalBillingService(ctx){
       if(!Array.isArray(body.ChargeIds)||!body.ChargeIds.length||body.ChargeIds.length>30||new Set(body.ChargeIds).size!==body.ChargeIds.length)fail('Select between 1 and 30 distinct charges.');body.ChargeIds.forEach(id);
       return operation(body,'issueHospitalInvoice',async key=>{
         const c=await visit(body),charges=await Promise.all(body.ChargeIds.map(k=>read('ChargeEvents',k)));
-        if(charges.some(r=>!r||r.BranchId!==c.BranchId||r.VisitId!==c.visit.VisitId||r.PatientId!==c.person.PatientId||r.AmountCents<0||r.Source==='Return'||r.Status!=='Awaiting billing'))fail('One or more charges are already billed, are credits, or belong to another visit.',409);
+        const owners=await Promise.all(charges.map(chargeOwnerResolver(c.BranchId)));
+        if(owners.some(r=>!r||r.BranchId!==c.BranchId||r.VisitId!==c.visit.VisitId||r.PatientId!==c.person.PatientId||r.AmountCents<0||r.Source==='Return'||r.Status!=='Awaiting billing'))fail('One or more charges are already billed, are credits, or belong to another visit.',409);
         if(body.UseHmo===true&&body.UseCorporate===true)fail('Choose either corporate coverage or HMO coverage for this invoice.');
         const corporateContext=body.UseCorporate===true?await corporate.invoiceCoverage(c,body):null;
         let coverage=null;if(body.UseHmo===true){coverage=await read('HmoEligibility',await keyFor('eligibility',c.BranchId,c.visit.VisitId));
@@ -209,7 +264,8 @@ export function createHospitalBillingService(ctx){
           credit={ChargeId,BranchId:c.BranchId,PatientId:c.person.PatientId,VisitId:c.invoice.VisitId,Source:'Service adjustment',SourceId:ChargeId,OriginalChargeId:adjustment.OriginalChargeId,
             AmountCents:-adjustment.AmountCents,Status:'Awaiting billing',Adjustment:adjustment,Currency:'NGN',...stamp()};
         }else credit=await read('ChargeEvents',body.ChargeId);
-        if(!credit||credit.BranchId!==c.BranchId||credit.PatientId!==c.person.PatientId||credit.VisitId!==c.invoice.VisitId||(!adjustment&&credit.Source!=='Return')||credit.AmountCents>0)fail('Choose a return credit for this invoice.',409);
+        const owner=await chargeOwnerResolver(c.BranchId)(credit);
+        if(!owner||owner.BranchId!==c.BranchId||owner.PatientId!==c.person.PatientId||owner.VisitId!==c.invoice.VisitId||(!adjustment&&credit.Source!=='Return')||credit.AmountCents>0)fail('Choose a return credit for this invoice.',409);
         if(credit.Status==='Credited'&&credit.InvoiceId===c.invoice.InvoiceId)return unchanged({InvoiceId:c.invoice.InvoiceId});
         revision(body,c.invoice);
         if(credit.Status!=='Awaiting billing')fail('This credit was already processed.',409);

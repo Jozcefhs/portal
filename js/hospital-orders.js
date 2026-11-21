@@ -126,15 +126,15 @@
       $('quarantineStockForm').querySelectorAll('input,textarea,button').forEach(el=>el.disabled=!writable('pharmacy.work'));
       const o=current?.order,rx=o?.Kind==='Prescription',worker=o&&writable(o.Kind==='Laboratory'?'laboratory.work':o.Kind==='Imaging'?'imaging.work':'pharmacy.work');
       const active=o&&o.Status!=='Cancelled';
-      const visible={reviewRx:rx&&worker&&active,dispenseRx:rx&&worker&&!current?.unidentified&&(!o.EmergencyArrivalId||o.ReviewPatientId===o.PatientId)&&['Ready to dispense','Partially dispensed'].includes(o.Status),returnRx:rx&&!current?.unidentified&&can('pharmacy.work'),
-        specimenWork:o?.Kind==='Laboratory'&&worker&&['Requested','Specimen collected','Specimen rejected','Specimen received'].includes(o.Status),reportWork:!rx&&worker&&!current?.unidentified&&active&&(o?.Kind!=='Laboratory'||o.SpecimenWorkflow!==2||o.CurrentSpecimen?.Status==='Received'),
+      const visible={reviewRx:rx&&worker&&active,dispenseRx:rx&&worker&&(!o.EmergencyArrivalId||o.ReviewPatientId===o.PatientId)&&['Ready to dispense','Reviewed on wristband','Partially dispensed'].includes(o.Status),returnRx:rx&&can('pharmacy.work'),
+        specimenWork:o?.Kind==='Laboratory'&&worker&&['Requested','Specimen collected','Specimen rejected','Specimen received'].includes(o.Status),reportWork:!rx&&worker&&active&&(o?.Kind!=='Laboratory'||o.SpecimenWorkflow!==2||o.CurrentSpecimen?.Status==='Received'),
         verifyWork:!rx&&worker&&o?.Status==='Result draft',releaseWork:!rx&&worker&&o?.Status==='Verified',ackWork:writable('orders.create')&&o?.CriticalNeedsAcknowledgement,
         cancelWork:writable('orders.create')&&current?.canCancel&&active&&!o.ReleasedReportId&&o.Status!=='Dispensed'};
       for(const [id,show] of Object.entries(visible))$(id).hidden=!show;
       $('verifyReport').disabled=!current?.canVerify||dirty.has('reportForm');
       $('returnRxForm').querySelectorAll('input,textarea,select,button').forEach(el=>el.disabled=!writable('pharmacy.work'));
       $('printSpecimen').hidden=o?.Kind!=='Laboratory';
-      $('loadReleasedHistory').hidden=!o||rx||current?.unidentified;
+      $('loadReleasedHistory').hidden=!o||rx;
       if(issue)$('issueOrderForm').querySelector('button:not([type=button])').disabled=!writable('orders.create');
     }
     function clear(){
@@ -201,7 +201,7 @@
       $('releasedReport').innerHTML=reportHtml(data.releasedReport,'Released report')+(o.CriticalNeedsAcknowledgement?'<p class="care-amendment-note">Critical result awaits clinician acknowledgement.</p>':'');
       $('draftReport').innerHTML=data.latestReport?.ReportId!==o.ReleasedReportId?reportHtml(data.latestReport,o.Status==='Verified'?'Verified — awaiting release':'Draft — not released'):'';
       if(data.latestReport){$('reportForm').elements.Text.value=data.latestReport.Text;$('reportForm').elements.Critical.checked=data.latestReport.Critical;}
-      $('orderFreshness').textContent=`Loaded ${date(new Date().toISOString())} WAT. ${data.unidentified?'Review and specimen handling are available. Identify the patient before dispensing or reporting.':'Refresh to see another officer’s changes.'}`;
+      $('orderFreshness').textContent=`Loaded ${date(new Date().toISOString())} WAT. ${data.unidentified?'Match the wristband to the patient before dispensing or recording findings.':'Refresh to see another officer’s changes.'}`;
       $('nextDispenses').hidden=$('nextOrderHistory').hidden=true;permissions();
     }
     async function openOrder(order){if(!await confirmLeave('',false))return;$('issueOrderPanel').hidden=true;issue=null;dirty.delete('issueOrderForm');await loadOrder(order);navigate('orders');status('Order loaded.');}

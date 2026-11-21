@@ -61,7 +61,7 @@ export function createHospitalOrdersService(ctx){
     if(body.PatientId && (body.PatientId!==rid||body.VisitId!==rid))fail('The selected wristband changed.',409);
     return wristbandContext(arrival,BranchId);
   }
-  async function orderContext(body,{allowWristband=false,reading=false}={}){
+  async function orderContext(body,{reading=false}={}){
     const BranchId=await branch(body),order=await read('Orders',body.OrderId);
     if(!order||order.BranchId!==BranchId)fail('This order is not available in the selected branch.',404);
     kindAccess(order.Kind);
@@ -75,7 +75,6 @@ export function createHospitalOrdersService(ctx){
         return {...c,order:{...order,WristbandAllergies:allergySnapshot(row.OrderAllergies),PatientId:row.PatientId,VisitId:row.VisitId,PatientName:patientSummary(c.person).DisplayName,HospitalNumber:c.person.HospitalNumber}};
       }
       if(row.Status!=='Awaiting identification'||body.PatientId!==row.__id)fail('The selected wristband does not match this order.',409);
-      if(!allowWristband)fail('Identify the wristband and verify the registered patient before completing this action.',409);
       return {...await wristbandContext(row,BranchId),order};
     }
     if(order.PatientId!==body.PatientId && !(reading&&order.EmergencyArrivalId&&order.EmergencyArrivalId===body.PatientId))fail('The patient does not match this order.',409);
@@ -91,7 +90,7 @@ export function createHospitalOrdersService(ctx){
   function changes(key,current,Action,updates={},details={}){
     const next={...strip(current.order),...updates,UpdatedAt:clock()};
     return [...(current.arrival ? [write('EmergencyArrivals',current.arrival.__id,
-      {...strip(current.arrival),OrderAllergies:strip(current.care),LastOrderActivityAt:clock()},current.arrival)] : []),
+      {...strip(current.arrival),OrderAllergies:strip(current.care),LastOrderActivityAt:clock(),...(Action==='Dispense prescription'?{HasDispensing:true}:{})},current.arrival)] : []),
       write('Orders',next.OrderId,next,current.order),event(key,current,Action,details),
       ...(current.visit.AdmissionId&&['Waiting','In progress'].includes(current.visit.Status)?[write('Visits',current.visit.VisitId,{...strip(current.visit),DischargeApprovalId:''},current.visit)]:[]),
       auditWrite(key,Action,current.BranchId,current.person,{OrderId:next.OrderId,OrderNumber:next.OrderNumber})];
@@ -103,10 +102,17 @@ export function createHospitalOrdersService(ctx){
     notCancelled(current.order);confirmed(body);revision(body,current.care,'CareRevision');
     if(current.person.Status!=='Active'||current.visit.Status==='Cancelled')fail('This patient or visit is inactive.',409);
   }
+  function wristband(order){
+    return order.EmergencyArrivalId ? {EmergencyArrivalId:order.EmergencyArrivalId,EmergencyReference:order.EmergencyReference} : {};
+  }
+  function matchesOrder(row,order){
+    return !!row && row.OrderId===order.OrderId && row.BranchId===order.BranchId &&
+      (row.PatientId===order.PatientId || (order.EmergencyArrivalId && row.PatientId===order.EmergencyArrivalId));
+  }
   async function report(order,reportId){
     if(!reportId)return null;
     const row=await read('InvestigationReports',reportId);
-    if(!row||row.OrderId!==order.OrderId||row.BranchId!==order.BranchId||row.PatientId!==order.PatientId)fail('Review this investigation report’s references.',409);
+    if(!matchesOrder(row,order))fail('Review this investigation report’s references.',409);
     return row;
   }
   return {
@@ -163,7 +169,7 @@ export function createHospitalOrdersService(ctx){
         CriticalNeedsAcknowledgement:row.CriticalNeedsAcknowledgement})),next:rows.next};
     },
     async orderDetails(body){
-      const c=await orderContext(body,{allowWristband:true,reading:true}),isWorker=can(c.order.Kind==='Laboratory'?'laboratory.work':c.order.Kind==='Imaging'?'imaging.work':'pharmacy.work');
+      const c=await orderContext(body,{reading:true}),isWorker=can(c.order.Kind==='Laboratory'?'laboratory.work':c.order.Kind==='Imaging'?'imaging.work':'pharmacy.work');
       const latestRead=isWorker?report(c.order,c.order.LatestReportId):Promise.resolve(null);
       const releasedRead=isWorker&&c.order.ReleasedReportId&&c.order.ReleasedReportId===c.order.LatestReportId?latestRead:report(c.order,c.order.ReleasedReportId);
       const [latest,released]=await Promise.all([latestRead,releasedRead]);
@@ -173,7 +179,7 @@ export function createHospitalOrdersService(ctx){
         canCancel:can('orders.create')&&(c.order.PrescriberUsername===actor||user.role==='Medical Director')};
     },
     async orderHistory(body){
-      const filters=dateFilters(body.DateRange),c=await orderContext(body,{allowWristband:true,reading:true});
+      const filters=dateFilters(body.DateRange),c=await orderContext(body,{reading:true});
       const rows=await page('OrderEvents',[eq('BranchId',c.BranchId),eq('OrderId',c.order.OrderId),...filters],'CreatedAt',body);
       await auditRead(body,'View hospital order history',c.BranchId,c.person,{OrderId:c.order.OrderId,ResultCount:rows.rows.length});
       return {ok:true,events:rows.rows.map(publicRow),next:rows.next};
@@ -182,14 +188,14 @@ export function createHospitalOrdersService(ctx){
       const filters=dateFilters(body.DateRange),c=await orderContext(body);
       if(c.order.Kind==='Prescription')fail('Choose an investigation order.');
       const rows=await page('ReleasedReports',[eq('BranchId',c.BranchId),eq('OrderId',c.order.OrderId),...filters],'CreatedAt',body);
-      if(rows.rows.some(row=>row.PatientId!==c.person.PatientId))fail('Review these report references.',409);
+      if(rows.rows.some(row=>!matchesOrder(row,c.order)))fail('Review these report references.',409);
       await auditRead(body,'View released report history',c.BranchId,c.person,{OrderId:c.order.OrderId,ResultCount:rows.rows.length});
       return {ok:true,reports:rows.rows.map(publicRow),next:rows.next};
     },
     async cancelOrder(body){
       requireCapability('orders.create');await branch(body);const Reason=field(body,'Reason',2000,true);
       return operation(body,'cancelOrder',async key=>{
-        const c=await orderContext(body,{allowWristband:true});revision(body,c.order);notCancelled(c.order);
+        const c=await orderContext(body);revision(body,c.order);notCancelled(c.order);
         if(c.order.PrescriberUsername!==actor&&user.role!=='Medical Director')fail('Only the prescriber or Medical Director can cancel this order.',403);
         if(c.order.ReleasedReportId||c.order.Status==='Dispensed')fail('This order has been fulfilled. Record a return or report amendment instead.',409);
         return {writes:changes(key,c,'Cancel hospital order',{Status:'Cancelled',CancelledAt:clock(),CancelledBy:actor,CancelReason:Reason},{Reason}),result:result(c)};
@@ -199,9 +205,9 @@ export function createHospitalOrdersService(ctx){
       requireCapability('pharmacy.work');await branch(body);const Reason=field(body,'Reason',2000,true),Decision=body.Decision;
       if(!['Approved','On hold'].includes(Decision))fail('Approve or place the prescription on hold.');
       return operation(body,'reviewPrescription',async key=>{
-        const c=await orderContext(body,{allowWristband:true});revision(body,c.order);pharmacyCurrent(body,c);
+        const c=await orderContext(body);revision(body,c.order);pharmacyCurrent(body,c);
         notCancelled(c.order);
-        const approvalStatus=c.arrival?'Reviewed on wristband':c.order.DispensedQuantity>=c.order.Fields.Quantity?'Dispensed':c.order.DispensedQuantity?'Partially dispensed':'Ready to dispense';
+        const approvalStatus=c.order.DispensedQuantity>=c.order.Fields.Quantity?'Dispensed':c.order.DispensedQuantity?'Partially dispensed':'Ready to dispense';
         const ReviewedAllergies=await digest(JSON.stringify(allergySnapshot(c.care)));
         if(c.order.PharmacyReview===Decision&&c.order.ReviewReason===Reason&&c.order.ReviewedAllergies===ReviewedAllergies&&(!c.order.EmergencyArrivalId||c.order.ReviewPatientId===c.person.PatientId))return {writes:[],result:{...result(c),Unchanged:true}};
         return {writes:[...changes(key,c,'Review prescription',{Status:Decision==='Approved'?approvalStatus:'On hold',
@@ -247,7 +253,7 @@ export function createHospitalOrdersService(ctx){
       return operation(body,'dispensePrescription',async key=>{
         const c=await orderContext(body);revision(body,c.order);pharmacyCurrent(body,c);
         if(c.order.EmergencyArrivalId && c.order.ReviewPatientId!==c.person.PatientId)fail('Review this prescription for the identified patient before dispensing.',409);
-        if(!['Ready to dispense','Partially dispensed'].includes(c.order.Status)||c.order.PharmacyReview!=='Approved')fail('The pharmacist must approve this prescription before dispensing.',409);
+        if(!['Ready to dispense','Reviewed on wristband','Partially dispensed'].includes(c.order.Status)||c.order.PharmacyReview!=='Approved')fail('The pharmacist must approve this prescription before dispensing.',409);
         if(c.order.ReviewedAllergies!==await digest(JSON.stringify(allergySnapshot(c.care))))fail('Allergy information changed. Review this prescription again before dispensing.',409);
         const batch=await read('MedicineBatches',body.BatchId);
         if(!batch||batch.BranchId!==c.BranchId||batch.MedicineKey!==c.order.Fields.MedicineKey)fail('Choose a matching medicine, strength, form and unit in this branch.',409);
@@ -256,12 +262,12 @@ export function createHospitalOrdersService(ctx){
         const total=qty(c.order.DispensedQuantity+Quantity);
         if(Quantity>batch.OnHand||total>c.order.Fields.Quantity)fail('The quantity exceeds the available stock or the remaining prescription.',409);
         const AmountCents=chargeCents(Quantity,batch.UnitPriceCents);
-        const dispensing={DispenseId:key,OrderId:c.order.OrderId,PatientId:c.person.PatientId,BranchId:c.BranchId,BatchId:batch.BatchId,BatchNumber:batch.BatchNumber,
+        const dispensing={...wristband(c.order),DispenseId:key,OrderId:c.order.OrderId,PatientId:c.person.PatientId,BranchId:c.BranchId,BatchId:batch.BatchId,BatchNumber:batch.BatchNumber,
           ExpiryDate:batch.ExpiryDate,Quantity,Unit:c.order.Fields.Unit,UnitPriceCents:batch.UnitPriceCents,AmountCents,ReturnedQuantity:0,...stamp()};
         return {writes:[...changes(key,c,'Dispense prescription',{DispensedQuantity:total,Status:total===c.order.Fields.Quantity?'Dispensed':'Partially dispensed'},{DispenseId:key,Quantity,BatchNumber:batch.BatchNumber}),
-          careLock(c),write('MedicineBatches',batch.BatchId,{...strip(batch),OnHand:qty(batch.OnHand-Quantity),UpdatedAt:clock()},batch),write('Dispenses',key,dispensing,null),
-          write('StockMovements',key,{MovementId:key,BatchId:batch.BatchId,BranchId:c.BranchId,Type:'Dispense',Quantity:-Quantity,OrderId:c.order.OrderId,...stamp()},null),
-          write('ChargeEvents',key,{ChargeId:key,OrderId:c.order.OrderId,PatientId:c.person.PatientId,VisitId:c.order.VisitId,BranchId:c.BranchId,Source:'Dispense',SourceId:key,
+          ...(c.arrival?[]:[careLock(c)]),write('MedicineBatches',batch.BatchId,{...strip(batch),OnHand:qty(batch.OnHand-Quantity),UpdatedAt:clock()},batch),write('Dispenses',key,dispensing,null),
+          write('StockMovements',key,{...wristband(c.order),MovementId:key,BatchId:batch.BatchId,BranchId:c.BranchId,Type:'Dispense',Quantity:-Quantity,OrderId:c.order.OrderId,...stamp()},null),
+          write('ChargeEvents',key,{...wristband(c.order),ChargeId:key,OrderId:c.order.OrderId,PatientId:c.person.PatientId,VisitId:c.order.VisitId,BranchId:c.BranchId,Source:'Dispense',SourceId:key,
             ServiceCode:`MED-${c.order.Fields.MedicineKey.slice(0,20).toUpperCase()}`,Description:`${c.order.Fields.Medicine} ${c.order.Fields.Strength} (${c.order.Fields.Unit})`,Quantity,
             AmountCents,Currency:'NGN',Status:'Awaiting billing',...stamp()},null)],result:{...result(c),DispenseId:key}};
       });
@@ -271,7 +277,7 @@ export function createHospitalOrdersService(ctx){
       return operation(body,'returnDispensedMedicine',async key=>{
         const c=await orderContext(body);revision(body,c.order);
         const original=await read('Dispenses',body.DispenseId);
-        if(!original||original.OrderId!==c.order.OrderId||original.PatientId!==c.person.PatientId||original.BranchId!==c.BranchId)fail('Choose a dispensing entry for this order.',404);
+        if(!matchesOrder(original,c.order))fail('Choose a dispensing entry for this order.',404);
         revision(body,original,'DispenseRevision');
         const returned=qty(original.ReturnedQuantity+Quantity);
         if(returned>qty(original.Quantity-(original.AdministeredQuantity||0)))fail('The return exceeds the unused dispensed quantity; recorded administration must be accounted for.',409);
@@ -281,9 +287,9 @@ export function createHospitalOrdersService(ctx){
         return {writes:[...changes(key,c,'Return dispensed medicine',{ReturnedQuantity:qty(c.order.ReturnedQuantity+Quantity)},{DispenseId:original.DispenseId,Quantity,Reason}),
           write('Dispenses',original.DispenseId,{...strip(original),ReturnedQuantity:returned},original),
           write('MedicineBatches',batch.BatchId,{...strip(batch),Quarantined:qty(batch.Quarantined+Quantity),UpdatedAt:clock()},batch),
-          write('MedicineReturns',key,{ReturnId:key,DispenseId:original.DispenseId,OrderId:c.order.OrderId,PatientId:c.person.PatientId,BranchId:c.BranchId,Quantity,Reason,Disposition:'Quarantined',...stamp()},null),
-          write('StockMovements',key,{MovementId:key,BatchId:batch.BatchId,BranchId:c.BranchId,Type:'Patient return',Quantity:0,QuarantinedQuantity:Quantity,...stamp()},null),
-          write('ChargeEvents',key,{ChargeId:key,OrderId:c.order.OrderId,PatientId:c.person.PatientId,VisitId:c.order.VisitId,BranchId:c.BranchId,Source:'Return',SourceId:key,
+          write('MedicineReturns',key,{...wristband(c.order),ReturnId:key,DispenseId:original.DispenseId,OrderId:c.order.OrderId,PatientId:c.person.PatientId,BranchId:c.BranchId,Quantity,Reason,Disposition:'Quarantined',...stamp()},null),
+          write('StockMovements',key,{...wristband(c.order),MovementId:key,BatchId:batch.BatchId,BranchId:c.BranchId,Type:'Patient return',OrderId:c.order.OrderId,Quantity:0,QuarantinedQuantity:Quantity,...stamp()},null),
+          write('ChargeEvents',key,{...wristband(c.order),ChargeId:key,OrderId:c.order.OrderId,PatientId:c.person.PatientId,VisitId:c.order.VisitId,BranchId:c.BranchId,Source:'Return',SourceId:key,
             OriginalChargeId:original.DispenseId,AmountCents:-credit,Currency:'NGN',Status:'Awaiting billing',...stamp()},null)],result:result(c)};
       });
     },
@@ -297,7 +303,7 @@ export function createHospitalOrdersService(ctx){
       requireCapability('laboratory.work');await branch(body);confirmed(body);const Note=field(body,'Note',2000,true);
       if(!['Collected','Received','Rejected'].includes(body.Decision))fail('Choose Collected, Received or Rejected.');
       return operation(body,'recordSpecimen',async key=>{
-        const c=await orderContext(body,{allowWristband:true});revision(body,c.order);notCancelled(c.order);
+        const c=await orderContext(body);revision(body,c.order);notCancelled(c.order);
         if(c.order.Kind!=='Laboratory'||!['Requested','Specimen rejected','Specimen collected','Specimen received'].includes(c.order.Status))fail('This order is not awaiting specimen handling.',409);
         if(body.SpecimenLabel!==specimenLabel(c.order))fail('Match the specimen label to this patient and collection attempt.');
         if(c.order.SpecimenWorkflow===2){
@@ -324,11 +330,11 @@ export function createHospitalOrdersService(ctx){
       const Text=field(body,'Text',12000,true),Reason=field(body,'Reason',2000),Critical=body.Critical===true;
       const ReportFingerprint=await digest(JSON.stringify({Text,Reason,Critical}));
       return operation(body,'recordInvestigationReport',async key=>{
-        const c=await orderContext(body);worker(c.order.Kind);revision(body,c.order);notCancelled(c.order);
+        const c=await orderContext(body);worker(c.order.Kind);revision(body,c.order);notCancelled(c.order);if(c.arrival)confirmed(body);
         if(c.order.Kind==='Laboratory'&&(c.order.SpecimenWorkflow===2?c.order.CurrentSpecimen?.Status!=='Received':!['Specimen collected','Result draft','Verified','Released'].includes(c.order.Status)))fail('Collect, identify and receive the specimen in the laboratory before recording results.',409);
         if(c.order.ReportFingerprint===ReportFingerprint)return {writes:[],result:{...result(c),ReportId:c.order.LatestReportId,Unchanged:true}};
         if(c.order.LatestReportId&&!Reason)fail('Record why this report is being corrected. Earlier versions will be retained.');
-        const row={ReportId:key,OrderId:c.order.OrderId,PatientId:c.person.PatientId,BranchId:c.BranchId,Text,Critical,Reason,
+        const row={...wristband(c.order),ReportId:key,OrderId:c.order.OrderId,PatientId:c.person.PatientId,BranchId:c.BranchId,Text,Critical,Reason,
           PreviousReportId:c.order.LatestReportId||'',...(c.order.CurrentSpecimen?{SpecimenSnapshot:c.order.CurrentSpecimen}:{}),...stamp()};
         return {writes:[...changes(key,c,'Record investigation report',{Status:'Result draft',LatestReportId:key,ReportFingerprint,VerifiedReportId:'',VerifiedBy:'',VerifiedAt:''},{ReportId:key}),
           write('InvestigationReports',key,row,null)],result:{...result(c),ReportId:key}};
@@ -358,7 +364,7 @@ export function createHospitalOrdersService(ctx){
           {ReportId:verified.ReportId,Critical:verified.Critical,Communication:communication,VerifiedBy:c.order.VerifiedBy}),
           write('ReleasedReports',verified.ReportId,{...strip(verified),AuthoredAt:verified.CreatedAt,CreatedAt:clock(),ReleasedBy:actor,ReleasedAt:clock(),
             VerifiedBy:c.order.VerifiedBy,VerifiedAt:c.order.VerifiedAt,PreviousReleasedReportId:c.order.ReleasedReportId||''},null),
-          ...(verified.Critical?[write('CriticalAlerts',verified.ReportId,{AlertId:verified.ReportId,ReportId:verified.ReportId,OrderId:c.order.OrderId,
+          ...(verified.Critical?[write('CriticalAlerts',verified.ReportId,{...wristband(c.order),AlertId:verified.ReportId,ReportId:verified.ReportId,OrderId:c.order.OrderId,
             PatientId:c.person.PatientId,BranchId:c.BranchId,Status:'Pending',Communication:communication,Report:strip(verified),...stamp()},null)]:[])],result:result(c)};
       });
     },
@@ -366,9 +372,9 @@ export function createHospitalOrdersService(ctx){
       requireCapability('orders.create');const c=await orderContext(body);
       const rows=await page('CriticalAlerts',[eq('BranchId',c.BranchId),eq('OrderId',c.order.OrderId),eq('Status','Pending')],'CreatedAt',body);
       const alerts=await Promise.all(rows.rows.map(async row=>{
-        if(row.PatientId!==c.person.PatientId)fail('Review this critical alert’s patient reference.',409);
+        if(!matchesOrder(row,c.order))fail('Review this critical alert’s patient reference.',409);
         const snapshot=row.Report||await report(c.order,row.ReportId);
-        if(snapshot.OrderId!==c.order.OrderId||snapshot.PatientId!==c.person.PatientId||snapshot.BranchId!==c.BranchId||snapshot.ReportId!==row.ReportId)fail('Review this critical report snapshot.',409);
+        if(!matchesOrder(snapshot,c.order)||snapshot.ReportId!==row.ReportId)fail('Review this critical report snapshot.',409);
         const {Report:_storedSnapshot,...alert}=publicRow(row);
         return {...alert,report:publicRow(snapshot)};
       }));
@@ -380,7 +386,7 @@ export function createHospitalOrdersService(ctx){
       return operation(body,'acknowledgeCriticalResult',async key=>{
         const c=await orderContext(body);revision(body,c.order);
         const alert=await read('CriticalAlerts',body.ReportId);
-        if(!alert||alert.OrderId!==c.order.OrderId||alert.PatientId!==c.person.PatientId||alert.BranchId!==c.BranchId||alert.Status!=='Pending')fail('Select a released critical result awaiting acknowledgement.',409);
+        if(!matchesOrder(alert,c.order)||alert.Status!=='Pending')fail('Select a released critical result awaiting acknowledgement.',409);
         const pending=Math.max(0,Number(c.order.CriticalPendingCount||0)-1);
         return {writes:[...changes(key,c,'Acknowledge critical result',{CriticalNeedsAcknowledgement:pending>0,CriticalPendingCount:pending,CriticalAcknowledgedBy:actor,CriticalAcknowledgedAt:clock()},{ReportId:body.ReportId,Note}),
           write('CriticalAlerts',alert.AlertId,{...strip(alert),Status:'Acknowledged',AcknowledgedBy:actor,AcknowledgedAt:clock(),Acknowledgement:Note},alert)],result:result(c)};

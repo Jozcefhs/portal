@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {request} from './helpers/hospital-fixture.mjs';
 import {ordersFixture,rx} from './helpers/hospital-orders-fixture.mjs';
+import {billingFixture} from './helpers/hospital-billing-fixture.mjs';
 const Reference='ED-ORDER-01';
 const dateRange={fromDate:'2026-10-26',toDate:'2026-10-26'};
-async function setup(){
-  const f=await ordersFixture();
+async function setup(make=ordersFixture){
+  const f=await make();
   await f.service.recordEmergencyArrival(request({Reference,ArrivalNote:'Test arrival'}));
   return f;
 }
@@ -53,7 +54,7 @@ test('pharmacy reviews wristband allergies, then rechecks the registered identit
   const review={Reason:'Reviewed wristband and allergies',Decision:'Approved'};
   assert.equal((await f.pharmacist.orderDetails(request(order))).care.Allergies,'Synthetic reaction');
   await f.pharmacist.reviewPrescription(await f.body(order,review));
-  await assert.rejects(f.pharmacist.dispensePrescription(await f.body(order,{Quantity:1})),/Identify the wristband/);
+  await assert.rejects(f.pharmacist.dispensePrescription(await f.body(order,{Quantity:1,ConfirmPatient:false})),/Confirm/);
   await identify(f);
   const identified={...order,PatientId:f.scope.PatientId};
   await assert.rejects(f.pharmacist.reviewPrescription(await f.body(order,review)),/Refresh/);
@@ -88,4 +89,65 @@ test('role, branch, identity and stale confirmations cannot issue duplicate emer
   assert.equal(saves.filter(r=>r.status==='fulfilled').length,1);
   await identify(f);await assert.rejects(f.doctor.createOrder({...input,RequestId:crypto.randomUUID()}),/identified patient/);
   assert.equal(f.rows('Orders').length,1);
+});
+
+test('emergency pharmacy debits once, retains wristband supply and bills the identified visit including return credits',async()=>{
+  const f=await setup(billingFixture),order=await f.doctor.createOrder(await prepare(f,'Prescription'));
+  await f.receive();
+  await f.pharmacist.reviewPrescription(await f.body(order,{Decision:'Approved',Reason:'Reviewed the wristband'}));
+  const batch=(await f.pharmacist.stockBatches(request(order))).batches[0];
+  const input=await f.body(order,{Quantity:3,BatchId:batch.BatchId,BatchRevision:batch.Revision});
+  const {DispenseId}=await f.pharmacist.dispensePrescription(input);
+  const writes=f.commits.length;await f.pharmacist.dispensePrescription(input);assert.equal(f.commits.length,writes);
+  const original=f.rows('Dispenses')[0];
+  await f.pharmacist.returnDispensedMedicine(await f.body(order,{DispenseId,DispenseRevision:original.__updateTime,Quantity:1,Reason:'Unused'}));
+  const charges=f.rows('ChargeEvents'),credit=charges.find(row=>row.Source==='Return');
+  assert.equal(charges.length,2);assert.equal(original.EmergencyReference,Reference);
+  assert.equal(f.rows('MedicineBatches')[0].OnHand,17);
+  assert.equal(f.rows('StockMovements').filter(row=>row.Type==='Dispense').length,1);
+  const invoiceInput=request({...f.scope,ChargeIds:[DispenseId],ConfirmPatient:true});
+  await assert.rejects(f.cashier.issueHospitalInvoice(invoiceInput),/another visit/);
+  assert.equal(f.rows('CareSummaries').filter(r=>r.PatientId===order.PatientId).length,0);
+  await identify(f);
+  assert.deepEqual(f.rows('ChargeEvents'),charges);assert.equal(f.rows('Visits').length,1);
+  const list=await f.cashier.billingCharges(request({...f.scope,DateRange:dateRange}));
+  assert.equal(list.rows.length,2);assert.equal(list.next,null);
+  assert.ok(list.rows.every(r=>r.PatientId===f.scope.PatientId&&r.EmergencyReference===Reference));
+  const invoice=await f.cashier.issueHospitalInvoice(invoiceInput);
+  await f.cashier.issueHospitalInvoice(invoiceInput);
+  await f.cashier.creditHospitalCharge(await f.billBody(invoice,{ChargeId:credit.ChargeId}));
+  assert.equal(f.rows('Invoices').length,1);assert.equal(f.rows('Invoices')[0].PatientCents,3750);
+  assert.equal(f.rows('Invoices')[0].PatientCreditCents,1250);
+  const linked={...order,PatientId:f.scope.PatientId};
+  const history=await f.pharmacist.dispensingHistory(request({...linked,DateRange:dateRange}));
+  assert.equal(history.dispenses[0].DispenseId,DispenseId);
+  await f.pharmacist.returnDispensedMedicine(await f.body(linked,{DispenseId,DispenseRevision:history.dispenses[0].Revision,Quantity:1,Reason:'Second unused unit'}));
+  assert.equal(f.rows('MedicineBatches')[0].Quarantined,2);
+});
+for(const kind of ['Laboratory','Imaging'])test(kind+' wristband report survives identification, independent verification, release and amendments',async()=>{
+  const f=await setup(),order=await f.doctor.createOrder(await prepare(f,kind));
+  const [author,verifier]=kind==='Laboratory'?[f.laboratory,f.verifier]:[f.imaging,f.imagingVerifier];
+  if(kind==='Laboratory'){
+    const label=(await author.orderDetails(request(order))).order.LabelToPrint;
+    await assert.rejects(author.recordInvestigationReport(await f.body(order,{Text:'Test'},author)),/specimen/);
+    for(const Decision of ['Collected','Received'])await author.recordSpecimen(await f.body(order,{Decision,Note:Decision,SpecimenLabel:label},author));
+  }
+  const input=await f.body(order,{Text:'Synthetic finding',Critical:true},author);
+  const {ReportId}=await author.recordInvestigationReport(input);await author.recordInvestigationReport(input);
+  await assert.rejects(author.verifyInvestigationReport(await f.body(order,{ReportId},author)),/second authorised/);
+  await verifier.verifyInvestigationReport(await f.body(order,{ReportId},verifier));
+  if(kind==='Imaging')await identify(f);
+  const releaseScope=kind==='Imaging'?{...order,PatientId:f.scope.PatientId}:order;
+  await author.releaseInvestigationReport(await f.body(releaseScope,{ReportId,Communication:'Clinician informed'},author));
+  const signed=f.rows('ReleasedReports');
+  if(kind==='Laboratory')await identify(f);
+  const linked={...order,PatientId:f.scope.PatientId};
+  assert.equal((await author.orderDetails(request(linked))).releasedReport.ReportId,ReportId);
+  assert.equal((await f.doctor.pendingCriticalAlerts(request(linked))).alerts[0].report.ReportId,ReportId);
+  await f.doctor.acknowledgeCriticalResult(await f.body(linked,{ReportId,Note:'Acknowledged finding'},f.doctor));
+  const share=await f.doctor.clinicalPortalContext(request({PatientId:f.scope.PatientId,ParentId:order.OrderId,DocumentType:'investigations'}));
+  assert.equal(share.ready,true);assert.equal(f.rows('PortalClinicalDocuments').length,0);
+  await author.recordInvestigationReport(await f.body(linked,{Text:'Corrected synthetic finding',Reason:'Correction'},author));
+  assert.deepEqual(f.rows('ReleasedReports'),signed);assert.equal(f.rows('InvestigationReports').length,2);
+  assert.equal((await author.releasedReportHistory(request({...linked,DateRange:dateRange}))).reports[0].EmergencyReference,Reference);
 });

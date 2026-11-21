@@ -163,7 +163,7 @@ export function createEmergencyReception({env, user, db, collection, branch, req
             data:{...strip(person),LastEmergencyArrivalId:rid}},
           {collectionPath:arrivals,documentId:rid,currentDocument:condition(row),
             data:{...strip(row),Status:'Identified',PendingKey:'',PatientId:person.PatientId,HospitalNumber:person.HospitalNumber,
-              VisitId:visitId,...(row.CareSequence ? {CareVisitId:visitId} : {}),IdentityEvidence:evidence,IdentifiedAt:now,IdentifiedBy:actor}},
+              VisitId:visitId,...(row.HasDispensing?{BillingLinkKey:visitId+'|'+rid}:{}),...(row.CareSequence ? {CareVisitId:visitId} : {}),IdentityEvidence:evidence,IdentifiedAt:now,IdentifiedBy:actor}},
           auditWrite(key,'Identify emergency arrival',branchId,person,{Reference:ref,VisitId:visitId,ArrivalId:rid,IdentityEvidence:evidence}));
         return {writes,result:{VisitId:visitId,HospitalNumber:person.HospitalNumber,ReusedVisit:Boolean(guard?.VisitId)}};
       });

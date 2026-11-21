@@ -46,7 +46,7 @@ export function createHospitalNursingService(ctx){
     AdministeredQuantity:row.AdministeredQuantity||0,Unit:row.Unit,CreatedAt:row.CreatedAt,Revision:row.__updateTime});
   async function supplyFor(c,order,key){
     const row=await read('Dispenses',key);
-    if(!row||row.OrderId!==order.OrderId||row.PatientId!==c.person.PatientId||row.BranchId!==c.BranchId)fail('Choose dispensed supply for this prescription and patient.',404);
+    if(!row||row.OrderId!==order.OrderId||(row.PatientId!==c.person.PatientId&&!(order.EmergencyArrivalId&&row.EmergencyArrivalId===order.EmergencyArrivalId&&row.PatientId===order.EmergencyArrivalId))||row.BranchId!==c.BranchId)fail('Choose dispensed supply for this prescription and patient.',404);
     return row;
   }
   return {

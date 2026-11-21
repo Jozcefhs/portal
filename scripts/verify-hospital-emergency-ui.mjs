@@ -3,6 +3,8 @@ import {readFile} from 'node:fs/promises';
 import {createRequire} from 'node:module';
 import {hospitalBrowserAssets} from './helpers/hospital-browser-assets.mjs';
 import {createHospitalService} from '../functions/lib/hospital-service.js';
+import {specimenLabel} from '../functions/lib/hospital-orders-model.js';
+import {actors} from '../tests/helpers/hospital-orders-fixture.mjs';
 import {fixture,actor,env} from '../tests/helpers/hospital-fixture.mjs';
 
 const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
@@ -71,6 +73,30 @@ try {
     await page.locator('#status').filter({hasText:'Order signed and issued'}).waitFor();
     await page.locator('#orderIdentity').filter({hasText:'ED-1001'}).waitFor();
     const original=f.rows('Orders')[0].OrderNumber;
+    user=actors.laboratory;
+    await page.reload();
+    await page.locator('[data-tab=orders]').click();
+    await page.locator('#ordersFrom').fill('2026-10-26');
+    await page.locator('#ordersTo').fill('2026-10-26');
+    await page.locator('#ordersKind').selectOption('Laboratory');
+    await page.locator('#ordersFilter button').click();
+    await page.locator('[data-open-order]').first().click();
+    const specimenForm=page.locator('#specimenForm');
+    for(const decision of ['Collected','Received']){
+      const panel=page.locator('#specimenWork');
+      if(!await panel.evaluate(el=>el.open))await panel.locator('summary').click();
+      await page.locator('#confirmOrder').check();
+      await specimenForm.locator('[name=SpecimenLabel]').fill(specimenLabel(f.rows('Orders')[0]));
+      await specimenForm.locator('[name=Decision]').selectOption(decision);
+      await specimenForm.locator('[name=Note]').fill('Synthetic '+decision);
+      await specimenForm.locator('button').click();
+      await page.locator('#orderIdentity').filter({hasText:'Specimen '+decision.toLowerCase()}).waitFor();
+    }
+    await page.locator('#reportWork summary').click();
+    await page.locator('#reportForm [name=Text]').fill('Synthetic wristband finding');
+    await page.locator('#confirmOrder').check();
+    await page.locator('#reportForm button').click();
+    await page.locator('#orderIdentity').filter({hasText:'Result draft'}).waitFor();
     await changeRole(actor);
     await rows.getByText(/ED-1001/).waitFor();
     assert.equal(await rows.getByRole('button',{name:'Open care for ED-1001'}).count(),0);
