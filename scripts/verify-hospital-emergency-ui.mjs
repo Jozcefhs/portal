@@ -4,8 +4,8 @@ import {createRequire} from 'node:module';
 import {hospitalBrowserAssets} from './helpers/hospital-browser-assets.mjs';
 import {createHospitalService} from '../functions/lib/hospital-service.js';
 import {specimenLabel} from '../functions/lib/hospital-orders-model.js';
-import {actors} from '../tests/helpers/hospital-orders-fixture.mjs';
-import {fixture,actor,env} from '../tests/helpers/hospital-fixture.mjs';
+import {actors,rx,medicine} from '../tests/helpers/hospital-orders-fixture.mjs';
+import {fixture,actor,env,request} from '../tests/helpers/hospital-fixture.mjs';
 
 const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL || 'msedge',headless:true});
@@ -97,6 +97,32 @@ try {
     await page.locator('#confirmOrder').check();
     await page.locator('#reportForm button').click();
     await page.locator('#orderIdentity').filter({hasText:'Result draft'}).waitFor();
+    const Reference='ED-1001',prescriber=createHospitalService(env,doctor,f.db);
+    const pharmacy=createHospitalService(env,actors.pharmacist,f.db);
+    const band=await prescriber.orderVisitContext(request({Reference}));
+    const prescription=await prescriber.createOrder(request({Reference,Kind:'Prescription',Prescription:rx,
+      VisitRevision:band.visit.Revision,CareRevision:band.care.Revision,ConfirmPatient:true}));
+    const rxBody=async extra=>{
+      const detail=await pharmacy.orderDetails(request(prescription));
+      return request({...prescription,Revision:detail.order.Revision,CareRevision:detail.care.Revision,ConfirmPatient:true,...extra});
+    };
+    await pharmacy.reviewPrescription(await rxBody({Decision:'Approved',Reason:'Synthetic review'}));
+    await pharmacy.receiveMedicine(request({Stock:{...medicine,Quantity:5,BatchNumber:'SYNTHETIC',ExpiryDate:'2027-12-31',
+      Supplier:'Synthetic supplier',ReceiptReference:'TEST-RECEIPT',LineReference:'1',UnitPrice:'1.00'}}));
+    const lot=(await pharmacy.stockBatches(request(prescription))).batches[0];
+    await pharmacy.dispensePrescription(await rxBody({BatchId:lot.BatchId,BatchRevision:lot.Revision,Quantity:2}));
+    await changeRole({...actor,role:'Nurse',username:'test-nurse',allowedSections:[...actor.allowedSections,'hospitalNursing','hospitalTriage']});
+    await openCare();
+    const queriesBefore=f.queries.length;
+    await rows.getByRole('button',{name:'Record medication given'}).click();
+    const form=rows.locator('form').filter({has:page.locator('[name=ConfirmedReference]')});
+    await form.getByPlaceholder('Quantity given').fill('1');
+    await form.locator('[name=ObservedAt]').fill('2026-10-26T13:00');
+    await form.locator('[name=ConfirmedReference]').fill(Reference);
+    assert.equal(f.queries.length-queriesBefore,1);
+    await form.getByRole('button',{name:'Sign administration'}).click();
+    await page.getByRole('dialog').getByRole('button',{name:'Sign administration'}).click();
+    await page.locator('#status').filter({hasText:'Medication administration signed'}).waitFor();
     await changeRole(actor);
     await rows.getByText(/ED-1001/).waitFor();
     assert.equal(await rows.getByRole('button',{name:'Open care for ED-1001'}).count(),0);
@@ -129,7 +155,8 @@ try {
     await linked.getByRole('button',{name:'Open '+original}).click();
     await page.locator('#orderIdentity').filter({hasText:patient.HospitalNumber}).waitFor();
     await page.locator('#orderIdentity').filter({hasText:original}).waitFor();
-    assert.equal(f.rows('Orders').length,1);
+    assert.equal(f.rows('Orders').length,2);
+    await linked.getByText('1 tablet',{exact:true}).waitFor({state:'attached'});
     assert.deepEqual(errors,[]);
     console.log('Emergency intake and verified patient link passed at '+width+'px.');
     await page.close();

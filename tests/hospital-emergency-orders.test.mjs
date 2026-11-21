@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {request} from './helpers/hospital-fixture.mjs';
+import {createHospitalService} from '../functions/lib/hospital-service.js';
+import {actor,env,request} from './helpers/hospital-fixture.mjs';
 import {ordersFixture,rx} from './helpers/hospital-orders-fixture.mjs';
 import {billingFixture} from './helpers/hospital-billing-fixture.mjs';
 const Reference='ED-ORDER-01';
@@ -150,4 +151,65 @@ for(const kind of ['Laboratory','Imaging'])test(kind+' wristband report survives
   await author.recordInvestigationReport(await f.body(linked,{Text:'Corrected synthetic finding',Reason:'Correction'},author));
   assert.deepEqual(f.rows('ReleasedReports'),signed);assert.equal(f.rows('InvestigationReports').length,2);
   assert.equal((await author.releasedReportHistory(request({...linked,DateRange:dateRange}))).reports[0].EmergencyReference,Reference);
+});
+
+async function bedside(){
+  const f=await setup(),order=await f.doctor.createOrder(await prepare(f,'Prescription'));
+  const nurse=createHospitalService(env,{...actor,role:'Nurse',username:'ward-nurse',allowedSections:[...actor.allowedSections,'hospitalNursing','hospitalTriage']},f.db);
+  const scope={Reference,OrderId:order.OrderId};
+  await f.pharmacist.reviewPrescription(await f.body(order,{Decision:'Approved',Reason:'Verified'}));
+  for(const BatchNumber of ['FIRST','SECOND']){
+    await f.receive({BatchNumber});
+    const batch=(await f.pharmacist.stockBatches(request(order))).batches.find(r=>r.BatchNumber===BatchNumber);
+    await f.pharmacist.dispensePrescription(await f.body(order,{Quantity:2,BatchId:batch.BatchId,BatchRevision:batch.Revision}));
+  }
+  const data=await nurse.emergencyMedicationSupplies(request(scope));
+  const input=request({...scope,ConfirmedReference:Reference,ObservedAt:'2026-10-26T13:00+01:00',Revision:data.Revision,
+    Lots:data.lots.map(l=>({DispenseId:l.DispenseId,Revision:l.Revision,Quantity:0.5}))});
+  return {f,order,nurse,scope,input};
+}
+test('sign a split-lot wristband dose once and retain the signed dose after identification',async()=>{
+  const {f,order,nurse,scope,input}=await bedside(),before=['StockMovements','MedicineBatches','ChargeEvents'].map(k=>f.rows(k));
+  const result=await nurse.signEmergencyMedication(input),writes=f.commits.length,reads=f.reads.length;
+  assert.equal((await nurse.signEmergencyMedication(input)).EntryId,result.EntryId);
+  assert.equal(f.reads.length-reads,1);assert.equal(f.commits.length,writes);
+  const fresh=await nurse.emergencyMedicationSupplies(request(scope));
+  assert.deepEqual(fresh.lots.map(l=>l.Available),[1.5,1.5]);
+  await assert.rejects(nurse.signEmergencyMedication(request({...input,RequestId:crypto.randomUUID(),Revision:fresh.Revision})),/already has a signed/);
+  const lot=fresh.lots[0];
+  await assert.rejects(f.pharmacist.returnDispensedMedicine(await f.body(order,{Quantity:2,Reason:'Unused',DispenseId:lot.DispenseId,DispenseRevision:lot.Revision})),/unused/);
+  assert.deepEqual(['StockMovements','MedicineBatches','ChargeEvents'].map(k=>f.rows(k)),before);
+  await identify(f);
+  const entry=(await f.doctor.emergencyCareHistory(request({...f.scope,Reference}))).entries.find(r=>r.EntryId===result.EntryId);
+  assert.equal(entry.Type,'Medication administration');assert.equal(entry.Content.Given,'1 tablet');
+  assert.equal(entry.OrderId,order.OrderId);assert.equal(entry.Content.ObservedAt,'2026-10-26T12:00:00.000Z');
+  await assert.rejects(nurse.signEmergencyMedication({...input,RequestId:crypto.randomUUID()}),/identified/);
+});
+test('wristband administration rejects mismatched, stale, unauthorised and conflicting records',async()=>{
+  const {f,nurse,scope,input}=await bedside();
+  await assert.rejects(f.service.signEmergencyMedication(input),{status:403});
+  await assert.rejects(nurse.emergencyMedicationSupplies(request({...scope,BranchId:'north'})),{status:403});
+  await assert.rejects(nurse.signEmergencyMedication({...input,ConfirmedReference:'OTHER'}),/wristband/);
+  await assert.rejects(nurse.signEmergencyMedication({...input,Revision:'stale'}),/changed/);
+  await assert.rejects(nurse.signEmergencyMedication({...input,Lots:[input.Lots[0],input.Lots[0]]}),/only once/);
+  await assert.rejects(nurse.signEmergencyMedication({...input,Lots:[{...input.Lots[0],Quantity:3}]}),/remaining supply/);
+  await assert.rejects(nurse.signEmergencyMedication({...input,ObservedAt:'2026-10-25T12:00Z'}),/dispensing time/);
+  const outcomes=await Promise.allSettled([nurse.signEmergencyMedication(input),nurse.signEmergencyMedication({...input,RequestId:crypto.randomUUID()})]);
+  assert.equal(outcomes.filter(o=>o.status==='fulfilled').length,1);
+  const arrival=f.rows('EmergencyArrivals')[0];
+  await f.doctor.signEmergencyCare(request({Reference,ConfirmedReference:Reference,Type:'Triage',Sequence:arrival.CareSequence,
+    Content:{Complaint:'Synthetic',Urgency:'Urgent',AllergyStatus:'Known allergies',Allergies:'Synthetic change'}}));
+  await assert.rejects(nurse.emergencyMedicationSupplies(request(scope)),/pharmacy review/);
+  assert.equal(f.rows('EmergencyCareEntries').filter(r=>r.Type==='Medication administration').length,1);
+});
+
+test('competing bedside administration and return cannot both use the same units',async()=>{
+  const {f,order,nurse,input}=await bedside(),lot=input.Lots[0];
+  const give={...input,Lots:[{...lot,Quantity:2}]};
+  const receiveBack=await f.body(order,{DispenseId:lot.DispenseId,DispenseRevision:lot.Revision,Quantity:2,Reason:'Unused'});
+  const attempts=await Promise.allSettled([nurse.signEmergencyMedication(give),f.pharmacist.returnDispensedMedicine(receiveBack)]);
+  assert.equal(attempts.filter(attempt=>attempt.status==='fulfilled').length,1);
+  const updated=f.rows('Dispenses').find(row=>row.DispenseId===lot.DispenseId);
+  assert.equal((updated.AdministeredQuantity||0)+updated.ReturnedQuantity,2);
+  assert.equal(f.rows('EmergencyCareEntries').filter(row=>row.Type==='Medication administration').length,f.rows('MedicineReturns').length?0:1);
 });

@@ -16,6 +16,59 @@
     const Vitals = Object.fromEntries(Object.entries(measurements).filter(([,v])=>v !== ''));
     return {Complaint,NursingNotes,Urgency,AllergyStatus,Allergies,Vitals,ObservedAt};
   }
+  function medicationEditor(scope,entry,{api,run,status},saved){
+    const host=el('section'),form=el('form'),intro=el('p'),lots=el('div');
+    const selected=new Map();
+    let revision,cursor,unit;
+    const request={Reference:scope.Reference,OrderId:entry.OrderId};
+    const more=button('More dispensed lots',()=>run(()=>load(true)));
+    const toggle=button('Record medication given',()=>run(()=>load(false)));
+    async function load(append){
+      const data=await api('emergencyMedicationSupplies',{...request,...(append?{Cursor:cursor}:{})});
+      if(!host.isConnected)return;
+      if(append && revision!==data.Revision)throw Error('The wristband changed. Close and reopen the medication form.');
+      if(!append){selected.clear();lots.replaceChildren();form.reset();}
+      revision=data.Revision;cursor=data.next;
+      const rx=data.Prescription;unit=rx.Unit;
+      intro.textContent=[data.OrderNumber,rx.Medicine,rx.Strength,rx.Form,rx.Dose,rx.Route,rx.Frequency,rx.Duration,rx.Instructions,
+        'Allergies: '+[data.Allergies.Status,data.Allergies.Details].filter(Boolean).join(' - ')].filter(Boolean).join(' / ');
+      for(const lot of data.lots){
+        if(!lot.Available || selected.has(lot.DispenseId))continue;
+        const label=el('label','Batch '+lot.BatchNumber+' / expires '+lot.ExpiryDate+' / available '+lot.Available+' '+rx.Unit);
+        const input=el('input');input.type='number';input.min='0';input.step='0.001';input.max=String(lot.Available);
+        input.placeholder='Quantity given';label.append(input);lots.append(label);
+        selected.set(lot.DispenseId,{lot,input});
+      }
+      more.hidden=!cursor;form.hidden=false;toggle.hidden=true;
+      if(!selected.size)lots.textContent='No unused supply on the loaded page.';
+      form.querySelector('[type=submit]').disabled=!selected.size;
+    }
+    const title=el('h4','Medication given on '+scope.Reference);
+    const inputs=el('div');inputs.className='form-grid';lots.className='form-grid';
+    inputs.innerHTML='<label>Given at (WAT)<input name="ObservedAt" type="datetime-local" required></label><label>Wristband on patient<input name="ConfirmedReference" required maxlength="40" autocomplete="off"></label><label>Administration note (optional)<textarea name="Note" maxlength="2000"></textarea></label>';
+    const sign=el('button','Sign administration');sign.type='submit';
+    form.append(title,intro,lots,more,inputs,sign,button('Close medication form',()=>{form.hidden=true;toggle.hidden=false;}));
+    form.onsubmit=event=>{
+      event.preventDefault();
+      run(async()=>{
+        const Lots=[...selected.values()].filter(({input})=>Number(input.value)>0).map(({lot,input})=>({
+          DispenseId:lot.DispenseId,Revision:lot.Revision,Quantity:input.value
+        }));
+        if(!Lots.length)throw Error('Enter the quantity given from each lot used.');
+        const ConfirmedReference=form.elements.ConfirmedReference.value.trim().toUpperCase();
+        if(ConfirmedReference!==scope.Reference)throw Error('The entered wristband does not match the selected prescription.');
+        const data={...request,Lots,Revision:revision,ConfirmedReference,
+          ObservedAt:form.elements.ObservedAt.value+'+01:00',Note:form.elements.Note.value.trim()};
+        const confirm=await window.DynamaxDialogs.confirm({title:'Sign medication administration',
+          message:'Record '+Lots.reduce((sum,lot)=>Math.round((sum+Number(lot.Quantity))*1000)/1000,0)+' '+unit+' of '+entry.Content.Service+' for wristband '+ConfirmedReference+'?',
+          confirmText:'Sign administration'});
+        if(!confirm || !form.isConnected)return;
+        const result=await api('signEmergencyMedication',data,true);
+        saved(result);status('Medication administration signed for '+scope.Reference+'.');
+      });
+    };
+    form.hidden=true;host.append(toggle,form);return host;
+  }
   function attach(host, scope, {api,run,writable,status,issueOrder,openOrder}) {
     const panel = el('section');
     let sequence, cursor;
@@ -37,6 +90,12 @@
       list.replaceChildren();
       for(const entry of data.entries){
         list.insertAdjacentHTML('beforeend',window.DynamaxHospitalClinical.entryMarkup(entry));
+        if(!scope.VisitId && entry.Type==='Prescription order' && writable('nursing.write')){
+          list.append(medicationEditor(scope,entry,{api,run,status},result=>{
+            sequence=result.Sequence;more.hidden=true;
+            list.textContent='Dose signed. Refresh signed entries to view the medication record.';
+          }));
+        }
         if(entry.OrderId && openOrder){
           list.append(button('Open '+entry.Content.OrderNumber,()=>run(()=>openOrder({OrderId:entry.OrderId,PatientId:scope.PatientId||data.arrivalId}))));
         }

@@ -1,3 +1,4 @@
+import {allergySnapshot, quantity, qty, watDay, field} from './hospital-orders-model.js';
 import { observationTime, triageFields } from './hospital-clinical-model.js';
 import { clean, digest, fail, id, patientName } from './hospital-model.js';
 
@@ -16,7 +17,83 @@ export function createEmergencyReception({env, user, db, collection, branch, req
     Reference: row.Reference, ArrivalNote: row.ArrivalNote, CreatedAt: row.CreatedAt, Status: row.Status,
     HospitalNumber: row.HospitalNumber || '', Revision: row.__updateTime
   });
+  async function medicationContext(body,branchId,ref){
+    const rid=await arrivalId(branchId,ref);
+    const row=await db.getDocument(env,arrivals,rid);
+    if(!row || row.BranchId!==branchId || row.Reference!==ref)fail('Wristband unavailable in this branch.',404);
+    if(row.Status!=='Awaiting identification')fail('The wristband has been identified. Open the registered visit.',409);
+    const order=await db.getDocument(env,collection('Orders'),id(body.OrderId));
+    if(!order || order.BranchId!==branchId || order.Kind!=='Prescription' || order.PatientId!==rid ||
+       order.VisitId!==rid || order.EmergencyArrivalId!==rid || order.EmergencyReference!==ref)
+      fail('Choose a prescription issued for this wristband.',404);
+    const allergies=allergySnapshot(row.OrderAllergies);
+    if(!['Partially dispensed','Dispensed'].includes(order.Status) || order.PharmacyReview!=='Approved' || order.ReviewPatientId!==rid ||
+       order.ReviewedAllergies!==await digest(JSON.stringify(allergies)))
+      fail('A current pharmacy review and dispensed medicine are required for this wristband.',409);
+    return {rid,row,order,allergies};
+  }
+  function verifySupply(supply,order){
+    if(!supply || supply.BranchId!==order.BranchId || supply.OrderId!==order.OrderId || supply.PatientId!==order.PatientId ||
+       supply.EmergencyArrivalId!==order.EmergencyArrivalId || supply.EmergencyReference!==order.EmergencyReference)
+      fail('The selected supply does not match this wristband prescription.',409);
+  }
+  const available=supply=>qty(supply.Quantity-(supply.ReturnedQuantity||0)-(supply.AdministeredQuantity||0));
   return {
+    async emergencyMedicationSupplies(body){
+      requireCapability('nursing.write');
+      const branchId=await branch(body),ref=emergencyReference(body.Reference);
+      const {row,order,allergies}=await medicationContext(body,branchId,ref);
+      const supplies=await page('Dispenses',[{field:'BranchId',op:'==',value:branchId},{field:'OrderId',op:'==',value:order.OrderId}],'CreatedAt',body);
+      const lots=supplies.rows.map(supply=>{
+        verifySupply(supply,order);
+        return {DispenseId:supply.DispenseId,BatchNumber:supply.BatchNumber,ExpiryDate:supply.ExpiryDate,
+          Available:available(supply),Revision:supply.__updateTime};
+      });
+      await auditRead(body,'View emergency dispensed supply',branchId,{}, {OrderId:order.OrderId,Reference:ref});
+      return {ok:true,Revision:row.__updateTime,OrderNumber:order.OrderNumber,Prescription:order.Fields,Allergies:allergies,lots,next:supplies.next};
+    },
+    async signEmergencyMedication(body){
+      requireCapability('nursing.write');
+      const branchId=await branch(body),ref=emergencyReference(body.Reference);
+      if(body.ConfirmedReference!==ref)fail('Enter the wristband on the patient before signing.');
+      if(!Array.isArray(body.Lots)||!body.Lots.length||body.Lots.length>30)fail('Select the dispensed lots used for this dose.');
+      const parts=body.Lots.map(part=>({id:id(part?.DispenseId),amount:quantity(part.Quantity),revision:part.Revision}));
+      if(new Set(parts.map(part=>part.id)).size!==parts.length)fail('Each dispensing entry can appear only once per dose.');
+      const now=clock();
+      if(!body.ObservedAt)fail('Enter the time the medicine was given.');
+      const observed=observationTime(body.ObservedAt,now);
+      const minute=Math.floor(Date.parse(observed)/60000);
+      if(minute>Math.floor(Date.parse(now)/60000))fail('The administration time cannot be in the future.');
+      const note=field(body,'Note',2000);
+      return operation(body,'signEmergencyMedication',async key=>{
+        const {rid,row,order,allergies}=await medicationContext(body,branchId,ref);
+        if(!body.Revision || body.Revision!==row.__updateTime)fail('The wristband changed. Reload the prescription before signing.',409);
+        // A second device must not sign the same dose with a different request ID.
+        const entryId=await digest(JSON.stringify(['emergency-dose',rid,order.OrderId,minute]));
+        if(await db.getDocument(env,collection('EmergencyCareEntries'),entryId))fail('This prescription already has a signed administration at that minute. Review its history.',409);
+        const supplies=await Promise.all(parts.map(part=>db.getDocument(env,collection('Dispenses'),part.id)));
+        const allocations=[],writes=[];
+        for(const [index,supply] of supplies.entries()){
+          const part=parts[index];verifySupply(supply,order);
+          if(part.revision!==supply.__updateTime || part.amount>available(supply))fail('The remaining supply changed. Reload the available lots.',409);
+          if(minute<Math.floor(Date.parse(supply.CreatedAt)/60000) || supply.ExpiryDate<=watDay(observed))
+            fail('Verify the administration time against the dispensing time and batch expiry.',409);
+          allocations.push({DispenseId:part.id,BatchNumber:supply.BatchNumber,Quantity:part.amount,ExpiryDate:supply.ExpiryDate});
+          writes.push({collectionPath:collection('Dispenses'),documentId:part.id,currentDocument:condition(supply),
+            data:{...strip(supply),AdministeredQuantity:qty((supply.AdministeredQuantity||0)+part.amount)}});
+        }
+        const sequence=(row.CareSequence||0)+1,rx=order.Fields,amount=qty(parts.reduce((sum,part)=>sum+part.amount,0));
+        const content={OrderNumber:order.OrderNumber,Medicine:rx.Medicine,Strength:rx.Strength,PrescribedDose:rx.Dose,
+          Route:rx.Route,Given:amount+' '+rx.Unit,Batches:allocations.map(lot=>lot.BatchNumber+' ('+lot.Quantity+' '+rx.Unit+')').join(', '),
+          ObservedAt:observed,...(note?{Note:note}:{})};
+        writes.push(create('EmergencyCareEntries',entryId,{EntryId:entryId,ArrivalId:rid,BranchId:branchId,Reference:ref,OrderId:order.OrderId,
+          Sequence:sequence,TimelineKey:rid+'|'+String(sequence).padStart(12,'0'),Type:'Medication administration',Content:content,
+          Allocations:allocations,AllergySnapshot:allergies,AuthorUsername:actor,AuthorName:clean(user.displayName)||actor,SignedAt:now}),
+          {collectionPath:arrivals,documentId:rid,currentDocument:condition(row),data:{...strip(row),CareSequence:sequence}},
+          auditWrite(key,'Sign emergency medication administration',branchId,{}, {ArrivalId:rid,OrderId:order.OrderId,EntryId:entryId}));
+        return {writes,result:{EntryId:entryId,Sequence:sequence}};
+      });
+    },
     async visitEmergencyWristbands(body) {
       requireCapability('clinical.read');
       const branchId = await branch(body);
