@@ -38,6 +38,8 @@
     '/api/staff-vendor-settlements': ['bootstrap', 'statement', 'requesthistory', 'requestreport', 'previewhistorical', 'previewsale', 'previewproductimport', 'previewcardrefundbatch'],
     '/api/staff-hr': ['getsalarystructure', 'loademploymentletter', 'previewemploymentletter', 'listsalarytemplates',
       'listpaygrades', 'listpaygrademembers', 'getpaygradepreview'],
+    // Every face challenge and proof needs a fresh response, even when staff retry.
+    '/api/staff-attendance-face': ['', 'challenge', 'verify'],
     '/api/staff-meetings': ['bootstrap', 'setup', 'list', 'report'],
     '/api/staff-session': ['activity'],
     '/api/staff-academics': ['getacademicsubmissionsettings', 'listacademicsubmissions']

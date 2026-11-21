@@ -68,3 +68,37 @@ test('client validation errors are visible and background success messages do no
 test('staff feedback leaves form validation to the shared dialogue component', () => {
   assert.equal(harness().listeners.invalid, undefined);
 });
+
+test('attendance preparation never announces completion; only the recorded clock action does', async () => {
+  const { api, alerts } = harness();
+  const cacheWindow = {};
+  const cacheSource = await readFile(new URL('../js/staff-workspace-cache.js', import.meta.url), 'utf8');
+  vm.runInNewContext(cacheSource, { window: cacheWindow, Response, TextEncoder, DOMException });
+  const cache = cacheWindow.DynamaxWorkspaceCache;
+  const url = path => new URL('/api/' + path, 'https://school.example');
+  const post = (action, Direction) => ({ method: 'POST', body: JSON.stringify({ action, Direction }) });
+  for (const direction of ['IN', 'OUT']) {
+    alerts.length = 0;
+    for (const [route, action] of [
+      ['staff-attendance', 'quick'], ['staff-attendance', 'presencequick'], ['staff-attendance', 'list'],
+      ['staff-attendance-face', 'status'], ['staff-attendance-face', 'challenge'], ['staff-attendance-face', 'verify']
+    ]) {
+      const endpoint = url(route), request = post(action, direction);
+      if (api.isMutation(endpoint, request)) await api.response(Response.json({ ok: true }));
+      assert.equal(alerts.length, 0, route + '/' + action);
+      const policy = cache.requestPolicy(endpoint, request);
+      assert.equal(policy.cacheable, false, action);
+      assert.equal(policy.mutation, false, action);
+    }
+    const action = post('clock', direction);
+    assert.ok(api.isMutation(url('staff-attendance'), action));
+    const message = direction === 'IN' ? 'Clock-in recorded.' : 'Clock-out recorded.';
+    await api.response(Response.json({ ok: true, message }));
+    assert.deepEqual(alerts.map(alert => alert.message), [message]);
+    alerts.length = 0;
+    await api.response(Response.json({ ok: false, message: 'Outside the attendance location.' }, { status: 403 }));
+    assert.deepEqual(alerts.map(alert => alert.title), ['Action not completed']);
+  }
+  for (const action of ['enroll', 'revoke']) assert.ok(api.isMutation(url('staff-attendance-face'), post(action)));
+  assert.ok(api.isMutation(url('staff-attendance'), post('presence')));
+});

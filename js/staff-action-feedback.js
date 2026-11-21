@@ -20,6 +20,8 @@
     if (readActions.has(action) || /^(?:get|list|search|lookup|preview|validate|check|download|export|poll|verify|prepare)/.test(action)) return false;
     // Meeting setup only reads the department roster and saved settings.
     if (url.pathname === '/api/staff-meetings' && action === 'setup') return false;
+    // Issuing a camera challenge prepares a face check. The clock endpoint reports attendance.
+    if (url.pathname === '/api/staff-attendance-face' && (!action || action === 'challenge')) return false;
     // Identity challenges are intermediate steps, not completed business actions.
     if (/passkey|webauthn|staff-session|staff-mfa|approval-profile/.test(url.pathname)) return false;
     // Restore/reset chunks belong to one action; its completion is reported once.
