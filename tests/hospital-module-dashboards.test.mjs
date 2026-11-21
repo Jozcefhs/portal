@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHospitalService } from '../functions/lib/hospital-service.js';
+import { buildStructuredQuery } from '../functions/lib/firestore.js';
 import { actor, env, fixture } from './helpers/hospital-fixture.mjs';
 
 const registers = {
@@ -15,6 +16,8 @@ function setup(user, rows) {
   const f = fixture(user);
   const queries = [];
   const service = createHospitalService(env, user, { ...f.db, async countCollection(_, path, options) {
+    const { structuredQuery } = buildStructuredQuery(path, options);
+    if (path.endsWith('/hospitalPatients')) assert.equal(structuredQuery.where.fieldFilter.op, 'ARRAY_CONTAINS');
     queries.push({path, ...options});
     const count = rows.filter(row => options.filters.every(({field, op, value}) =>
       op === 'ARRAY_CONTAINS' ? row[field]?.includes(value) : row[field] === value)).length;

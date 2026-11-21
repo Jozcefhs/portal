@@ -358,6 +358,7 @@ function structuredFieldFilter(filter = {}) {
     '>=': 'GREATER_THAN_OR_EQUAL',
     in: 'IN',
     'not-in': 'NOT_IN',
+    'array_contains': 'ARRAY_CONTAINS',
     'array-contains': 'ARRAY_CONTAINS',
     'array-contains-any': 'ARRAY_CONTAINS_ANY'
   };
