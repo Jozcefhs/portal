@@ -4,6 +4,30 @@ import {readFile} from 'node:fs/promises';
 import {stockFixture,env,request,createHospitalService,stockOwner,actors} from './helpers/hospital-stock-control-fixture.mjs';
 const period={fromDate:'2026-10-26',toDate:'2026-10-26'},expiry={fromDate:'2027-12-01',toDate:'2027-12-31'};
 
+test('expiry report pages query only branch batches in the inclusive expiry period at one snapshot',async()=>{
+  const f=await stockFixture();
+  for(let i=0;i<35;i++){
+    const id='expiry-'+String(i).padStart(2,'0');
+    f.store.set('hospitalWorkspaces/test-hospital/hospitalMedicineBatches/'+id,{
+      ...f.batch(),BatchId:id,__id:id,BranchId:i===34?'north':'main',
+      ExpiryDate:i===33?'2026-11-01':i===32?'2026-09-30':i===31?'2026-10-31':'2026-10-01',
+      OnHand:0,Quarantined:i===31?2:0
+    });
+  }
+  const before=structuredClone([...f.store]), q=f.queries.length,r=f.reads.length,w=f.commits.length;
+  const run=(extra={})=>f.owner.stockExpiryRegister(request({Snapshot:true,DateRange:{fromDate:'2026-10-01',toDate:'2026-10-31'},...extra}));
+  const a=await run(),args={Cursor:a.next,ReadTime:a.readTime},b=await run(args);
+  assert.deepEqual(await run(args),b);
+  const all=[...a.batches,...b.batches];
+  assert.equal(all.length,32);assert.equal(new Set(all.map(x=>x.BatchId)).size,32);
+  assert.ok(all[0].Expired);assert.equal(all.at(-1).Expired,false);assert.equal(all.at(-1).Quarantined,2);
+  await assert.rejects(run({Cursor:a.next}),e=>e.status===409);
+  await assert.rejects(run({...args,ReadTime:'2026-10-25T00:00:00.000Z'}),e=>e.status===409);
+  assert.equal(f.queries.length-q,3);assert.equal(f.reads.length,r);assert.equal(f.commits.length,w);
+  assert.ok(f.queries.slice(q).every(x=>x.readTime===a.readTime && x.limit===31 && x.select.includes('OnHand') && !x.select.includes('UnitPriceCents')));
+  assert.deepEqual([...f.store],before);
+});
+
 test('physical count submission preserves balances; second-officer approval applies one traceable difference',async()=>{
   const f=await stockFixture(),original=structuredClone(f.batch()),protectedRows=structuredClone([...f.rows('Patients'),...f.rows('Visits'),...f.rows('StockReceipts')]);
   const {CountId}=await f.submit();assert.equal(f.batch().OnHand,20);assert.equal(f.rows('StockMovements').length,1);

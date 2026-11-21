@@ -95,6 +95,9 @@
       const report = element('a', 'Medicine usage report', 'btn');
       report.href = '/hospital.html?' + new URLSearchParams({ branch: branchId, task, report: 'usage' });
       actions.append(report);
+      const expiry = element('a', 'Expiring medicine stock report', 'btn');
+      expiry.href = '/hospital.html?' + new URLSearchParams({ branch: branchId, task:'stock-control', report:'expiry' });
+      actions.append(expiry);
     }
     actions.append(refresh);
     header.append(actions);

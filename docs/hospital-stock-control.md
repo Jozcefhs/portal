@@ -8,6 +8,8 @@ Open **Hospital workspace → Pharmacy stock control**, or `/hospital.html?task=
 
 ## Workflow
 
+From the Pharmacy dashboard, **Expiring medicine stock report** opens this branch’s expiry filter. It shows batches with shelf or quarantined stock, earliest expiry first. Include depleted batches when investigating a count. Preview and print cover every page already loaded and indicate whether more batches remain. Quantities are a snapshot at load time. The period selects expiry dates.
+
 1. Select an expiry date range and load the branch's batches. Expired batches remain visibly marked; their existing dispensing restriction is unchanged. Counts use separate shelf and quarantined quantities.
 2. A pharmacist selects **Record physical count**. This fetches the current batch once. Enter a permanent count reference, actual count time (WAT), both physical quantities and supporting evidence. Submission creates a pending count without changing stock.
 3. Another Pharmacist, Hospital Administrator, Medical Director or Super Admin with Pharmacy access opens the dated **Physical stock counts** register. They review the original recorded quantities, physical quantities, differences and evidence before approving or rejecting. An officer cannot review their own count. Its submitting pharmacist can cancel a pending count.

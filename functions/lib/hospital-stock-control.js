@@ -20,8 +20,17 @@ export function createHospitalStockControl(ctx){
   return {
     async stockExpiryRegister(body){
       requireCapability('stock.read');dateFilters(body.DateRange);const BranchId=await branch(body);
-      const result=await page('MedicineBatches',[eq('BranchId',BranchId),{field:'ExpiryDate',op:'>=',value:dateOnly(body.DateRange.fromDate)},{field:'ExpiryDate',op:'<=',value:dateOnly(body.DateRange.toDate)}],'ExpiryDate',body);
-      return {ok:true,batches:result.rows.map(row=>({...view(row),Expired:row.ExpiryDate<=watDay(clock())})),next:result.next};
+      const now=clock(), snapshot=body.Snapshot===true;
+      const readTime=snapshot && body.Cursor ? body.ReadTime : now;
+      const instant=Date.parse(readTime);
+      if(snapshot && (!Number.isFinite(instant) || new Date(instant).toISOString()!==readTime ||
+          instant>Date.parse(now) || Date.parse(now)-instant>55*60000)){
+        fail('This stock snapshot has expired. Refresh batches to continue.',409);
+      }
+      const select=['BatchId','Medicine','Strength','Form','Unit','BatchNumber','ExpiryDate','OnHand','Quarantined'];
+      const result=await page('MedicineBatches',[eq('BranchId',BranchId),{field:'ExpiryDate',op:'>=',value:dateOnly(body.DateRange.fromDate)},{field:'ExpiryDate',op:'<=',value:dateOnly(body.DateRange.toDate)}],'ExpiryDate',body,snapshot?{select,readTime}:{});
+      const today=watDay(readTime);
+      return {ok:true,batches:result.rows.map(row=>({...view(row),BatchId:row.BatchId||row.__id,Expired:row.ExpiryDate<=today})),next:result.next,readTime};
     },
     async stockBatchForCount(body){
       requireCapability('stock.read');const BranchId=await branch(body),batch=await batchInBranch(body.BatchId,BranchId);

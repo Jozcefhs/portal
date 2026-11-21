@@ -22,7 +22,27 @@ try{
   const submit=async form=>page.locator(`#${form} button:not([type=button])`).click();
   const login=async who=>{role=who;const q=f.queries.length;await page.goto(`http://127.0.0.1:${server.address().port}/hospital.html?task=stock-control`);await done('Hospital reception ready');assert.equal(f.queries.length,q);};
   const counts=async()=>{await fill('scCountsFilter',{fromDate:'2026-10-26',toDate:'2026-10-26'});await submit('scCountsFilter');await done('Selected stock count period loaded');};
-  await login('pharmacist');await fill('scExpiryFilter',{fromDate:'2027-12-01',toDate:'2027-12-31'});await submit('scExpiryFilter');await done('Selected expiry period loaded');const q=f.queries.length;await submit('scExpiryFilter');await done('Selected expiry period loaded');assert.equal(f.queries.length,q,'repeat load reuses expiry snapshot');
+  await login('pharmacist');
+  for(let i=0;i<31;i++){
+    const id='fixture-'+String(i).padStart(2,'0');
+    f.store.set('hospitalWorkspaces/test-hospital/hospitalMedicineBatches/'+id,{
+      ...f.batch(),BatchId:id,__id:id,BatchNumber:id,ExpiryDate:'2027-09-30',OnHand:i===0?0:1,Quarantined:i===30?2:0
+    });
+  }
+  await fill('scExpiryFilter',{fromDate:'2027-09-01',toDate:'2027-09-30'});await submit('scExpiryFilter');await done('Selected expiry period loaded');
+  assert.match(await page.locator('#scExpiryNote').textContent(),/Partial report/);
+  await page.locator('#scExpiryNext').click();await done('Selected expiry period loaded');
+  const queries=f.queries.length, writes=f.commits.length;
+  await page.locator('#scExpiryPrevious').click();await done('Selected expiry period loaded');
+  await page.locator('#scExpiryPrint').click();assert.match(await page.locator('#scPreviewBody').textContent(),/Complete report/);
+  assert.equal(await page.locator('#scPreviewBody tbody tr').count(),30);
+  assert.equal(await page.locator('#scPreviewBody tbody tr').last().locator('td').last().textContent(),'2 '+f.batch().Unit);
+  await page.evaluate(()=>{window.print=()=>window.__printed=true;});await page.locator('#scPrint').click();
+  assert.equal(await page.evaluate(()=>window.__printed),true);
+  await page.locator('#scExpiryDepleted').check();
+  assert.equal(await page.locator('#scExpiryRows tbody tr').count(),30);
+  assert.equal(f.queries.length,queries);assert.equal(f.commits.length,writes);
+  await fill('scExpiryFilter',{fromDate:'2027-12-01',toDate:'2027-12-31'});await submit('scExpiryFilter');await done('Selected expiry period loaded');const q=f.queries.length;await submit('scExpiryFilter');await done('Selected expiry period loaded');assert.equal(f.queries.length,q,'repeat load reuses expiry snapshot');
   await page.locator('[data-sc-batch]').click();await done('Current batch loaded');await fill('scCountForm',{Reference:'COUNT-UI-001',CountedAt:'2026-10-26T13:00',OnHand:'18',Quarantined:'0',Reason:'Synthetic physical count evidence'});await page.locator('#scCountForm [name=Confirmed]').check();rejectNext=true;await submit('scCountForm');await done('Synthetic connection failure');assert.equal(await page.locator('#scCountForm [name=OnHand]').inputValue(),'18');assert.equal(f.batch().OnHand,20);
   await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));assert.ok(await page.locator('#scCountForm input').evaluateAll(es=>es.every(e=>e.getBoundingClientRect().right<=innerWidth)));await page.screenshot({path:resolve(output,'count-mobile.png'),fullPage:true});
   await submit('scCountForm');await done('Physical count submitted');assert.equal(f.rows('StockCounts').length,1);assert.equal(f.batch().OnHand,20);assert.deepEqual(await page.locator('#scReviewForm [name=Decision] option').allTextContents(),['Cancel']);

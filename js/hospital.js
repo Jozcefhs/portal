@@ -79,6 +79,7 @@
       if (!result.Unchanged && ['createOrder','recordSpecimen','recordInvestigationReport','verifyInvestigationReport','releaseInvestigationReport','cancelOrder'].includes(action)) orders?.outstanding.reset();
       if (!result.Unchanged && ['dispensePrescription','returnDispensedMedicine'].includes(action)) orders?.usage.reset();
       if (stockMutations.has(action)) stockDisposal?.invalidate();
+      if (!result.Unchanged && stockMutations.has(action) && !['submitStockCount','submitStockDisposal'].includes(action)) stockControl?.clearExpiry();
       if (['submitStockDisposal','reviewStockDisposal'].includes(action)) stockControl?.invalidate();
     }
     return result;
