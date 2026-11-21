@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Google email connection privacy policy | Dynamax Management Suite</title>
+  <meta name="description" content="How Dynamax Vendmac Ltd handles Google email connections across Dynamax Management Suite editions, and how to request deletion.">
+  <link rel="canonical" href="https://dynamax.cc/privacy">
+  <link rel="icon" href="/images/Logo.png">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #142c46; font: 1rem/1.65 system-ui, sans-serif; }
+    main, nav { max-width: 52rem; margin: auto; padding: 1.25rem; }
+    header { border-bottom: 1px solid #ccd7df; }
+    a { color: #075b78; overflow-wrap: anywhere; }
+    h1, h2 { line-height: 1.22; }
+    h2 { margin-top: 2rem; }
+    dt { font-weight: 700; margin-top: 1rem; }
+    dd { margin: .2rem 0 0; }
+  </style>
+</head>
+<body>
+<header><nav aria-label="Site navigation"><a href="/">Dynamax home</a></nav></header>
+<main>
+<h1>Dynamax Management Suite privacy notice for the Google email connection</h1>
+<p>Effective 21 November 2026 · School, Hospital, Faith and Organisation editions</p>
+<p><strong>Operator</strong> Dynamax Vendmac Ltd (Nigeria)<br>
+<strong>Privacy and deletion requests</strong> <a href="mailto:support@dynamax.cc">support@dynamax.cc</a></p>
+<h2>What happens when you connect Gmail</h2>
+<p>Your organisation chooses its email provider. It can use Brevo or connect its own Gmail account. A branch can inherit the organisation’s sender or use a separately configured account. When you choose Google, you sign in on Google’s site and give permission to send email on your behalf. Dynamax receives your verified email address and a credential that allows your organisation to send while you are signed out. The Gmail permission covers sending only. It gives Dynamax no access to read your inbox or manage your contacts.</p>
+<h2>What information goes where</h2>
+<dl>
+<dt>Google Account and Gmail</dt><dd>Google confirms the sender’s identity and consent. For a Gmail message, Google receives the sender and recipient details, subject, message body and any included attachments. The recipients receive the addressed message.</dd>
+<dt>Cloudflare</dt><dd>Cloudflare runs the portal and sending service. Dynamax keeps the Google sending credential in protected deployment settings for the relevant workspace or branch. Where a workflow includes a document held in the workspace’s Cloudflare R2 storage, the service can retrieve it for delivery.</dd>
+<dt>Google Cloud Firestore (Firebase)</dt><dd>Dynamax records connection requests, workspace or branch identifiers, provider changes, status and timestamps. Connection records can include the sender address. Individual workflows can keep delivery information such as the recipient, provider message ID, time and outcome alongside the related business record.</dd>
+<dt>GitHub Actions</dt><dd>Where used for deployment, the workflow checks configuration status using identifiers such as the workspace, branch, provider and request time. The Gmail sending path does not route messages through GitHub.</dd>
+<dt>Brevo</dt><dd>If your organisation selects Brevo, messages are sent using its Brevo configuration. A Gmail send does not automatically send a second copy through Brevo or share the Gmail sending credential with Brevo.</dd>
+</dl>
+<p>If a workflow includes a file from an external link, the sending service may retrieve the file from its host. That host receives the file request. The Google mailbox credential is used with Google.</p>
+<h2>Who can manage the connection or see a message</h2>
+<p>The email settings accept the workspace setup administrator credential or a signed-in Super Administrator. A Super Administrator assigned to one branch can manage that branch’s settings. Private settings show the applicable sender and connection status. The portal does not display the Google sending credential.</p>
+<p>Staff can initiate emails or see related business records according to their permissions in the originating workflow, such as HR or billing. Managing email delivery does not grant access to a Gmail inbox. People with privileged hosting or database roles can administer the infrastructure or access stored information within their permissions. Dynamax staff and contractors may inspect identifiable Google user data only with the user’s affirmative agreement for a specific support case, when necessary to investigate a security incident, or when required by law.</p>
+<h2>Retention, disconnection and deletion</h2>
+<dl>
+<dt>One-time Google connection request</dt><dd>The link is valid for nine minutes and can be used once. Completing the callback clears the temporary verification material in the request record. Link expiry is separate from deletion of the status record.</dd>
+<dt>Active Gmail credential and sender address</dt><dd>Dynamax keeps the credential for sending while the connection is active and Google authorises it. A completed switch to Brevo removes the Gmail credential and address from the new active configuration for that scope. Changing providers requires deployment. Earlier deployment versions, connection history and copies of sent messages have separate lifecycles.</dd>
+<dt>Delivery history and underlying records</dt><dd>Workflow records may contain delivery details, correspondence or supporting documents. Changing the sender does not erase them. There is no common application-enforced deletion period for these records across all editions.</dd>
+<dt>Backups and copies</dt><dd>Administrators may download encrypted workspace or branch backups, optionally including uploaded files. A downloaded copy stays under its holder’s control until the holder deletes it. Database recovery windows and provider-managed backups depend on the deployment. Gmail and recipients manage copies in their own accounts.</dd>
+</dl>
+<p>The mailbox owner can revoke Dynamax’s Google permission directly in <a href="https://myaccount.google.com/connections">Google Account connections</a>. Switching a workspace or branch to Brevo does not itself revoke an account-wide Google grant that another connection may use. To request deletion of data held by Dynamax, email <a href="mailto:support@dynamax.cc">support@dynamax.cc</a> with your organisation’s name and the connected email address.</p>
+<p>We acknowledge deletion requests within two business days of receipt and ask promptly for any information needed to verify the request. We act on valid requests without undue delay. Within 14 calendar days of receipt, we tell you what we have deleted or explain what is outstanding, why, and when you can expect a decision. If we must lawfully retain specific information, we explain the reason and the applicable retention period or how we determine it, where the law permits.</p>
+<h2>Use of Google user data</h2>
+<p>Dynamax uses Google user data to identify the authorised sender and provide the email feature the organisation chooses. Dynamax does not sell this data or use it for advertising, credit decisions or training general-purpose AI models. Transfers and human access are limited to the purposes permitted by <a href="https://developers.google.com/terms/api-services-user-data-policy">Google’s API Services User Data Policy, including Limited Use</a>.</p>
+</main>
+</body>
+</html>
