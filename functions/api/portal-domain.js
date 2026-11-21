@@ -60,10 +60,13 @@ async function managePortalDomain(env, request) {
   }
   const signature = await signTenantControlRequest(env.TENANT_CONTROL_PLANE_PRIVATE_KEY, details);
   const response = await fetch(central, {
-    method: 'POST', redirect: 'error', signal: AbortSignal.timeout(30000),
+    method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(30000),
     headers: { 'Content-Type': 'application/json', 'X-Dynamax-Tenant-Signature': signature },
     body: JSON.stringify(details)
-  });
+  }).catch(() => { throw domainError('The Dynamax domain service could not be reached. Check status again shortly.', 502); });
+  if (response.status >= 300 && response.status < 400) {
+    throw domainError('The Dynamax domain service redirected the setup request. Ask support to check the configured service address.', 502);
+  }
   const result = await response.json().catch(() => null);
   if (!response.ok || result?.ok !== true) throw domainError(result?.message || 'Dynamax could not confirm the domain.', response.ok ? 502 : response.status);
   return { ...result, paymentRequired: result.paymentRequired || Boolean(env.PAYSTACK_SECRET_KEY) };

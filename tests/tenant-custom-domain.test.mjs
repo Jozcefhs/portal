@@ -23,6 +23,7 @@ test('Pages setup checks for an existing attachment before adding and reports DN
     validation_data: { method: 'txt', txt_name: '_verify.portal.example.com', txt_value: 'challenge' } };
   const provider = await pagesDomain({ CLOUDFLARE_ACCOUNT_ID: 'account', CLOUDFLARE_PAGES_API_TOKEN: 'token' },
     'tenant-one', host, { attach: true, fetcher: async (url, init) => {
+      assert.equal(init.redirect, 'manual');
       calls.push([url, init.method, init.body]);
       return init.method === 'GET' ? Response.json({}, { status: 404 }) : Response.json({ success: true, result: pending });
     } });
@@ -67,7 +68,7 @@ test('primary switch checks a staff session and a recent verified payment on the
     requiredDeploymentIdentity: () => ({ workspaceId: 'tenant-one' }), readJsonBody: request => request.json(),
     getDocument: async () => intent, paystackCredentialFingerprint: async () => 'current',
     signTenantControlRequest: async (_key, details) => { signed.push(details); return 'signed'; },
-    fetch: async () => Response.json({ ok: true })
+    fetch: async (_url, init) => { assert.equal(init.redirect, 'manual'); return Response.json({ ok: true }); }
   });
   const run = (origin = host, headerOrigin = origin) => post({ env, request: new Request(origin + '/api/portal-domain', {
     method: 'POST', headers: { Origin: headerOrigin }, body: JSON.stringify({ action: 'activate', paymentReference: 'valid-reference' })
@@ -129,6 +130,7 @@ test('root zone inspection checks the exact domain and the Pages account', async
   const zone = { id: zoneId, name: hostname, type: 'full', account: { id: 'pages-account' },
     status: 'pending', name_servers: ['one.ns.cloudflare.com', 'two.ns.cloudflare.com'] };
   const read = result => readRootPortalZone(env, hostname, zoneId, async (url, request) => {
+    assert.equal(request.redirect, 'manual');
     assert.equal(url, 'https://api.cloudflare.com/client/v4/zones/' + zoneId);
     assert.equal(request.headers.Authorization, 'Bearer read-only');
     return Response.json({ success: true, result });
@@ -136,6 +138,25 @@ test('root zone inspection checks the exact domain and the Pages account', async
   assert.deepEqual(await read(zone), { status: 'pending', nameservers: zone.name_servers });
   await assert.rejects(read({ ...zone, account: { id: 'different-account' } }), { status: 409 });
   await assert.rejects(read({ ...zone, name: 'another.example.com' }), { status: 409 });
+});
+
+test('a redirected control-plane response cannot confirm domain status', async () => {
+  const origin = 'https://tenant-one.pages.dev';
+  const post = route('portal-domain', {
+    readJsonBody: request => request.json(), requireSetupAdministrator: async () => ({}),
+    resolveSetupSettingsAccess: () => ({ scope: 'organisation' }),
+    requiredDeploymentIdentity: () => ({ workspaceId: 'tenant-one' }), signTenantControlRequest: async () => 'signed',
+    fetch: async (_url, options) => {
+      assert.equal(options.redirect, 'manual');
+      return Response.redirect('https://other.example.org', 307);
+    }
+  });
+  const response = await post({
+    env: { PUBLIC_PORTAL_URL: origin, CANONICAL_PORTAL_URL: 'https://dynamax.cc', TENANT_CONTROL_PLANE_PRIVATE_KEY: 'configured' },
+    request: new Request(origin + '/api/portal-domain', { method: 'POST', headers: { Origin: origin }, body: JSON.stringify({ action: 'status' }) })
+  });
+  assert.equal(response.status, 502);
+  assert.match((await response.json()).message, /redirected/);
 });
 
 test('root setup waits for approved active DNS before Pages attachment and still gates the primary switch', async () => {
