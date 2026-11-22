@@ -6,6 +6,7 @@
     let ward=null,bed=null,visit=null,current=null,wardRows=[],bedRows=[],selectedBed=null;
     let wardNext=null,bedNext=null,registerNext=null,historyNext=null;
     const dirty=new Set();
+    let occupancyRequest, occupancyKey = '';
     const cache=new Map();
     $('inpatients').innerHTML=`<h2>Wards and admissions</h2>
       <p>Choose a ward to see bed availability, or select dates for admission history. Loaded pages are retained until Refresh.</p>
@@ -22,6 +23,43 @@
       <details id="ipDischargeEditor" hidden><summary>Prepare / replace discharge summary</summary><p>Review the care record, medicines and outstanding investigations. Every signed version is retained. This does not release the bed.</p><form id="ipDischargeForm"><label>Disposition<select name="Disposition"><option>Home</option><option>Referral / transfer</option><option>Left against advice</option><option>Deceased</option></select></label><label>Diagnosis<textarea name="Diagnosis" maxlength="2000" required></textarea></label><label>Clinical course<textarea name="Course" maxlength="8000" required></textarea></label><label>Medication and treatment instructions<textarea name="Treatment" maxlength="6000" required></textarea></label><label>Follow-up / receiving facility instructions<textarea name="FollowUp" maxlength="4000" required></textarea></label><label>Reason for replacing a signed summary<input name="Reason" maxlength="1000"></label><label class="check"><input name="ConfirmPatient" type="checkbox" required> I have verified the patient and hospital number</label><label class="check"><input name="ConfirmClinicalReview" type="checkbox" required> I have reviewed the clinical record, medicines, investigations and follow-up</label><button>Sign discharge summary</button></form></details>
       <form id="ipReleaseForm" hidden><h3>Complete discharge</h3><p id="ipReleaseStatus"></p><label class="check"><input name="ConfirmPatient" type="checkbox" required> I have checked the patient and confirm departure / handover</label><button>Complete discharge and release bed</button><p class="hint">Existing charges, invoices, prescriptions and reports are retained. Discharge does not settle or cancel them.</p></form>
       <section><h3>Admission history</h3><form id="ipHistoryForm" class="toolbar"><label>From<input id="ipHistoryFrom" type="date" required></label><label>To<input id="ipHistoryTo" type="date" required></label><label>Records<select id="ipHistoryKind"><option value="Movements">Bed movements</option><option value="Summaries">Signed summaries</option></select></label><button>Load history</button><button id="ipRefreshHistory" type="button">Refresh history</button></form><div id="ipHistory" class="table-wrap"></div><button id="ipMoreHistory" hidden>Next history</button></section></section>`;
+    $('ipRegisterForm').parentElement.insertAdjacentHTML('beforebegin', `<section><h3>Bed occupancy report</h3>
+      <form id="ipOccupancyForm" class="toolbar"><label>From (WAT)<input type="date" name="fromDate" required></label>
+      <label>To (WAT)<input type="date" name="toDate" required></label><button>Load report</button>
+      <button type="button" id="ipOccupancyRefresh" hidden>Refresh report</button><button type="button" id="ipOccupancyPrint" hidden>Print report</button></form>
+      <div id="ipOccupancyResult" aria-live="polite"></div></section>`);
+    function clearOccupancy() {
+      occupancyRequest = null; occupancyKey = '';
+      $('ipOccupancyResult').replaceChildren();
+      $('ipOccupancyRefresh').hidden = $('ipOccupancyPrint').hidden = true;
+      if ($('cardPrint').querySelector('[data-occupancy-print]')) $('cardPrint').replaceChildren();
+    }
+    async function loadOccupancy(refresh = false) {
+      const range = values('ipOccupancyForm');
+      const key = JSON.stringify([$('branch').value, range.fromDate, range.toDate]);
+      if (occupancyRequest || (!refresh && key === occupancyKey)) return;
+      clearOccupancy();
+      const request = occupancyRequest = {};
+      try {
+        const data = await api('inpatientOccupancyReport', { DateRange: {fromDate:range.fromDate, toDate:range.toDate} });
+        if (occupancyRequest !== request) return;
+        const branchName = $('branch').selectedOptions[0]?.textContent || data.branchId;
+        $('ipOccupancyResult').innerHTML = `<h4>Bed occupancy · ${esc(branchName)}</h4><p>${esc(range.fromDate)} to ${esc(range.toDate)} (WAT). Records as of ${esc(when(data.readTime))} WAT.</p>
+          <table><thead><tr><th>Occupied at start</th><th>Admissions</th><th>Discharges</th><th>Occupied at end or latest snapshot</th></tr></thead>
+          <tbody><tr>${[data.opening,data.admissions,data.discharges,data.closing].map(n => '<td>'+esc(n)+'</td>').join('')}</tr></tbody></table>`;
+        occupancyKey = key;
+        $('ipOccupancyRefresh').hidden = $('ipOccupancyPrint').hidden = false;
+      } finally { if (occupancyRequest === request) occupancyRequest = null; }
+    }
+    $('ipOccupancyForm').oninput = clearOccupancy;
+    $('ipOccupancyForm').onsubmit = event => { event.preventDefault(); run(() => loadOccupancy()); };
+    $('ipOccupancyRefresh').onclick = () => run(() => loadOccupancy(true));
+    $('ipOccupancyPrint').onclick = () => {
+      if (!occupancyKey) return;
+      const copy = $('ipOccupancyResult').cloneNode(true);
+      copy.removeAttribute('id'); copy.dataset.occupancyPrint = '';
+      $('cardPrint').classList.add('billing-print'); $('cardPrint').replaceChildren(copy); window.print();
+    };
     const sharing=window.DynamaxHospitalClinicalSharing.create({host:$('ipAdmissionPanel'),api,run,status,getScope:()=>current?{DocumentType:'discharges',ParentId:current.admission.AdmissionId,PatientId:current.patient.PatientId}:null,allowed:()=>writable('inpatient.discharge')&&!!current});
     function permissions(){
       sharing.permissions();
@@ -48,7 +86,7 @@
     async function leave(){if(!await confirmLeave())return false;for(const form of dirty)$(form).reset();dirty.clear();return true;}
     async function prepareSave(form){if(!await confirmLeave(form))return false;for(const other of dirty)if(other!==form)$(other).reset();dirty.clear();dirty.add(form);return true;}
     const clearChoice=()=>{selectedBed=null;document.querySelectorAll('.ip-bed-choice').forEach(el=>el.textContent='No destination bed selected.');};
-    function invalidate(){cache.clear();$('ipRegister').replaceChildren();$('ipHistory').replaceChildren();$('ipBeds').replaceChildren();$('ipWards').replaceChildren();wardRows=[];bedRows=[];wardNext=bedNext=registerNext=historyNext=null;['ipMoreRegister','ipMoreHistory','ipMoreBeds','ipMoreWards'].forEach(id=>$(id).hidden=true);clearChoice();}
+    function invalidate(){clearOccupancy();cache.clear();$('ipRegister').replaceChildren();$('ipHistory').replaceChildren();$('ipBeds').replaceChildren();$('ipWards').replaceChildren();wardRows=[];bedRows=[];wardNext=bedNext=registerNext=historyNext=null;['ipMoreRegister','ipMoreHistory','ipMoreBeds','ipMoreWards'].forEach(id=>$(id).hidden=true);clearChoice();}
     async function cached(action,args,force=false){const key=JSON.stringify([action,args]);if(force)cache.delete(key);if(!cache.has(key)){const result=await api(action,args);cache.set(key,result);if(cache.size>40)cache.delete(cache.keys().next().value);}return cache.get(key);}
     async function wards(cursor=null,force=false){
       const data=await cached('inpatientWards',cursor?{Cursor:cursor}:{},force);wardRows=data.wards;wardNext=data.next;$('ipMoreWards').hidden=!wardNext;

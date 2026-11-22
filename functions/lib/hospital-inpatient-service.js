@@ -63,6 +63,26 @@ export function createHospitalInpatientService(context){
     return {bed,ward,lock};
   }
   return {
+    async inpatientOccupancyReport(body) {
+      requireCapability('inpatient.read');
+      const branchId = await branch(body);
+      const [start, end] = inpatientDates(body.DateRange);
+      if (Date.parse(start.value) > Date.parse(clock())) fail('Choose a period that has already started.');
+      const count = (field, bounds, readTime) => db.countCollection(env, collection('Admissions'), {
+        readTime, filters: [eq('BranchId', branchId), ...bounds.map(bound => ({ ...bound, field }))]
+      });
+      const before = [{ op: '<', value: start.value }];
+      const { count: prior, readTime } = await count('CreatedAt', before);
+      const [departedBefore, arrived, departed] = await Promise.all([
+        prior ? count('DischargedAt', before, readTime) : { count: 0 },
+        count('CreatedAt', [start, end], readTime),
+        count('DischargedAt', [start, end], readTime)
+      ]);
+      const opening = prior - departedBefore.count;
+      const closing = opening + arrived.count - departed.count;
+      if (Math.min(opening, closing) < 0) fail('Admission and discharge totals need review.', 409);
+      return { ok: true, branchId, opening, admissions: arrived.count, discharges: departed.count, closing, readTime };
+    },
     async inpatientWards(body){
       requireCapability('inpatient.read');const branchId=await branch(body);
       const result=await page('Wards',[eq('BranchId',branchId)],'Code',body);

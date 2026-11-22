@@ -463,3 +463,7 @@ The report loads indexed order pages on demand at one database snapshot. Reopeni
 ### H14 medicine usage
 
 Open **Pharmacy → Medicine usage report**, choose a branch and dates (WAT), then load the report. Each stock movement is counted on its recorded date. Net issued is dispensing less patient returns, so a period with returns of earlier supplies can have a negative net. The figures describe pharmacy issues, not bedside doses. Receipts, quarantines and disposals are excluded. Reports group by medicine, strength, form and unit. Further pages use the same snapshot, and printing reuses the displayed totals.
+
+### H14 branch bed occupancy
+
+Wards and admissions includes a date-scoped census of occupied beds at opening and closing, admissions and discharges. Transfers within the branch do not change the census. Dates use WAT. The current day is measured through the displayed database snapshot. The report counts admissions in place across the date boundaries and reads only aggregate counts. Print and repeat display reuse the loaded result. Occupied-bed counts do not measure historical bed capacity or occupancy percentage.
