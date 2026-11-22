@@ -467,6 +467,32 @@ test('an assessment-only Primary draft can complete all four activation requirem
   assert.equal(cleared.CanActivate,false);
 });
 
+test('section cumulative settings persist, inherit and revert independently', async () => {
+  const { target, load, draft, activate } = await policyFixture();
+  const branch = target('main');
+  const original = completePolicy();
+  await activate(branch, await draft(branch, original));
+  const primary = target('main', 'primary');
+  const nursery = target('main', 'nursery');
+  const secondary = target('main', 'secondary');
+  const edited = structuredClone(original);
+  edited.Cumulative.Terms[0].WeightPercentage = 20;
+  edited.Cumulative.Terms[2].WeightPercentage = 50;
+  edited.Cumulative.IncludeTransferredResults = false;
+  const saved = await draft(primary, edited, ['Cumulative']);
+  assert.deepEqual((await load(primary)).ActivePolicy.Cumulative, original.Cumulative);
+  await activate(primary, saved);
+  for (const scope of [primary, nursery]) {
+    assert.deepEqual((await load(scope)).ActivePolicy.Cumulative, edited.Cumulative);
+  }
+  assert.deepEqual((await load(secondary)).ActivePolicy.Cumulative, original.Cumulative);
+  assert.deepEqual((await draft(primary, original)).Policy.Cumulative, edited.Cumulative);
+  const reverted = await draft(primary, original, ['Cumulative']);
+  assert.equal(reverted.DraftOverrides.Cumulative, undefined);
+  await activate(primary, reverted);
+  assert.deepEqual((await load(nursery)).ActivePolicy.Cumulative, original.Cumulative);
+});
+
 test('primary and secondary grading activate independently in each branch and retain historical schemes', async () => {
   const {store,target,load,draft,activate,academicAssessmentScheme,calculateAcademicStudentScore}=await policyFixture();
   const organisation=target(), primary=target('main','primary'), secondary=target('main','secondary');

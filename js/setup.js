@@ -570,6 +570,7 @@ function createAcademicCumulativeTermRow(term = {}, index = 0) {
   const row = document.createElement('div');
   row.className = 'academic-policy-row academic-cumulative-grid';
   row.dataset.policyId = term.Id || '';
+  row.dataset.termId = term.TermId || '';
   const name = createPolicyInput('text', term.TermName, 'Academic term name', { placeholder: 'First Term' });
   const weight = createPolicyInput('number', term.WeightPercentage, 'Cumulative weight percentage', { min: '0', max: '100', step: '0.01' });
   const required = createPolicyInput('checkbox', '', 'Required for cumulative result');
@@ -722,6 +723,7 @@ function academicPolicyFromForm() {
     const [name, weight, required] = row.children;
     return {
       Id: row.dataset.policyId,
+      TermId: row.dataset.termId,
       TermName: name.value,
       WeightPercentage: Number(weight.value || 0),
       Required: required.checked,
@@ -858,7 +860,6 @@ function renderAcademicPolicyView(view = {}, message = '') {
   activateAcademicPolicyButton.disabled = !view.CanActivate;
   inheritAcademicPolicyButton.hidden = !branchMode;
   inheritAcademicPolicyButton.textContent = 'Use ' + inheritedPolicyLabel(section);
-  for (const group of document.querySelectorAll('[data-branch-policy-fields]')) group.hidden = Boolean(section);
   if (section) {
     const label = { nursery: 'Nursery', primary: 'Primary', secondary: 'Secondary' }[section];
     policyField('academicPolicyStateTitle').textContent = label + (hasDraft ? ' · Draft awaiting activation' : active ? ' · Active section policy' : ' · Using ' + inheritedPolicyLabel(section));
@@ -886,7 +887,7 @@ function academicPolicyRequestBody(action, extra = {}) {
   let sectionRuleChanges;
   if (action === 'saveDraft' && section) {
     const previous = JSON.parse(loadedAcademicPolicyFormSnapshot);
-    sectionRuleChanges = ['ResultAccess', 'Position', 'Promotion'].filter(group =>
+    sectionRuleChanges = ['ResultAccess', 'Position', 'Promotion', 'Cumulative'].filter(group =>
       JSON.stringify(previous[group]) !== JSON.stringify(extra.policy[group]));
   }
   return {

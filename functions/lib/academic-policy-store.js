@@ -180,7 +180,7 @@ export async function saveAcademicPolicyDraft(env, {
     // Earlier editors submit assessment fields only. Keep any saved section rules on those edits.
     const currentRevision = view.DraftRevision || view.ActiveRevision;
     overrides = { ...currentRevision?.Overrides, Assessment: submitted.Assessment, MidTerm: submitted.MidTerm };
-    for (const group of ['ResultAccess', 'Position', 'Promotion']) {
+    for (const group of ['ResultAccess', 'Position', 'Promotion', 'Cumulative']) {
       if (!Array.isArray(sectionRuleChanges) || !sectionRuleChanges.includes(group)) continue;
       if (differences[group]) overrides[group] = differences[group];
       else delete overrides[group];
