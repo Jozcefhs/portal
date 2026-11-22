@@ -259,3 +259,14 @@ export function bestFaceTemplateMatch(queryDescriptor, candidates = [], options 
   }
   return { outcome: 'matched', match: first, runnerUp: second, threshold, margin };
 }
+
+export function matchStudentFaceBurst(frames, candidates, settings) {
+  const decisions = frames.map(frame => bestFaceTemplateMatch(frame, candidates, settings));
+  const accepted = decisions.filter(decision => decision.match);
+  const combined = bestFaceTemplateMatch(averageFaceDescriptors(frames), candidates, settings);
+  const records = new Set([...accepted, combined].filter(d => d.match).map(d => d.match.record));
+  if (records.size > 1) return { outcome: 'ambiguous', match: null };
+  if (accepted.length >= 2) return accepted[0];
+  if (accepted.length === 1 && combined.match) return combined;
+  return { outcome: decisions.some(d => d.outcome === 'ambiguous') || combined.outcome === 'ambiguous' ? 'ambiguous' : 'no-match', match: null };
+}

@@ -606,8 +606,8 @@ function averageDescriptors(samples) {
   return average.map((value) => Math.round((value / samples.length) * 1e6) / 1e6);
 }
 
-export function captureLookupDescriptor(dialog, human) {
-  return captureFrontalDescriptor(dialog, human, false);
+export function captureLookupDescriptor(dialog, human, onSamples) {
+  return captureFrontalDescriptor(dialog, human, false, onSamples);
 }
 
 // Choose an actual capture nearest to the other samples in descriptor space.
@@ -623,7 +623,7 @@ function representativeDescriptor(samples) {
   return nearest;
 }
 
-export async function captureFrontalDescriptor(dialog, human, attendance) {
+export async function captureFrontalDescriptor(dialog, human, attendance, onSamples) {
   const video = dialog.querySelector('[data-face-video]');
   const progress = dialog.querySelector('[data-face-progress]');
   if (!video.srcObject) throw new Error('Start the camera first.');
@@ -685,6 +685,7 @@ export async function captureFrontalDescriptor(dialog, human, attendance) {
         if (samples.length === required) {
           setGuideState(dialog, 'capture');
           setStatus(dialog, attendance ? 'Face captured. Verifying your identity…' : 'Clear face sample captured. Searching for a possible match...', 'good');
+          onSamples?.(samples);
           return attendance ? averageDescriptors(samples) : representativeDescriptor(samples);
         }
         lastGuidance = 'Look straight at the camera and hold still. No head turn is needed.';
@@ -974,7 +975,7 @@ export async function openStudentFaceLookup(options = {}) {
   const captureButton = dialog.querySelector('[data-face-capture]');
   const revokeButton = dialog.querySelector('[data-face-revoke]');
   const studentId = clean(options.student?.id || options.student?.AccountRef || options.student?.studentId);
-  const branchId = clean(options.student?.branchId || options.student?.BranchId);
+  const branchId = clean(options.student?.branchId || options.student?.BranchId || options.branchId);
   const purpose = mode === 'enroll' ? 'records-desk' : (clean(options.purpose) || 'records-desk');
   let status = null;
   initializeAudioGuidance(dialog, mode === 'lookup');
@@ -1038,8 +1039,9 @@ export async function openStudentFaceLookup(options = {}) {
     dialog.querySelector('[data-face-match]').hidden = true;
     try {
       const human = readyHuman || await loadHuman(dialog);
+      let samples;
       const descriptor = mode === 'lookup'
-        ? await captureLookupDescriptor(dialog, human)
+        ? await captureLookupDescriptor(dialog, human, frames => { samples = frames; })
         : await captureDescriptor(dialog, human, sampleCount);
       if (mode === 'enroll') stopAudioGuidance(dialog);
       if (!dialog.open || options.signal?.aborted) return;
@@ -1059,7 +1061,7 @@ export async function openStudentFaceLookup(options = {}) {
         setStatus(dialog, result.message, 'good');
         options.onEnrollmentChange?.(true);
       } else {
-        const result = await faceLookupRequest('match', { modelId: MODEL_ID, descriptor, purpose });
+        const result = await faceLookupRequest('match', { modelId: MODEL_ID, descriptor, samples, branchId, purpose });
         if (!dialog.open || options.signal?.aborted) return;
         if (!result.match) {
           setStatus(dialog, result.message, result.outcome === 'ambiguous' ? 'warn' : 'bad');

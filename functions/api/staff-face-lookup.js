@@ -24,6 +24,7 @@ import {
   STUDENT_FACE_MODEL_ID,
   STUDENT_FACE_TEMPLATE_VERSION,
   bestFaceTemplateMatch,
+  matchStudentFaceBurst,
   decryptFaceDescriptor,
   encryptFaceDescriptor,
   faceTemplateIsUsable,
@@ -431,9 +432,13 @@ async function match(env, user, body, purpose) {
     throw error('The captured template uses an unsupported face model.');
   }
   const query = validateFaceDescriptor(body.descriptor);
+  const samples = body.samples;
+  if (samples !== undefined && (!Array.isArray(samples) || samples.length !== 3)) throw error('A lookup scan needs three frames.');
+  const frames = samples?.map(sample => validateFaceDescriptor(sample));
+  const branch = user.branchId || clean(body.branchId);
   const [paths, students] = await Promise.all([
-    permittedTemplatePaths(env, user),
-    accessibleStudents(env, user)
+    permittedTemplatePaths(env, { ...user, branchId: branch }),
+    accessibleStudents(env, user, branch)
   ]);
   const groups = await Promise.all(paths.map((path) => listCollection(env, path)));
   const templates = groups.flat().filter((row) =>
@@ -465,7 +470,8 @@ async function match(env, user, body, purpose) {
   if (decryptionFailures) {
     throw error('One or more enrolled face templates could not be decrypted. Ask an administrator to repair the face-template key configuration.', 503);
   }
-  const result = bestFaceTemplateMatch(query, candidates, studentFaceMatchSettings(env));
+  const settings = studentFaceMatchSettings(env);
+  const result = frames ? matchStudentFaceBurst(frames, candidates, settings) : bestFaceTemplateMatch(query, candidates, settings);
   const matched = result.match?.student || null;
   await writeAudit(env, user, 'FACE LOOKUP', {
     BranchId: matched?.BranchId || user.branchId,

@@ -13,13 +13,13 @@ test('deleted or absent student enrollments have actionable lookup feedback',()=
 test('every shared face import requests the repaired module',()=>{
   const imports=[...admin.matchAll(/student-face-lookup\.js\?v=([^']+)/g)];
   assert.equal(imports.length,3);
-  imports.forEach((match)=>assert.match(match[1],/20261007-human-directions-quick-lookup-auto-start-camera-defaults-vendor-pos-lookup-bounded-camera-clock-capture-student-burst$/));
+  imports.forEach((match)=>assert.match(match[1],/20261007-human-directions-quick-lookup-auto-start-camera-defaults-vendor-pos-lookup-bounded-camera-clock-capture-student-burst-consensus$/));
   assert.match(html,/js\/admin\.js\?v=20261008-wallet-card-setup/);
 });
 test('only a signed single-capture clock challenge enables frontal attendance capture; lookup retains manual confirmation',()=>{
   const lookup = ui.slice(ui.indexOf('export async function openStudentFaceLookup'), ui.indexOf('async function staffAttendanceFaceRequest'));
   const attendance = ui.slice(ui.indexOf('export function captureStaffAttendanceFace'));
-  assert.match(lookup,/const descriptor = mode === 'lookup'\s*\? await captureLookupDescriptor\(dialog, human\)\s*: await captureDescriptor\(dialog, human, sampleCount\)/);
+  assert.match(lookup,/const descriptor = mode === 'lookup'\s*\? await captureLookupDescriptor\(dialog, human, frames => \{ samples = frames; \}\)\s*: await captureDescriptor\(dialog, human, sampleCount\)/);
   assert.match(lookup,/renderPossibleMatch\(dialog, result\.match, options\.onMatch, options\.confirmText\)/);
   assert.match(lookup,/mode === 'lookup' \|\| options\.allowCameraSelection !== false/);
   assert.match(attendance, /mode === 'verify' && activeChallenge\?\.action === 'SINGLE_CAPTURE'[\s\S]*?await captureFrontalDescriptor\(dialog, human, true\)/);

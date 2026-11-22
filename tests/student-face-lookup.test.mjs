@@ -11,6 +11,7 @@ import {
   STUDENT_FACE_MODEL_ID,
   averageFaceDescriptors,
   bestFaceTemplateMatch,
+  matchStudentFaceBurst,
   decryptFaceDescriptor,
   encryptFaceDescriptor,
   faceDescriptorSimilarity,
@@ -521,4 +522,12 @@ test('lookup and enrollment are explicitly initiated without consent fields, and
   assert.match(cssSource, /html\[data-theme="dark"\] \.student-face-dialog/);
   assert.match(cssSource, /@media\(max-width:680px\)/);
   assert.match(adminHtmlSource, /css\/style\.css\?v=20261006-student-actions-mobile/);
+});
+
+test('student burst requires corroboration and rejects conflicting pupil identities', () => {
+  const candidates = [0, 1, 2].map(id => ({ id, descriptor: descriptor(id), record: activeTemplate() }));
+  const scan = values => matchStudentFaceBurst(values.map(value => descriptor(value)), candidates, {});
+  assert.equal(scan([0, 0.1, 0.45]).match.id, 0);
+  assert.equal(scan([0, 0, 1]).outcome, 'ambiguous');
+  assert.equal(scan([4, 4, 4]).match, null);
 });
