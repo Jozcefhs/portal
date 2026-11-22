@@ -481,3 +481,9 @@ In **Clinic queues**, open **Waiting times by department** and select arrival da
 In **Billing and HMO**, open **Posted hospital revenue**. Invoice postings and fee-credit postings come from the branch's posted hospital billing journals for the selected accounting dates. A fee credit against an older invoice reduces revenue on its posting date. Collections, advances, refunds and supplier postings are excluded. Daily and overall net revenue can be negative.
 
 Reports load on demand at a single snapshot. Pages contain at most 30 source records, and printing or redisplaying a loaded report makes no database calls. Source records and audit histories are preserved. Test coverage includes same-day pagination, date boundaries, credits to older invoices, role and branch isolation, unknown timings and read-only print previews. Core care-pathway and recovery acceptance, practitioner validation and desktop/offline parity remain open.
+
+### Patient journey and encrypted recovery acceptance
+
+The integrated synthetic drill follows one registered patient through reception, triage, signed consultation, a verified and released laboratory result, dispensing, ward admission, signed discharge, invoice and payment. It restores the encrypted whole-hospital records archive into a separate store, compares every source record by ID and field, and reopens the released result. Replaying a restore batch, discharge, dispensing and payment preserves the original entries and posted journals. A second preview finds no changes.
+
+Whole-hospital database exports pin collection discovery, branch structure and paginated records to the same Firestore snapshot. An expired snapshot requires a fresh export. The recovery drill covers database records. Practitioner acceptance, uploaded-file disaster recovery on live infrastructure and desktop/offline parity are separate checks.

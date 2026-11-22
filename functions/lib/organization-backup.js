@@ -217,11 +217,11 @@ export function sanitizeBackupDocument(collectionPath, row = {}) {
   return copy;
 }
 
-export async function organizationBackupDescriptors(env) {
+export async function organizationBackupDescriptors(env, readTime = '', db = {}) {
   const identity = requiredDeploymentIdentity(env);
   const [rootIds, structure] = await Promise.all([
-    listRootCollectionIds(env),
-    getSchoolStructure(env)
+    (db.listRootCollectionIds || listRootCollectionIds)(env, { readTime }),
+    readTime ? (db.getDocument || getDocument)(env, 'settings', 'schoolStructure', { readTime }).then(row => normalizeSchoolStructure(row || {})) : getSchoolStructure(env)
   ]);
   const descriptors = rootIds
     .filter((collection) => !EXCLUDED_ROOT_COLLECTIONS.has(collection))
@@ -264,10 +264,37 @@ export async function organizationBackupDescriptors(env) {
   return [...unique.values()].sort((a, b) => a.path.localeCompare(b.path));
 }
 
-export async function exportOrganizationBackupPage(env, options = {}) {
-  const descriptors = await organizationBackupDescriptors(env);
+// Keep only collection names in memory. A cold worker can rebuild the same list at readTime.
+const hospitalBackupCatalogs = new WeakMap();
+async function hospitalBackupCatalog(env, readTime, db) {
+  let catalogs = hospitalBackupCatalogs.get(env);
+  if (!catalogs) hospitalBackupCatalogs.set(env, catalogs = new Map());
+  if (catalogs.has(readTime)) return catalogs.get(readTime);
+  const descriptors = await organizationBackupDescriptors(env, readTime, db);
+  if (catalogs.size >= 8) catalogs.delete(catalogs.keys().next().value);
+  catalogs.set(readTime, descriptors);
+  return descriptors;
+}
+
+export async function exportOrganizationBackupPage(env, options = {}, db = {}) {
   const cursor = Math.floor(Math.max(0, Number(options.cursor || 0) || 0));
-  const pageToken = clean(options.pageToken);
+  let pageToken = clean(options.pageToken);
+  const identity = requiredDeploymentIdentity(env);
+  let readTime = '';
+  if (identity.edition === 'hospital' && !options.resetBranchId) {
+    if (pageToken.startsWith('hospital-v1:')) {
+      const [stamp, position, ...rest] = pageToken.slice('hospital-v1:'.length).split(':');
+      const age = Date.now() - Number(stamp);
+      if (!/^\d{13}$/.test(stamp) || age < 0 || age >= 60 * 60 * 1000 || position !== String(cursor) || !rest.length) {
+        throw restoreError('This backup continuation is invalid or expired. Start a new backup.');
+      }
+      readTime = new Date(Number(stamp)).toISOString();
+      pageToken = rest.join(':');
+    } else if (!cursor && !pageToken) {
+      readTime = new Date(Date.now() - 2000).toISOString();
+    }
+  }
+  const descriptors = readTime ? await hospitalBackupCatalog(env, readTime, db) : await organizationBackupDescriptors(env);
   if (cursor >= descriptors.length && descriptors.length) {
     const error = new Error('The backup cursor is invalid. Start a new backup.');
     error.status = 400;
@@ -276,14 +303,14 @@ export async function exportOrganizationBackupPage(env, options = {}) {
   }
   const descriptor = descriptors[cursor];
   const page = descriptor
-    ? await listCollectionPage(env, descriptor.path, {
+    ? await (db.listCollectionPage || listCollectionPage)(env, descriptor.path, {
+        ...(readTime ? { query: new URLSearchParams({ readTime }).toString() } : {}),
         pageSize: Math.min(500, Math.max(25, Number(options.pageSize || 200) || 200)),
         pageToken
       })
     : { documents: [], nextPageToken: '' };
   const nextCursor = page.nextPageToken ? cursor : cursor + (descriptor ? 1 : 0);
   const complete = !page.nextPageToken && nextCursor >= descriptors.length;
-  const identity = requiredDeploymentIdentity(env);
   const resetRows = [];
   let resetUncertain = 0;
   if (options.resetBranchId && descriptor && branchResetPathAllowed(descriptor.path, options.resetBranchId, identity.edition)) {
@@ -296,7 +323,7 @@ export async function exportOrganizationBackupPage(env, options = {}) {
     ok: true,
     message: complete ? 'Database backup completed.' : 'Backup page prepared.',
     ...(options.resetBranchId ? { resetSelection: resetRows.map(row => ({ id: row.__id, version: row.__updateTime })), resetUncertain } : {}),
-    exportedAt: nowIso(),
+    exportedAt: readTime || nowIso(),
     identity,
     collections: descriptor
       ? { [descriptor.path]: page.documents.map((row) => sanitizeBackupDocument(descriptor.path, row)) }
@@ -307,7 +334,8 @@ export async function exportOrganizationBackupPage(env, options = {}) {
       complete,
       cursor,
       nextCursor: complete ? null : nextCursor,
-      nextPageToken: complete ? null : (page.nextPageToken || null),
+      nextPageToken: complete ? null : readTime
+        ? `hospital-v1:${Date.parse(readTime)}:${nextCursor}:${page.nextPageToken || ''}` : (page.nextPageToken || null),
       currentCollection: descriptor?.path || '',
       totalCollections: descriptors.length,
       processedCollections: complete ? descriptors.length : nextCursor,

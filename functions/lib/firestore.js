@@ -144,7 +144,7 @@ export async function listRootCollectionIds(env, options = {}) {
     const response = await fetch(`${firestoreDatabaseUrl(env)}/documents:listCollectionIds`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pageSize, ...(pageToken ? { pageToken } : {}) })
+      body: JSON.stringify({ pageSize, ...(pageToken ? { pageToken } : {}), ...(options.readTime ? { readTime: options.readTime } : {}) })
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -854,13 +854,14 @@ export async function getDocuments(env, collectionPath, documentIds) {
   return names.map(name => found.get(name));
 }
 
-export async function getDocument(env, collectionPath, documentId) {
+export async function getDocument(env, collectionPath, documentId, options = {}) {
   const cleanCollection = String(collectionPath || '').replace(/^\/+|\/+$/g, '');
   const encodedId = encodeURIComponent(String(documentId || '').trim());
   if (!cleanCollection) throw new Error('Collection path is required.');
   if (!encodedId) throw new Error('Document ID is required.');
   try {
-    return firestoreDocumentToObject(await firestoreRequest(env, `${cleanCollection}/${encodedId}`));
+    const query = options.readTime ? '?' + new URLSearchParams({ readTime: options.readTime }) : '';
+    return firestoreDocumentToObject(await firestoreRequest(env, `${cleanCollection}/${encodedId}${query}`));
   } catch (error) {
     if (error && error.status === 404) return null;
     throw error;
