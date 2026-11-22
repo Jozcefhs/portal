@@ -1,3 +1,4 @@
+import { createPeriodReports } from './hospital-period-reports.js';
 import { createHospitalDashboards } from './hospital-module-dashboards.js';
 import { createEmergencyReception } from './hospital-emergency.js';
 import {createHospitalPortalClinical} from './hospital-portal-clinical.js';
@@ -107,20 +108,25 @@ export function createHospitalService(env, user, overrides = {}) {
     if (!clean(body.Revision) || body.Revision !== row.__updateTime) fail('This patient record changed. Reload before saving.', 409);
   }
   async function page(name, filters, field, body, options = {}) {
+    return pageAt(collection(name), filters, field, body, options);
+  }
+  async function pageAt(path, filters, field, body, options) {
     const limit = 30;
     let cursor = {};
     if (body.Cursor) {
       const docId = id(body.Cursor.id);
       if (typeof body.Cursor.value !== 'string' || body.Cursor.value.length > 500) fail('Invalid page reference.');
-      cursor = { startAfterName: `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${collection(name)}/${docId}`,
+      cursor = { startAfterName: `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${path}/${docId}`,
         startAfterFieldValue: body.Cursor.value };
     }
-    const rows = await db.queryCollection(env, collection(name), { ...options, filters, limit: limit + 1,
+    const rows = await db.queryCollection(env, path, { ...options, filters, limit: limit + 1,
       orderBy: [{ field }, { field: '__name__' }], ...cursor });
     const shown = rows.slice(0, limit), last = shown.at(-1);
     return { rows: shown, next: rows.length > limit ? { id: last.__id, value: last[field] } : null };
   }
   return {
+    hospitalPeriodReport: createPeriodReports({requireCapability,branch,workspaceId:identity.workspaceId,clock,page,eq,
+      journalPage:(...args)=>pageAt('accountingJournals',...args)}),
     ...createHospitalDashboards({env,user,db,branch,collection}),
     ...createHospitalClinicQueues({env,user,db,collection,capabilities,branch,clock,actor,condition,strip,eq,operation,auditWrite,page}),
     ...createHospitalStockControl({env,user,db,collection,capabilities,requireCapability,branch,clock,actor,condition,strip,eq,auditWrite,operation,page}),

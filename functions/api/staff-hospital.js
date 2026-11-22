@@ -38,7 +38,7 @@ export async function onRequestPost({ request, env, data }) {
       'dispensePrescription','returnDispensedMedicine','dispensingHistory','recordSpecimen','recordInvestigationReport','verifyInvestigationReport',
       'releaseInvestigationReport','pendingCriticalAlerts','acknowledgeCriticalResult',
       'billingSettings','saveBillingSettings','saveHmoPlan','findHmoPlans','billingVisit','saveHmoEligibility','createServiceCharge','billingCharges',
-      'voidServiceCharge','billingInvoices','billingReport','hmoClaims','issueHospitalInvoice','hospitalInvoiceDetails','hospitalBillingHistory','creditHospitalCharge','updateHmoClaim',
+      'voidServiceCharge','billingInvoices','billingReport','hospitalPeriodReport','hmoClaims','issueHospitalInvoice','hospitalInvoiceDetails','hospitalBillingHistory','creditHospitalCharge','updateHmoClaim',
       'recordHospitalPayment','hospitalPayments','refundHospitalPayment',
       'findCorporateAccount','saveCorporateAccount','hospitalCorporateVisit','saveCorporateCoverage','hospitalCorporateStatement',
       'hospitalDepositPatient','receiveHospitalFunds','hospitalFunds','hospitalFundDetails','hospitalFundInvoice','allocateHospitalFunds',

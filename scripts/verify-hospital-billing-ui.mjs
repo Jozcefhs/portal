@@ -60,6 +60,20 @@ try{
   await expand('billHistory');await dates('billHistory');await page.locator('#billLoadPayments').click();await done('Dated receipts loaded');
   const original=f.rows('Payments').find(p=>p.Payer==='Patient');await page.locator('#billRefundReceipt').selectOption(await page.locator('#billRefundReceipt option').filter({hasText:original.ReceiptNumber}).getAttribute('value'));
   await fill('billRefundForm',{Amount:'10',Reference:'UI-REFUND',Reason:'Refund credited overpayment'});await page.locator('#billConfirm').check();await page.locator('#billRefundForm button').click();await done('Refund recorded');assert.equal(f.rows('Refunds').length,1);
+  {
+    await page.locator('#revenueReport summary').click();
+    await page.locator('#revenueReportFrom').fill('2026-10-26');await page.locator('#revenueReportTo').fill('2026-10-26');
+    await page.locator('#revenueReportFilter button').first().click();
+    await page.locator('#revenueReportPreview').filter({hasText:'Complete period'}).waitFor();
+    assert.match(await page.locator('#revenueReportPreview tfoot').innerText(),/80\.00\s+[^\d]*40\.00\s+[^\d]*40\.00/);
+    const count=f.queries.length, writes=f.commits.length;
+    await page.evaluate(()=>{window.print=()=>{window.periodPrint=document.querySelector('#cardPrint').textContent;};});
+    await page.locator('#revenueReportPrint').click();
+    await page.locator('#revenueReportFilter button').first().click();
+    await page.waitForFunction(()=>!document.querySelector('#refresh').disabled);
+    assert.match(await page.evaluate(()=>window.periodPrint),/Complete period/);
+    assert.equal(count,f.queries.length);assert.equal(writes,f.commits.length);
+  }
   await expand('billReport');
   for (const [kind,width] of [['invoices',1366],['claims',390]]) {
     await page.setViewportSize({width,height:960});

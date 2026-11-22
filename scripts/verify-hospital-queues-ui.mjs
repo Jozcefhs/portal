@@ -39,6 +39,20 @@ try{
   await page.locator('[data-cq-action=Complete]').click();await page.locator('#cqConfirm').check();await page.locator('#cqSave').click();await done('Queue action saved');assert.match(await page.locator('#cqRows').textContent(),/No matching visits/);assert.equal(f.rows('Visits').length,1);assert.equal(f.rows('Visits')[0].Status,'Completed');
   queries=f.queries.length;await page.locator('#hospitalTask').selectOption('patients');await page.locator('#hospitalTask').selectOption('queues');await done('Queue action saved');assert.equal(f.queries.length,queries,'empty snapshots are cached too');
   await page.locator('#cqView').selectOption('Completed');await page.locator('#cqFilters button').first().click();await done('Choose arrival dates');assert.equal(f.queries.length,queries);await page.locator('#cqFrom').fill('2026-10-26');await page.locator('#cqTo').fill('2026-10-26');await page.locator('#cqFilters button').first().click();await done('Clinic queue loaded');assert.match(await page.locator('#cqRows').textContent(),/Patient Test/);
+  {
+    await page.locator('#waitingReport summary').click();
+    await page.locator('#waitingReportFrom').fill('2026-10-26');await page.locator('#waitingReportTo').fill('2026-10-26');
+    await page.locator('#waitingReportFilter button').first().click();
+    await page.locator('#waitingReportPreview').filter({hasText:'Complete period'}).waitFor();
+    assert.match(await page.locator('#waitingReportPreview tbody').innerText(),/\d/);
+    const count=f.queries.length, writes=f.commits.length;
+    await page.evaluate(()=>{window.print=()=>{window.periodPrint=document.querySelector('#cardPrint').textContent;};});
+    await page.locator('#waitingReportPrint').click();
+    await page.locator('#waitingReportFilter button').first().click();
+    await page.waitForFunction(()=>!document.querySelector('#refresh').disabled);
+    assert.match(await page.evaluate(()=>window.periodPrint),/Complete period/);
+    assert.equal(count,f.queries.length);assert.equal(writes,f.commits.length);
+  }
   await page.locator('#branch').selectOption('north');await done('Branch changed');assert.equal(await page.locator('#cqRows').textContent(),'');assert.equal(await page.locator('#cqPatient').textContent(),'');
   await login('cashier','queues');assert.equal(await page.locator('[data-cq-action]').count(),0);await page.locator('#cqView').selectOption('Completed');await page.locator('#cqFrom').fill('2026-10-26');await page.locator('#cqTo').fill('2026-10-26');await page.locator('#cqFilters button').first().click();await done('Clinic queue loaded');assert.equal(await page.locator('[data-cq-care]').count(),0);
   expire=true;await page.locator('#cqRefresh').click();await done('Staff session expired');assert.equal(await page.locator('#workspace').isVisible(),false);assert.equal(await page.locator('#cqRows').textContent(),'');assert.deepEqual(errors,[]);

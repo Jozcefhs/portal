@@ -4,7 +4,7 @@ Scope confirmed: 26 October 2026, Africa/Lagos.
 
 ## Current delivery status (22 November 2026)
 
-The Hospital Owner's Demo includes the H14 branch bed census and financial reports. The delivery log below records each deployed workflow and the remaining acceptance work. The next reporting items are dated waiting-time statistics and accounting-period revenue. Core clinical and recovery sign-off, specialist workflows and desktop/offline parity remain open.
+The Hospital Owner's Demo includes the H14 branch bed census and financial reports. The delivery log below records each deployed workflow and the remaining acceptance work. Waiting-time statistics and posted hospital billing revenue are now included. Next: reconcile the core care pathway and recovery acceptance evidence before practitioner testing. Core clinical and recovery sign-off, specialist workflows and desktop/offline parity remain open.
 
 The user wants Hospital to become the fourth Dynamax edition, alongside School, Faith and Other Organisations, and wants every feature in the proposed Hospital scope included. This document is the implementation checklist for that full scope, covering the web companion, desktop and shared backend.
 
@@ -473,3 +473,11 @@ Open **Billing and HMO → Financial reports**. Invoiced amounts and unpaid bill
 Both reports use the existing branch/date indexes, project only the required fields and make no business-record writes. Load the next page explicitly. Preview and print show whether totals are partial. Refresh starts a new snapshot. Invoice reporting requires billing read access and claims reporting requires HMO access.
 
 H14 now covers attendance, bed census, outstanding investigations, medicine usage and expiry, invoiced fees, unpaid balances and claim status. Remaining reporting acceptance includes waiting-time statistics over a selected period and posted revenue by accounting period, including credits posted against earlier invoices. After those reports, reconcile core workflow acceptance and recovery evidence before practitioner testing. Specialist modules and desktop/offline workflows remain tracked above.
+
+### H14 branch waiting times and posted hospital revenue
+
+In **Clinic queues**, open **Waiting times by department** and select arrival dates (WAT). Average and longest wait use elapsed time between recorded arrival and service start. The overall average is weighted by measured visits. Cancelled visits, visits still waiting, and unavailable or invalid timings have separate counts.
+
+In **Billing and HMO**, open **Posted hospital revenue**. Invoice postings and fee-credit postings come from the branch's posted hospital billing journals for the selected accounting dates. A fee credit against an older invoice reduces revenue on its posting date. Collections, advances, refunds and supplier postings are excluded. Daily and overall net revenue can be negative.
+
+Reports load on demand at a single snapshot. Pages contain at most 30 source records, and printing or redisplaying a loaded report makes no database calls. Source records and audit histories are preserved. Test coverage includes same-day pagination, date boundaries, credits to older invoices, role and branch isolation, unknown timings and read-only print previews. Core care-pathway and recovery acceptance, practitioner validation and desktop/offline parity remain open.
