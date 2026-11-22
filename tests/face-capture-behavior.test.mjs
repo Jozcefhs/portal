@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
 import { eyeOpenness, blinkFrameState, waitForCameraFrames, captureReadiness, captureDescriptor, captureLookupDescriptor, captureFrontalDescriptor, faceGuideSize } from '../js/student-face-lookup.js';
 import { randomLivenessChallenge, validateLivenessEvidence } from '../functions/api/staff-attendance-face.js';
+import { bestFaceTemplateMatch } from '../functions/lib/student-face-templates.js';
 
 function faceEyes(gap, rotation = 0) {
   const mesh = Array.from({ length: 468 }, () => [0, 0, 0]);
@@ -132,6 +133,15 @@ test('portrait and landscape guides keep face proportions and accept a face that
   assert.equal(captureReadiness({ faceScore: 0.9, box: [-5, 100, 270, 430] }, video).ready, false);
 });
 
+test('HD camera face sizes are checked on the downscaled recognition frame', () => {
+  for (const video of [{ videoWidth: 1920, videoHeight: 1080 }, { videoWidth: 640, videoHeight: 360 }]) {
+    const face = { faceScore: 0.95, boxRaw: [0.45, 0.37, 0.10, 0.26] };
+    assert.match(captureReadiness(face, video).message, /closer/);
+    assert.equal(captureReadiness({ ...face, boxRaw: [0.35, 0.15, 0.30, 0.70] }, video).ready, true);
+    assert.equal(captureReadiness({ faceScore: 0.95, box: [224, 54, 192, 252] }, video).ready, true);
+  }
+});
+
 test('new server challenges use head turns and validation still rejects incomplete or wrong evidence', () => {
   for (let index = 0; index < 100; index++) {
     const challenge = randomLivenessChallenge();
@@ -161,6 +171,7 @@ function captureHarness(t, frames, { inferenceMs = 350, videoSize = [480, 640], 
   t.after(() => { delete globalThis.window; });
   const video = { videoWidth: videoSize[0], videoHeight: videoSize[1], srcObject: { getVideoTracks: () => [{ readyState: 'live', getSettings: () => ({ facingMode }) }] } };
   video.readyState = 2;
+  Object.defineProperty(video, 'currentTime', { configurable: true, get: () => now / 1000 });
   video.ownerDocument = { createElement: () => ({ getContext: () => ({ drawImage() {} }) }) };
   const elements = { '[data-face-video]': video, '[data-face-progress]': {}, '[data-face-status]': {}, '.student-face-guide': {} };
   const dialog = { open: true, isConnected: true, cameraGeneration: 1, querySelector: key => elements[key] || null };
@@ -314,7 +325,7 @@ test('Human error results fail immediately and do not poison the next capture', 
   assert.equal((await captureDescriptor(retry.dialog, retry.human, 1)).length, 1024);
 });
 
-test('assisted lookup succeeds with three straight-facing frames on front and back cameras, without movement or eye landmarks', async t => {
+test('assisted lookup samples three steady frames on front and back cameras without asking for movement', async t => {
   for (const [facingMode, videoSize, box] of [
     ['user', [480, 640], [100, 100, 270, 430]],
     ['environment', [640, 480], [180, 80, 230, 300]]
@@ -326,8 +337,8 @@ test('assisted lookup succeeds with three straight-facing frames on front and ba
     const descriptor = await captureLookupDescriptor(dialog, human);
     assert.equal(descriptor.length, 1024);
     assert.equal(descriptor[0], 0.25);
-    assert.deepEqual(detections, [false, false, true]);
-    assert.equal(elements['[data-face-progress]'].value, 1);
+    assert.deepEqual(detections, [false, false, true, true, true]);
+    assert.equal(elements['[data-face-progress]'].value, 3);
     assert.equal(elements['[data-face-progress]'].hidden, true);
     assert.match(elements['[data-face-status]'].textContent, /possible match/);
     assert.doesNotMatch(elements['[data-face-status]'].textContent, /Live check|verified/);
@@ -338,7 +349,33 @@ test('lookup resets steady-frame calibration when another person enters, then ca
   const still = liveFrame();
   const { dialog, human, detections } = captureHarness(t, [still, still, liveFrame({ count: 2 }), still, still, still]);
   assert.equal((await captureLookupDescriptor(dialog, human)).length, 1024);
-  assert.deepEqual(detections, [false, false, true, false, false, true]);
+  assert.deepEqual(detections, [false, false, true, false, false, true, true, true]);
+});
+
+test('one outlying frame cannot decide the lookup among three enrolled students', async t => {
+  const vector = offset => Array.from({length: 1024}, (_, i) => offset + (i % 5) / 10);
+  const candidates = [0, 0.8, 1.6].map((offset, id) => ({
+    id, descriptor: vector(offset), record: { Active: true, TemplateExpiresAt: '2099-01-01' }
+  }));
+  const { dialog, human } = captureHarness(t, [liveFrame()]);
+  const detect = human.detect;
+  const offsets = [0.4, 0.08, 0.09];
+  human.detect = async (...args) => {
+    const frame = await detect(...args);
+    if (frame.face[0].embedding) frame.face[0].embedding = vector(offsets.shift());
+    return frame;
+  };
+  assert.equal(bestFaceTemplateMatch(vector(0.4), candidates).match, null);
+  const query = await captureLookupDescriptor(dialog, human);
+  assert.equal(bestFaceTemplateMatch(query, candidates).match.id, 0);
+  candidates[1].descriptor = vector(0.01);
+  assert.equal(bestFaceTemplateMatch(query, candidates).outcome, 'ambiguous');
+});
+
+test('a frozen camera frame cannot fill the student lookup sample burst', async t => {
+  const { dialog, human, video } = captureHarness(t, [liveFrame()], { inferenceMs: 1000 });
+  Object.defineProperty(video, 'currentTime', { value: 1 });
+  await assert.rejects(captureLookupDescriptor(dialog, human), /Capture paused/);
 });
 
 test('lookup rejects missing, multiple, low-quality, tiny, clipped, off-centre or non-frontal faces', async t => {

@@ -2,6 +2,7 @@ const MODEL_ID = 'human-faceres-3.3.6';
 const DESCRIPTOR_LENGTH = 1024;
 const ENROLLMENT_SAMPLE_COUNT = 3;
 const ROUTINE_SAMPLE_COUNT = 1;
+const LOOKUP_SAMPLE_COUNT = 3;
 const CAPTURE_TIMEOUT_MS = 40000;
 const LIVENESS_ACTIONS = new Set(['BLINK', 'TURN_LEFT', 'TURN_RIGHT', 'CHIN_UP']);
 const NEUTRAL_POSE_FRAMES = 3;
@@ -387,6 +388,11 @@ export async function waitForCameraFrames(video, stream) {
 
 const cameraCanvases = new WeakMap();
 
+function sampledFrameSize(video) {
+  const scale = Math.min(1, 640 / Math.max(video.videoWidth, video.videoHeight));
+  return { width: Math.max(1, Math.round(video.videoWidth * scale)), height: Math.max(1, Math.round(video.videoHeight * scale)) };
+}
+
 function sampleCameraFrame(video) {
   if (video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
     throw new Error('The camera has stopped supplying frames. Restart the camera.');
@@ -396,9 +402,7 @@ function sampleCameraFrame(video) {
     canvas = video.ownerDocument.createElement('canvas');
     cameraCanvases.set(video, canvas);
   }
-  const scale = Math.min(1, 640 / Math.max(video.videoWidth, video.videoHeight));
-  const width = Math.max(1, Math.round(video.videoWidth * scale));
-  const height = Math.max(1, Math.round(video.videoHeight * scale));
+  const { width, height } = sampledFrameSize(video);
   if (canvas.width !== width) canvas.width = width;
   if (canvas.height !== height) canvas.height = height;
   const context = canvas.getContext('2d');
@@ -489,10 +493,12 @@ function bindCameraSelector(dialog, captureButton, { quickLookup = false, onCame
 }
 
 function faceGeometry(face, video) {
+  if (!video.videoWidth || !video.videoHeight) return null;
+  const { width: frameWidth, height: frameHeight } = sampledFrameSize(video);
   const box = face?.boxRaw?.length === 4
-    ? face.boxRaw.map((coordinate, index) => coordinate * (index % 2 ? video.videoHeight : video.videoWidth))
+    ? face.boxRaw.map((coordinate, index) => coordinate * (index % 2 ? frameHeight : frameWidth))
     : face?.box || [];
-  if (box.length < 4 || !video.videoWidth || !video.videoHeight) return null;
+  if (box.length < 4 || !box.every(Number.isFinite)) return null;
   const width = Number(box[2]) || 0;
   const height = Number(box[3]) || 0;
   const centerX = Number(box[0]) + (Number(box[2]) / 2);
@@ -500,11 +506,13 @@ function faceGeometry(face, video) {
   return {
     width,
     height,
+    frameWidth,
+    frameHeight,
     minimumSize: Math.min(width, height),
     maximumSize: Math.max(width, height),
-    clipped: Number(box[0]) < 0 || Number(box[1]) < 0 || Number(box[0]) + width > video.videoWidth || Number(box[1]) + height > video.videoHeight,
-    centred: Math.abs(centerX - video.videoWidth / 2) <= video.videoWidth * 0.32 &&
-      Math.abs(centerY - video.videoHeight / 2) <= video.videoHeight * 0.34
+    clipped: box[0] < 0 || box[1] < 0 || box[0] + width > frameWidth || box[1] + height > frameHeight,
+    centred: Math.abs(centerX - frameWidth / 2) <= frameWidth * 0.32 &&
+      Math.abs(centerY - frameHeight / 2) <= frameHeight * 0.34
   };
 }
 
@@ -573,10 +581,10 @@ export function captureReadiness(face, video) {
   if (!geometry || score < 0.55) {
     return { ready: false, state: 'warning', message: 'Improve the lighting and hold the phone steady.' };
   }
-  if (geometry.minimumSize < Math.min(120, video.videoWidth * 0.2)) {
+  if (geometry.minimumSize < Math.min(120, geometry.frameWidth * 0.2)) {
     return { ready: false, state: 'warning', message: 'Move closer to the camera.' };
   }
-  if (geometry.clipped || geometry.width > video.videoWidth * 0.88 || geometry.height > video.videoHeight * 0.88) {
+  if (geometry.clipped || geometry.width > geometry.frameWidth * 0.88 || geometry.height > geometry.frameHeight * 0.88) {
     return { ready: false, state: 'warning', message: 'Move a little farther from the camera.' };
   }
   if (!geometry.centred) {
@@ -602,8 +610,19 @@ export function captureLookupDescriptor(dialog, human) {
   return captureFrontalDescriptor(dialog, human, false);
 }
 
-// Both flows need one clear frontal descriptor. The attendance API separately
-// verifies the signed challenge and compares the descriptor with the staff template.
+// Choose an actual capture nearest to the other samples in descriptor space.
+// One outlying frame during autofocus should not determine a student lookup.
+function representativeDescriptor(samples) {
+  const mean = averageDescriptors(samples);
+  let nearest = samples[0];
+  let minimum = Infinity;
+  for (const sample of samples) {
+    const distance = sample.reduce((sum, value, index) => sum + (value - mean[index]) ** 2, 0);
+    if (distance < minimum) { minimum = distance; nearest = sample; }
+  }
+  return nearest;
+}
+
 export async function captureFrontalDescriptor(dialog, human, attendance) {
   const video = dialog.querySelector('[data-face-video]');
   const progress = dialog.querySelector('[data-face-progress]');
@@ -618,15 +637,19 @@ export async function captureFrontalDescriptor(dialog, human, attendance) {
   const started = Date.now();
   let stableFrames = 0;
   let previousPose = null;
+  const samples = [];
+  const required = attendance ? ROUTINE_SAMPLE_COUNT : LOOKUP_SAMPLE_COUNT;
+  let lastSampleTime;
   let lastGuidance = 'Look straight at the camera and hold still. No head turn is needed.';
   progress.hidden = false;
-  progress.max = ROUTINE_SAMPLE_COUNT;
+  progress.max = required;
   progress.value = 0;
   setGuideState(dialog, 'searching');
   setStatus(dialog, lastGuidance);
   try {
     while (Date.now() - started < CAPTURE_TIMEOUT_MS) {
       ensureActive();
+      const frameTime = video.currentTime;
       const result = await detectFrame(human, video, {
         face: { description: { enabled: stableFrames >= NEUTRAL_POSE_FRAMES - 1 } }
       });
@@ -640,6 +663,7 @@ export async function captureFrontalDescriptor(dialog, human, attendance) {
       };
       const pose = facePose(face);
       if (!readiness.ready || !frontalPose(pose)) {
+        samples.length = progress.value = 0;
         stableFrames = 0;
         previousPose = null;
         lastGuidance = readiness.ready ? 'Look straight at the camera for a clear sample.' : readiness.message;
@@ -650,13 +674,18 @@ export async function captureFrontalDescriptor(dialog, human, attendance) {
           && Math.abs(pose.pitch - previousPose.pitch) < 0.08
           && Math.abs(pose.roll - previousPose.roll) < 0.08);
         stableFrames = steady ? stableFrames + 1 : 1;
+        if (!steady) samples.length = progress.value = 0;
         previousPose = { ...pose };
         const embeddingReady = Array.isArray(face.embedding) && face.embedding.length === DESCRIPTOR_LENGTH && face.embedding.every(Number.isFinite);
-        if (stableFrames >= NEUTRAL_POSE_FRAMES && embeddingReady) {
-          progress.value = ROUTINE_SAMPLE_COUNT;
+        if (stableFrames >= NEUTRAL_POSE_FRAMES && embeddingReady && (samples.length === 0 || frameTime !== lastSampleTime)) {
+          lastSampleTime = frameTime;
+          samples.push(face.embedding.slice());
+          progress.value = samples.length;
+        }
+        if (samples.length === required) {
           setGuideState(dialog, 'capture');
           setStatus(dialog, attendance ? 'Face captured. Verifying your identity…' : 'Clear face sample captured. Searching for a possible match...', 'good');
-          return averageDescriptors([face.embedding.map(Number)]);
+          return attendance ? averageDescriptors(samples) : representativeDescriptor(samples);
         }
         lastGuidance = 'Look straight at the camera and hold still. No head turn is needed.';
         setGuideState(dialog, 'ready');
