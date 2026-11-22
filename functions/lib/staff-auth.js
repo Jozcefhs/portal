@@ -194,7 +194,7 @@ async function verifiedSignedPayload(env, token) {
   }
 }
 
-async function verifyDesktopPassword(user, password) {
+export async function verifyDesktopPassword(user, password) {
   const version = lower(user.PasswordHashVersion || user.passwordHashVersion || WEB_PASSWORD_HASH_VERSION);
   if (version !== WEB_PASSWORD_HASH_VERSION) return false;
   const salt = clean(user.Salt || user.salt);

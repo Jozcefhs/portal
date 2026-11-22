@@ -1183,10 +1183,13 @@ async function loadProfile(password = '', { scope = settingsScopeField.value, br
 }
 
 const staffSessionButton = document.getElementById('useStaffSession');
+const enrollmentForm = document.getElementById('schoolPasswordEnrollment');
+let requireSetupPassword = true;
 const passwordUnlockButton = setupLoginForm.querySelector('button[type="submit"]');
 
 async function unlockSettings(password, { automatic = false } = {}) {
   if (unlockingSettings || settingsUnlocked) return;
+  if (requireSetupPassword && !password) return;
   unlockingSettings = true;
   staffSessionButton.disabled = passwordUnlockButton.disabled = true;
   try {
@@ -1194,7 +1197,9 @@ async function unlockSettings(password, { automatic = false } = {}) {
     if (!automatic) setLoginStatus(password ? 'Checking password...' : 'Checking staff session...', '');
     settingsScopeField.value = requestedSettingsScope;
     await loadProfile(password, { scope: requestedSettingsScope, branchId: requestedSettingsBranch });
+    document.getElementById('setupPassword').value = '';
     setupLoginForm.hidden = true;
+    enrollmentForm.hidden = true;
     setupForm.hidden = false;
     setStatus('Settings loaded and ready to edit.', 'ok');
     handleEmailConnectionCallback();
@@ -1755,4 +1760,64 @@ if (portalDomainPanel) {
   domainField('Activate').addEventListener('click', () => runDomainAction('activate'));
 }
 
-void unlockSettings('', { automatic: true });
+async function initializeSetupAccess() {
+  try {
+    const response = await fetch('/api/settings?unlockPolicy=1', { cache: 'no-store' });
+    if (!response.ok) return;
+    const policy = await response.json();
+    requireSetupPassword = policy.requireSetupPassword !== false;
+    if (!settingsUnlocked && policy.enrollmentRequired === true) {
+      enrollmentForm.hidden = false;
+      setupLoginForm.hidden = true;
+    }
+    if (policy.edition) applyEditionTerminology({ OrganisationEdition: policy.edition });
+    if (!requireSetupPassword) {
+      document.getElementById('setupPasswordHelp').hidden = true;
+      document.getElementById('setupSessionHelp').hidden = false;
+      staffSessionButton.hidden = false;
+      await unlockSettings('', { automatic: true });
+    }
+  } catch { /* Password entry remains available if the public policy cannot load. */ }
+}
+
+enrollmentForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = enrollmentForm.querySelector('button[type="submit"]');
+  if (button.disabled) return;
+  const status = document.getElementById('enrollmentStatus');
+  const newPassword = document.getElementById('enrollSetupPassword').value;
+  if (newPassword !== document.getElementById('confirmSetupPassword').value) {
+    status.textContent = 'The two setup passwords must match.';
+    return;
+  }
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/settings', { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'enrollSchoolSetupPassword', newPassword,
+        staffPassword: document.getElementById('enrollStaffPassword').value }) });
+    const data = await response.json();
+    if (!response.ok && response.status !== 409) throw new Error(data.message || 'Could not set the school setup password.');
+    enrollmentForm.reset();
+    enrollmentForm.hidden = true;
+    setupLoginForm.hidden = false;
+    setLoginStatus(response.ok ? 'School setup password created. Enter it to unlock Settings.' : data.message, response.ok ? 'ok' : 'bad');
+    document.getElementById('setupPassword').focus();
+  } catch (error) { status.textContent = error.message; }
+  finally { button.disabled = false; }
+});
+
+window.addEventListener('pagehide', () => {
+  if (!requireSetupPassword) return;
+  unlockedPassword = '';
+  settingsUnlocked = false;
+  enrollmentForm.reset();
+  enrollmentForm.hidden = true;
+  document.getElementById('setupPassword').value = '';
+  document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
+  setupForm.hidden = true;
+  setupLoginForm.hidden = false;
+});
+window.addEventListener('pageshow', event => {
+  if (event.persisted && requireSetupPassword) window.location.reload();
+});
+void initializeSetupAccess();

@@ -1,6 +1,7 @@
 import { hasFullModuleAccess } from './module-authority.js';
 import { secureTextEqual } from './backend-security.js';
 import { readStaffSession, requireStaffSession } from './staff-auth.js';
+import { matchesEnrolledPassword } from './school-setup-password.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -36,7 +37,18 @@ export function resolveSetupSettingsAccess(actor = {}, requestedScope = '', requ
 }
 
 export async function requireSetupAdministrator(env, request, password = '', module = '') {
-  const session = await readStaffSession(env, request).catch(() => null);
+  const edition = lower(env.ORGANISATION_EDITION || env.ORGANIZATION_EDITION);
+  const expected = clean(env.ADMIN_WEB_PASSWORD);
+  let passwordAccepted = Boolean(expected && secureTextEqual(password, expected));
+  if (edition === 'school' && !module && !expected) passwordAccepted = await matchesEnrolledPassword(env, password, request);
+  // Academic Management has its own module grant. School Setup requires a
+  // fresh password even when a valid staff session supplies the actor and scope.
+  if (edition === 'school' && !module && !passwordAccepted) {
+    throw Object.assign(new Error('Enter the correct school setup password to unlock Settings.'), { status: 401 });
+  }
+  const session = edition === 'school'
+    ? await readStaffSession(env, request)
+    : await readStaffSession(env, request).catch(() => null);
   if (session) {
     const staff = await requireStaffSession(env, request);
     if (clean(staff.role || staff.Role) !== 'Super Admin' && !(module && hasFullModuleAccess(staff, module))) {
@@ -46,8 +58,8 @@ export async function requireSetupAdministrator(env, request, password = '', mod
     }
     return { ...staff, source: 'staff-session' };
   }
-  const expected = clean(env.ADMIN_WEB_PASSWORD);
-  if (expected && secureTextEqual(password, expected)) {
+  if (edition === 'school' && module && !expected) passwordAccepted = await matchesEnrolledPassword(env, password, request);
+  if (passwordAccepted) {
     return {
       username: clean(env.ADMIN_WEB_USERNAME) || 'admin',
       displayName: clean(env.ADMIN_WEB_DISPLAY_NAME) || 'Setup Administrator',

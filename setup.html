@@ -29,15 +29,32 @@
       <div class="settings-unlock-copy">
         <p class="settings-eyebrow">Restricted area</p>
         <h2 data-edition-copy="unlock-title">Unlock organisation settings</h2>
-        <p>Sign in to the <a href="admin.html" target="_blank" rel="noopener">staff portal</a> as a Super Administrator, then continue here. You can also use your setup password.</p>
+        <p id="setupPasswordHelp">Enter the setup password each time you open Settings.</p>
+        <p id="setupSessionHelp" hidden>Sign in to the <a href="admin.html" target="_blank" rel="noopener">staff portal</a> as a Super Administrator, then continue here. You can also use your setup password.</p>
       </div>
       <div class="settings-unlock-control">
         <label for="setupPassword">Setup password <span class="required">*</span></label>
         <input id="setupPassword" type="password" autocomplete="current-password" required>
       </div>
-      <button type="button" id="useStaffSession">Continue with staff session</button>
+      <button type="button" id="useStaffSession" hidden>Continue with staff session</button>
       <button type="submit">Unlock with password</button>
       <p id="setupLoginStatus" class="status settings-login-status"></p>
+    </form>
+    <form id="schoolPasswordEnrollment" class="settings-unlock-card" hidden>
+      <div class="settings-unlock-copy">
+        <h2>Set the first school setup password</h2>
+        <p>Sign in to the <a href="admin.html" target="_blank" rel="noopener">staff portal</a> as an organisation-wide Super Administrator, then confirm your current staff password here.</p>
+      </div>
+      <div class="settings-unlock-control">
+        <label for="enrollStaffPassword">Current staff password</label>
+        <input id="enrollStaffPassword" type="password" autocomplete="current-password" required>
+        <label for="enrollSetupPassword">New school setup password</label>
+        <input id="enrollSetupPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required>
+        <label for="confirmSetupPassword">Confirm new setup password</label>
+        <input id="confirmSetupPassword" type="password" autocomplete="new-password" required>
+      </div>
+      <button type="submit">Set school setup password</button>
+      <p id="enrollmentStatus" role="status"></p>
     </form>
 
     <form id="setupForm" class="settings-layout" hidden>
@@ -658,6 +675,6 @@
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20261016-grouped-form-validation"></script>
   <script src="js/paystack-connection-status.js?v=20261013-paystack-activation"></script>
-  <script src="js/setup.js?v=20261121-homepage"></script>
+  <script src="js/setup.js?v=20261122-school-password"></script>
 </body>
 </html>

@@ -44,6 +44,7 @@ const EXCLUDED_ROOT_COLLECTIONS = new Set([
   'parentPasswordRecovery',
   'parentPasswordRecoveryLimits',
   'staffCredentialRevocations',
+  'schoolSetupCredentials',
   'staffMfaChallenges',
   'staffMfaProfiles',
   'staffPasskeys',
@@ -86,6 +87,7 @@ const IDENTITY_SETTING_FIELDS = Object.freeze([
 ]);
 
 const RESET_PRESERVED_ROOT_COLLECTIONS = new Set([
+  'schoolsetupcredentials',
   'settings',
   'staffusers',
   'organisationbranches',

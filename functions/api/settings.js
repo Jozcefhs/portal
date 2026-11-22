@@ -15,6 +15,7 @@ import { getWebBranding, saveWebBranding } from '../lib/web-branding.js';
 import { getSchoolStructure } from '../lib/school-scope.js';
 import { saveBranchSchoolSection } from '../lib/branch-school-presentation.js';
 import { homepageEditor, publishedHomepagePhoto } from '../lib/school-homepage.js';
+import { enrollSchoolSetupPassword, schoolSetupEnrollmentRequired } from '../lib/school-setup-password.js';
 import {
   assertConfiguredProfileBranch,
   effectiveBranchProfile,
@@ -373,6 +374,11 @@ function profileForSettingsAccess(profile = {}, access = {}) {
 export async function onRequestGet(context) {
   const metric = startRequestMetric(context.request, '/api/settings');
   const url = new URL(context.request.url);
+  if (url.searchParams.get('unlockPolicy') === '1') {
+    const { edition } = requiredDeploymentIdentity(context.env);
+    const enrollmentRequired = edition === 'school' && await schoolSetupEnrollmentRequired(context.env);
+    return Response.json({ edition, requireSetupPassword: edition === 'school', enrollmentRequired }, { headers: { 'Cache-Control': 'no-store' } });
+  }
   if (url.searchParams.has('homepagePhoto')) {
     return publishedHomepagePhoto(context.env, requiredDeploymentIdentity(context.env), url.searchParams);
   }
@@ -405,6 +411,10 @@ export async function onRequestPost(context) {
     const { request, env } = context;
     const deployment = requiredDeploymentIdentity(env);
     const body = await readJsonBody(request, { maxBytes: 1024 * 1024 });
+    if (body.action === 'enrollSchoolSetupPassword') {
+      await enrollSchoolSetupPassword(env, request, body);
+      return Response.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } });
+    }
     const actor = await requireSetupAdministrator(env, request, body.password);
     const settingsAccess = resolveSetupSettingsAccess(
       actor,
