@@ -101,6 +101,7 @@ export async function onRequestPost(context) {
         scopeChain,
         period,
         policy: body.policy || body.Policy,
+        sectionRuleChanges: body.SectionRuleChanges,
         inheritanceMode: body.InheritanceMode || body.inheritanceMode,
         expectedRevision: body.RevisionToken,
         actor

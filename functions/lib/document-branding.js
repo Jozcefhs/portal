@@ -1,4 +1,4 @@
-import { getDocument, upsertDocument } from './firestore.js';
+import { getDocument, patchDocumentFields } from './firestore.js';
 import { requiredDeploymentIdentity } from './deployment-identity.js';
 
 const clean = (value) => String(value ?? '').trim();
@@ -31,18 +31,12 @@ export async function getDocumentBranding(env = {}) {
 
 export async function saveDocumentBranding(env = {}, values = {}) {
   const identity = requiredDeploymentIdentity(env);
-  const current = await getDocumentBranding(env).catch(() => ({}));
-  const supplied = (field) => Object.prototype.hasOwnProperty.call(values, field);
-  return upsertDocument(env, 'settings', documentBrandingDocumentId(env), {
-    DocumentLogoDataUrl: supplied('DocumentLogoDataUrl')
-      ? clean(values.DocumentLogoDataUrl)
-      : clean(current.DocumentLogoDataUrl),
-    DocumentSignatureDataUrl: supplied('DocumentSignatureDataUrl')
-      ? clean(values.DocumentSignatureDataUrl)
-      : clean(current.DocumentSignatureDataUrl),
-    DocumentStampDataUrl: supplied('DocumentStampDataUrl')
-      ? clean(values.DocumentStampDataUrl)
-      : clean(current.DocumentStampDataUrl),
+  const assets = {};
+  for (const field of ['DocumentLogoDataUrl', 'DocumentSignatureDataUrl', 'DocumentStampDataUrl']) {
+    if (Object.hasOwn(values, field)) assets[field] = clean(values[field]);
+  }
+  return patchDocumentFields(env, 'settings', documentBrandingDocumentId(env), {
+    ...assets,
     UpdatedAt: clean(values.UpdatedAt) || new Date().toISOString(),
     WorkspaceId: identity.workspaceId,
     OrganisationEdition: identity.edition

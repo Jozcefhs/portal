@@ -604,7 +604,13 @@ function updateAcademicPolicyConditionalFields() {
   document.querySelectorAll('[data-fee-policy-field]').forEach((field) => {
     field.hidden = field.dataset.feePolicyField !== feeMode;
   });
-  const promotionMode = policyField('academicPromotionMode')?.value || 'unconfigured';
+  const promotionSelect = policyField('academicPromotionMode');
+  const promotionMode = promotionSelect?.value || 'unconfigured';
+  const secondaryRules = promotionSelect?.querySelector('option[value="division-rules"]');
+  if (secondaryRules) {
+    const lowerSchool = ['primary', 'nursery'].includes(selectedPolicySection());
+    secondaryRules.hidden = lowerSchool && promotionMode !== 'division-rules';
+  }
   document.querySelectorAll('[data-promotion-policy-field]').forEach((group) => {
     const active = group.dataset.promotionPolicyField === promotionMode;
     group.hidden = !active;
@@ -795,12 +801,23 @@ function renderAcademicPolicyIssues(issues = [], hasDraft = false) {
     return;
   }
   validation.classList.remove('ready');
-  const messages = issues.length
-    ? issues.map((issue) => issue.message)
-    : ['Save a draft to validate this policy.'];
-  messages.forEach((message) => {
+  const controls = {
+    RESULT_VISIBILITY_REQUIRED: 'academicResultVisibility',
+    FEE_CLEARANCE_REQUIRED: 'academicFeeClearanceMode',
+    POSITION_POLICY_REQUIRED: 'academicPositionMode',
+    PROMOTION_POLICY_REQUIRED: 'academicPromotionMode'
+  };
+  const entries = issues.length ? issues : [{ message: 'Save a draft to validate this policy.' }];
+  entries.forEach(({ code, message }) => {
     const item = document.createElement('li');
-    item.textContent = message;
+    if (controls[code]) {
+      const link = document.createElement('a');
+      link.href = '#' + controls[code];
+      link.textContent = message;
+      item.appendChild(link);
+    } else {
+      item.textContent = message;
+    }
     academicPolicyIssues.appendChild(item);
   });
 }
@@ -866,8 +883,15 @@ function academicPolicyRequestBody(action, extra = {}) {
       || (settingsScopeField.value === 'branch' && (section ? loadedAcademicPolicyView.Scope.BranchId : loadedAcademicPolicyView.Scope.Id) !== settingsBranchField.value))) {
     throw new Error('Load and review the academic policy for this scope, session and term before changing it.');
   }
+  let sectionRuleChanges;
+  if (action === 'saveDraft' && section) {
+    const previous = JSON.parse(loadedAcademicPolicyFormSnapshot);
+    sectionRuleChanges = ['ResultAccess', 'Position', 'Promotion'].filter(group =>
+      JSON.stringify(previous[group]) !== JSON.stringify(extra.policy[group]));
+  }
   return {
     action,
+    SectionRuleChanges: sectionRuleChanges,
     RevisionToken: loadedAcademicPolicyView?.RevisionToken,
     DraftRevisionId: loadedAcademicPolicyView?.DraftRevisionId,
     password: unlockedPassword,

@@ -369,7 +369,7 @@ test('School settings expose configurable result, grading and promotion policy c
   assert.match(setupHtmlSource, /id="academicSeniorProbationRequiredSubjects"/);
   assert.match(setupHtmlSource, /id="saveAcademicPolicyButton"/);
   assert.match(setupHtmlSource, /id="activateAcademicPolicyButton"/);
-  assert.match(setupHtmlSource, /protected result module will enforce the active policy when it is introduced/);
+  assert.match(setupHtmlSource, /Choose which published results families can open/);
   assert.match(setupJsSource, /fetch\('\/api\/academic-policy'/);
   assert.match(setupJsSource, /function academicPolicyFromForm\(\)/);
   assert.match(setupJsSource, /InheritanceMode: settingsScopeField\.value === 'branch'/);
@@ -392,7 +392,7 @@ test('School settings expose configurable result, grading and promotion policy c
   assert.match(styleSource, /html\[data-theme="dark"\] \.academic-policy-state/);
 });
 
-test('primary and secondary grading activate independently in each branch and retain historical schemes', async () => {
+async function policyFixture() {
   const { runInNewContext } = await import('node:vm');
   const model = await import('../functions/lib/academic-policy.js');
   const { academicAssessmentScheme, calculateAcademicStudentScore } = await import('../functions/lib/academic-scorebook.js');
@@ -421,13 +421,54 @@ test('primary and secondary grading activate independently in each branch and re
     return {scope:scopeChain.at(-1),scopeChain,period};
   }
   async function load(where) { return store.loadAcademicPolicyView({},where); }
-  async function draft(where,policy) {
+  async function draft(where,policy,sectionRuleChanges) {
     const view = await load(where);
-    return store.saveAcademicPolicyDraft({},{...where,policy,expectedRevision:view.RevisionToken});
+    return store.saveAcademicPolicyDraft({},{...where,policy,sectionRuleChanges,expectedRevision:view.RevisionToken});
   }
   async function activate(where,view) {
     return store.activateAcademicPolicyDraft({},{...where,expectedRevision:view.RevisionToken,expectedDraftRevisionId:view.DraftRevisionId});
   }
+  return {store,target,load,draft,activate,academicAssessmentScheme,calculateAcademicStudentScore};
+}
+
+test('an assessment-only Primary draft can complete all four activation requirements inside its section', async () => {
+  const {target,load,draft,activate}=await policyFixture();
+  const primary=target('main','primary');
+  const assessments=defaultAcademicPolicy();
+  assessments.Assessment=completePolicy().Assessment;
+  const before=await draft(primary,assessments);
+  assert.deepEqual(Array.from(before.ActivationIssues, issue=>issue.path).sort(),[
+    'Position.Mode','Promotion.Mode','ResultAccess.FinancialClearance.Mode','ResultAccess.VisibilityMode'
+  ]);
+  const edited=structuredClone(before.Policy);
+  edited.ResultAccess.VisibilityMode='current-session';
+  edited.ResultAccess.FinancialClearance.Mode='any-balance';
+  edited.Position.Mode='internal-only';
+  edited.Promotion.Mode='criteria';
+  edited.Promotion.MinimumOverallAverage=55;
+  const saved=await draft(primary,edited,['ResultAccess','Position','Promotion']);
+  assert.equal(saved.CanActivate,true);
+  assert.equal((await load(primary)).ActivePolicy.Promotion.Mode,'unconfigured');
+  const active=await activate(primary,saved);
+  for(const group of ['ResultAccess','Position','Promotion','Assessment']) {
+    assert.deepEqual(active.ActivePolicy[group],edited[group]);
+  }
+  assert.equal((await load(target('main','nursery'))).ActivePolicy.Promotion.MinimumOverallAverage,55);
+  for(const other of [target('main'),target('main','secondary'),target('west','primary')]) {
+    assert.equal((await load(other)).ActivePolicy.ResultAccess.VisibilityMode,'unconfigured');
+  }
+  const legacy=await draft(primary,assessments);
+  assert.deepEqual(legacy.Policy.ResultAccess,edited.ResultAccess);
+  assert.deepEqual(legacy.Policy.Assessment,assessments.Assessment);
+  const inherited=structuredClone(edited);
+  inherited.Position=defaultAcademicPolicy().Position;
+  const cleared=await draft(primary,inherited,['Position']);
+  assert.equal(cleared.DraftOverrides.Position,undefined);
+  assert.equal(cleared.CanActivate,false);
+});
+
+test('primary and secondary grading activate independently in each branch and retain historical schemes', async () => {
+  const {store,target,load,draft,activate,academicAssessmentScheme,calculateAcademicStudentScore}=await policyFixture();
   const organisation=target(), primary=target('main','primary'), secondary=target('main','secondary');
   const original=completePolicy();
   await activate(organisation,await draft(organisation,original));

@@ -65,3 +65,43 @@ test('an intentionally cleared canonical notice remains cleared', () => {
 
   assert.equal(effective.PortalNotice, '');
 });
+
+test('desktop organisation settings sync with first-time and partial document branding', async t => {
+  const { generateKeyPairSync } = await import('node:crypto');
+  const { onRequestPost } = await import('../functions/api/backend.js');
+  const env = {
+    FIREBASE_PROJECT_ID:'profile-sync-fixture', FIREBASE_CLIENT_EMAIL:'fixture@example.test',
+    FIREBASE_PRIVATE_KEY:generateKeyPairSync('rsa',{modulusLength:2048,privateKeyEncoding:{type:'pkcs8',format:'pem'},publicKeyEncoding:{type:'spki',format:'pem'}}).privateKey,
+    ORGANISATION_EDITION:'school', DYNAMAX_WORKSPACE_ID:'profile-sync-fixture', BACKEND_SHARED_SECRET:'fixture'
+  };
+  const documents = new Map();
+  t.mock.method(globalThis,'fetch',async (url,options={})=>{
+    const endpoint=new URL(url);
+    if (endpoint.hostname==='oauth2.googleapis.com') return Response.json({access_token:'fixture',expires_in:3600});
+    assert.equal(endpoint.hostname,'firestore.googleapis.com');
+    const id=endpoint.pathname.split('/documents/settings/')[1];
+    assert.ok(id,'Only settings documents may be accessed');
+    if (options.method==='PATCH') {
+      const {fields}=JSON.parse(options.body);
+      const saved=documents.get(id);
+      documents.set(id,{fields:endpoint.searchParams.has('updateMask.fieldPaths')?{...saved?.fields,...fields}:fields,
+        name:endpoint.pathname,updateTime:new Date().toISOString()});
+    }
+    return documents.has(id) ? Response.json(documents.get(id)) : Response.json({error:{status:'NOT_FOUND'}},{status:404});
+  });
+  const logo='data:image/png;base64,TE9HTw==', stamp='data:image/png;base64,U1RBTVA=';
+  async function save(assets) {
+    const body={Action:'saveSchoolProfile',ExpectedWorkspaceId:env.DYNAMAX_WORKSPACE_ID,ExpectedOrganisationEdition:'school',Secret:'fixture',SettingsScope:'organisation',SchoolName:'Fixture School',
+      SchoolBranches:[{Id:'main',Name:'Main Branch'}],ActiveBranchId:'main',EnableMedicalReport:'NO',...assets};
+    const response=await onRequestPost({env,request:new Request('https://school.example.test/api/backend',{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})});
+    const result=await response.json();
+    assert.equal(response.status,200,result.message);
+    assert.equal(result.ok,true);
+  }
+  await save({DocumentLogoDataUrl:logo});
+  assert.equal(documents.get('admissionDocuments').fields.Enabled.mapValue.fields.MedicalReport.booleanValue,false);
+  await save({DocumentStampDataUrl:stamp});
+  assert.equal(documents.get('documentBranding').fields.DocumentLogoDataUrl.stringValue,logo);
+  assert.equal(documents.get('documentBranding').fields.DocumentStampDataUrl.stringValue,stamp);
+});

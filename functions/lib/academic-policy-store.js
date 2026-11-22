@@ -163,6 +163,7 @@ export async function saveAcademicPolicyDraft(env, {
   scopeChain,
   period,
   policy,
+  sectionRuleChanges,
   inheritanceMode = '',
   expectedRevision,
   actor = {}
@@ -173,9 +174,18 @@ export async function saveAcademicPolicyDraft(env, {
   const section = view.Scope.Type === 'section';
   const mode = section ? 'inherit' : requestedInheritanceMode(view.Scope, inheritanceMode, view.InheritanceMode);
   const basePolicy = mode === 'independent' ? defaultAcademicPolicy() : view.InheritedPolicy;
-  // Keep the two assessment tables together, including values equal to today's branch default.
-  const overrides = section ? { Assessment: submitted.Assessment, MidTerm: submitted.MidTerm }
-    : deriveAcademicPolicyOverrides(basePolicy, submitted);
+  const differences = deriveAcademicPolicyOverrides(basePolicy, submitted);
+  let overrides = differences;
+  if (section) {
+    // Earlier editors submit assessment fields only. Keep any saved section rules on those edits.
+    const currentRevision = view.DraftRevision || view.ActiveRevision;
+    overrides = { ...currentRevision?.Overrides, Assessment: submitted.Assessment, MidTerm: submitted.MidTerm };
+    for (const group of ['ResultAccess', 'Position', 'Promotion']) {
+      if (!Array.isArray(sectionRuleChanges) || !sectionRuleChanges.includes(group)) continue;
+      if (differences[group]) overrides[group] = differences[group];
+      else delete overrides[group];
+    }
+  }
   const issues = academicPolicyIssues(applyAcademicPolicyOverrides(basePolicy, overrides), { forActivation: true });
   const id = revisionId(view.AssignmentId);
   const now = new Date().toISOString();
