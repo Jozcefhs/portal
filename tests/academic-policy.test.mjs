@@ -315,7 +315,7 @@ test('scope chains preserve the documented policy inheritance order', () => {
   }), [
     { Type: 'organisation', Id: 'organisation' },
     { Type: 'branch', Id: 'north' },
-    { Type: 'section', Id: 'secondary' },
+    { Type: 'section', Id: 'secondary', BranchId: 'north' },
     { Type: 'class', Id: 'jss-1' },
     { Type: 'subject', Id: 'mathematics' }
   ]);
@@ -390,4 +390,74 @@ test('School settings expose configurable result, grading and promotion policy c
   assert.match(styleSource, /\.academic-grade-grid/);
   assert.match(styleSource, /\.academic-cumulative-grid/);
   assert.match(styleSource, /html\[data-theme="dark"\] \.academic-policy-state/);
+});
+
+test('primary and secondary grading activate independently in each branch and retain historical schemes', async () => {
+  const { runInNewContext } = await import('node:vm');
+  const model = await import('../functions/lib/academic-policy.js');
+  const { academicAssessmentScheme, calculateAcademicStudentScore } = await import('../functions/lib/academic-scorebook.js');
+  const records = new Map();
+  let version = 0;
+  const read = (_, collection, id) => records.get(collection + '/' + id);
+  const store = { ...model, crypto, getDocument:read,
+    createDocumentIfAbsent(_,collection,id,row) {
+      assert.equal(collection,'academicPolicyRevisions');
+      assert.ok(!read(null,collection,id));
+      records.set(collection+'/'+id,structuredClone(row));
+      return {created:true};
+    },
+    upsertDocument(_,collection,id,row,condition) {
+      assert.equal(collection,'academicPolicyAssignments');
+      const current = read(null,collection,id);
+      if (condition.exists === false) assert.equal(current,undefined);
+      else assert.equal(condition.updateTime,current.__updateTime);
+      records.set(collection+'/'+id,{...row,__updateTime:String(++version)});
+    }
+  };
+  runInNewContext(policyStoreSource.replace(/^import [\s\S]*?;\s*/gm,'').replace(/^export /gm,''),store);
+  const period = {Session:'2026/2027',Term:'First Term'};
+  function target(branch,section,schoolClass) {
+    const scopeChain = academicPolicyScopeChain({BranchId:branch,SectionId:section,ClassId:schoolClass});
+    return {scope:scopeChain.at(-1),scopeChain,period};
+  }
+  async function load(where) { return store.loadAcademicPolicyView({},where); }
+  async function draft(where,policy) {
+    const view = await load(where);
+    return store.saveAcademicPolicyDraft({},{...where,policy,expectedRevision:view.RevisionToken});
+  }
+  async function activate(where,view) {
+    return store.activateAcademicPolicyDraft({},{...where,expectedRevision:view.RevisionToken,expectedDraftRevisionId:view.DraftRevisionId});
+  }
+  const organisation=target(), primary=target('main','primary'), secondary=target('main','secondary');
+  const original=completePolicy();
+  await activate(organisation,await draft(organisation,original));
+  const primaryPolicy=structuredClone(original);
+  primaryPolicy.Assessment.Components=[{...original.Assessment.Components[1],WeightPercentage:100,MaximumScore:100}];
+  primaryPolicy.Assessment.GradeBands=[{Grade:'P',MinimumPercentage:0,MaximumPercentage:100,GradePoint:1,Remark:'Primary'}];
+  primaryPolicy.ResultAccess.VisibilityMode='all-published';
+  const saved=await draft(primary,primaryPolicy);
+  assert.equal((await load(primary)).ActivePolicy.Assessment.Components.length,2);
+  await activate(primary,saved);
+  const classPolicy=async (branch,section)=>(await load(target(branch,section,'class-1'))).ActivePolicy;
+  const primaryActive=await classPolicy('main','primary');
+  const historical=academicAssessmentScheme(primaryActive);
+  const marks=[{ComponentId:'exam',RawScore:70}];
+  assert.equal(calculateAcademicStudentScore(historical,marks).Grade,'P');
+  assert.equal(primaryActive.ResultAccess.VisibilityMode,original.ResultAccess.VisibilityMode);
+  for (const [branch,section] of [['main','secondary'],['west','primary']]) {
+    const other=await classPolicy(branch,section);
+    assert.deepEqual(other.Assessment,original.Assessment);
+  }
+  const secondaryPolicy=structuredClone(original);
+  secondaryPolicy.Assessment.Components[0].WeightPercentage=25;
+  secondaryPolicy.Assessment.Components[1].WeightPercentage=75;
+  await activate(secondary,await draft(secondary,secondaryPolicy));
+  const secondaryScheme=academicAssessmentScheme(await classPolicy('main','secondary'));
+  const secondaryScore=calculateAcademicStudentScore(secondaryScheme,[{ComponentId:'ca',RawScore:40},{ComponentId:'exam',RawScore:30}]);
+  assert.equal(secondaryScore.Percentage,62.5);
+  const view=await load(primary);
+  await store.inheritAcademicPolicyAtScope({},{...primary,expectedRevision:view.RevisionToken});
+  assert.deepEqual((await classPolicy('main','primary')).Assessment,original.Assessment);
+  assert.equal(calculateAcademicStudentScore(historical,marks).Grade,'P');
+  assert.equal((await classPolicy('main','secondary')).Assessment.Components[0].WeightPercentage,25);
 });

@@ -35,12 +35,14 @@ async function requestScope(env, body = {}) {
     error.status = 400;
     throw error;
   }
+  const section = clean(body.PolicySection).toLowerCase();
+  if (section && (settingsScope !== 'branch' || !['primary', 'secondary'].includes(section))) {
+    throw Object.assign(new Error('Select a branch and choose Primary or Secondary.'), { status: 400 });
+  }
   if (settingsScope === 'branch') {
     const branch = await assertConfiguredProfileBranch(env, body.BranchId || body.branchId || body.Scope?.Id);
-    return {
-      scope: normalizeAcademicPolicyScope({ Type: 'branch', Id: branch.id }),
-      scopeChain: academicPolicyScopeChain({ BranchId: branch.id })
-    };
+    const scopeChain = academicPolicyScopeChain({ BranchId: branch.id, SectionId: section });
+    return { scope: scopeChain.at(-1), scopeChain };
   }
   return {
     scope: normalizeAcademicPolicyScope({ Type: 'organisation' }),
@@ -112,7 +114,8 @@ export async function onRequestPost(context) {
       message = 'Academic policy activated for the selected scope, session and term.';
     } else if (action === 'inherit' || action === 'reset') {
       view = await inheritAcademicPolicyAtScope(env, { scope, scopeChain, period, actor, expectedRevision: body.RevisionToken });
-      message = 'This branch now inherits the organisation academic policy for the selected period.';
+      message = scope.Type === 'section' ? 'This section now uses the branch default for this period.'
+        : 'This branch now inherits the organisation academic policy for the selected period.';
     } else if (action === 'load') {
       view = await loadAcademicPolicyView(env, { scope, scopeChain, period });
     } else {

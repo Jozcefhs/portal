@@ -22,7 +22,7 @@ export const ACADEMIC_POLICY_REVISIONS_COLLECTION = 'academicPolicyRevisions';
 function sameScope(left = {}, right = {}) {
   const a = normalizeAcademicPolicyScope(left);
   const b = normalizeAcademicPolicyScope(right);
-  return a.Type === b.Type && a.Id === b.Id;
+  return a.Type === b.Type && a.Id === b.Id && a.BranchId === b.BranchId;
 }
 
 function actorName(actor = {}) {
@@ -170,10 +170,13 @@ export async function saveAcademicPolicyDraft(env, {
   const view = await loadAcademicPolicyView(env, { scope, scopeChain, period });
   assertPolicyRevision(view, expectedRevision);
   const submitted = normalizeAcademicPolicy(policy);
-  const mode = requestedInheritanceMode(view.Scope, inheritanceMode, view.InheritanceMode);
+  const section = view.Scope.Type === 'section';
+  const mode = section ? 'inherit' : requestedInheritanceMode(view.Scope, inheritanceMode, view.InheritanceMode);
   const basePolicy = mode === 'independent' ? defaultAcademicPolicy() : view.InheritedPolicy;
-  const overrides = deriveAcademicPolicyOverrides(basePolicy, submitted);
-  const issues = academicPolicyIssues(submitted, { forActivation: true });
+  // Keep the two assessment tables together, including values equal to today's branch default.
+  const overrides = section ? { Assessment: submitted.Assessment, MidTerm: submitted.MidTerm }
+    : deriveAcademicPolicyOverrides(basePolicy, submitted);
+  const issues = academicPolicyIssues(applyAcademicPolicyOverrides(basePolicy, overrides), { forActivation: true });
   const id = revisionId(view.AssignmentId);
   const now = new Date().toISOString();
   const revision = {

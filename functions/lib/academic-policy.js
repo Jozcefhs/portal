@@ -494,7 +494,9 @@ export function normalizeAcademicPolicyScope(value = {}) {
     error.status = 400;
     throw error;
   }
-  return { Type: type, Id: safeScopeId(rawId, '') };
+  const scope = { Type: type, Id: safeScopeId(rawId, '') };
+  if (type === 'section' && value.BranchId) scope.BranchId = safeScopeId(value.BranchId);
+  return scope;
 }
 
 export function normalizeAcademicPolicyPeriod(value = {}) {
@@ -524,6 +526,7 @@ export function academicPolicyAssignmentId(scopeValue = {}, periodValue = {}) {
   return [
     'policy',
     scope.Type,
+    ...(scope.Type === 'section' && scope.BranchId ? [identifierPart(scope.BranchId)] : []),
     identifierPart(scope.Id),
     identifierPart(period.Session),
     identifierPart(period.Term)
@@ -539,7 +542,7 @@ export function academicPolicyScopeChain(value = {}) {
     ['subject', value.SubjectId || value.subjectId]
   ];
   definitions.forEach(([type, id]) => {
-    if (clean(id)) scopes.push(normalizeAcademicPolicyScope({ Type: type, Id: id }));
+    if (clean(id)) scopes.push(normalizeAcademicPolicyScope({ Type: type, Id: id, BranchId: value.BranchId || value.branchId }));
   });
   return scopes;
 }

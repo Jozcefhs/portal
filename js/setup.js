@@ -84,6 +84,9 @@ let webLogoDataUrl = '';
 let webLogoChanged = false;
 let activeSettingsEdition = 'school';
 let loadedAcademicPolicyView = null;
+let academicPolicyRequestSequence = 0;
+const policySectionSelector = document.getElementById('academicPolicySection');
+const selectedPolicySection = () => settingsScopeField.value === 'branch' ? policySectionSelector.value : '';
 let loadedAcademicPolicyFormSnapshot = '';
 let activeSettingsAccess = { scope: requestedSettingsScope, branchId: requestedSettingsBranch, scopeLocked: false };
 let paystackConnectionMode = 'not-configured';
@@ -806,10 +809,11 @@ function renderAcademicPolicyView(view = {}, message = '') {
   renderAcademicPolicy(view.Policy || {});
   const hasDraft = Boolean(view.DraftRevisionId);
   const branchMode = settingsScopeField.value === 'branch';
+  const section = view.Scope?.Type === 'section' ? view.Scope.Id : '';
   const active = Boolean(view.ActiveRevisionId);
   const effectiveActive = active || (Array.isArray(view.Sources) && view.Sources.length > 0);
   const inheritanceMode = branchMode && view.InheritanceMode === 'independent' ? 'independent' : 'inherit';
-  if (academicPolicyScopeMode) academicPolicyScopeMode.hidden = !branchMode;
+  if (academicPolicyScopeMode) academicPolicyScopeMode.hidden = !branchMode || Boolean(section);
   if (academicPolicyInheritanceMode) academicPolicyInheritanceMode.value = inheritanceMode;
   if (academicPolicyInheritanceHelp) {
     academicPolicyInheritanceHelp.textContent = inheritanceMode === 'independent'
@@ -835,6 +839,13 @@ function renderAcademicPolicyView(view = {}, message = '') {
   renderAcademicPolicyIssues(view.ActivationIssues || [], hasDraft);
   activateAcademicPolicyButton.disabled = !view.CanActivate;
   inheritAcademicPolicyButton.hidden = !branchMode;
+  inheritAcademicPolicyButton.textContent = section ? 'Use branch default' : 'Use organisation policy';
+  for (const group of document.querySelectorAll('[data-branch-policy-fields]')) group.hidden = Boolean(section);
+  if (section) {
+    const label = section === 'primary' ? 'Primary' : 'Secondary';
+    policyField('academicPolicyStateTitle').textContent = label + (hasDraft ? ' · Draft awaiting activation' : active ? ' · Active section policy' : ' · Using branch default');
+    policyField('academicPolicyStateSummary').textContent = [view.Period.Session, view.Period.Term, settingsBranchField.selectedOptions[0]?.textContent].join(' · ');
+  }
   loadedAcademicPolicyFormSnapshot = JSON.stringify(academicPolicyFromForm());
 }
 
@@ -842,14 +853,16 @@ function academicPolicyRequestBody(action, extra = {}) {
   const session = policyField('academicPolicySession').value.trim();
   const term = policyField('academicPolicyTerm').value.trim();
   if (!session || !term) throw new Error('Enter the academic session and term before loading or saving a policy.');
+  const section = selectedPolicySection();
   if (action === 'activate' && (loadedAcademicPolicyFormSnapshot !== JSON.stringify(academicPolicyFromForm())
-      || (settingsScopeField.value === 'branch' && loadedAcademicPolicyView?.InheritanceMode !== academicPolicyInheritanceMode?.value))) {
+      || (!section && settingsScopeField.value === 'branch' && loadedAcademicPolicyView?.InheritanceMode !== academicPolicyInheritanceMode?.value))) {
     throw new Error('Save the changed academic policy as a draft before activating it.');
   }
   if (action !== 'load' && (!loadedAcademicPolicyView?.RevisionToken
       || loadedAcademicPolicyView.Period?.Session !== session || loadedAcademicPolicyView.Period?.Term !== term
-      || loadedAcademicPolicyView.Scope?.Type !== settingsScopeField.value
-      || (settingsScopeField.value === 'branch' && loadedAcademicPolicyView.Scope?.Id !== settingsBranchField.value))) {
+      || loadedAcademicPolicyView.Scope?.Type !== (section ? 'section' : settingsScopeField.value)
+      || (section && loadedAcademicPolicyView.Scope.Id !== section)
+      || (settingsScopeField.value === 'branch' && (section ? loadedAcademicPolicyView.Scope.BranchId : loadedAcademicPolicyView.Scope.Id) !== settingsBranchField.value))) {
     throw new Error('Load and review the academic policy for this scope, session and term before changing it.');
   }
   return {
@@ -858,6 +871,7 @@ function academicPolicyRequestBody(action, extra = {}) {
     DraftRevisionId: loadedAcademicPolicyView?.DraftRevisionId,
     password: unlockedPassword,
     SettingsScope: settingsScopeField.value,
+    PolicySection: section,
     BranchId: settingsScopeField.value === 'branch' ? settingsBranchField.value : '',
     InheritanceMode: settingsScopeField.value === 'branch'
       ? academicPolicyInheritanceMode?.value || 'inherit'
@@ -870,12 +884,17 @@ function academicPolicyRequestBody(action, extra = {}) {
 
 async function requestAcademicPolicy(action, extra = {}) {
   if (activeSettingsEdition !== 'school') return null;
+  const body = academicPolicyRequestBody(action, extra);
+  const sequence = ++academicPolicyRequestSequence;
   const response = await fetch('/api/academic-policy', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(academicPolicyRequestBody(action, extra))
+    body: JSON.stringify(body)
   });
   const data = await response.json();
+  if (sequence !== academicPolicyRequestSequence || body.SettingsScope !== settingsScopeField.value
+      || body.PolicySection !== selectedPolicySection() || (body.BranchId && body.BranchId !== settingsBranchField.value)
+      || body.Session !== policyField('academicPolicySession').value.trim() || body.Term !== policyField('academicPolicyTerm').value.trim()) return null;
   if (!response.ok || !data.ok) {
     const error = new Error(data.message || 'Academic policy request failed.');
     error.issues = data.issues || [];
@@ -1094,7 +1113,9 @@ function updateSettingsScopeUI(profile = {}) {
   window.HomepageEditor.configure(profile, !branchMode && !scopeLocked && profile.OrganisationEdition === 'school',
     () => unlockedPassword);
   document.getElementById('entranceExamSubjects').disabled = !branchMode;
-  if (academicPolicyScopeMode) academicPolicyScopeMode.hidden = !branchMode;
+  policyField('academicPolicyTarget').hidden = !branchMode;
+  if (!branchMode) policySectionSelector.value = '';
+  if (academicPolicyScopeMode) academicPolicyScopeMode.hidden = !branchMode || Boolean(selectedPolicySection());
   settingsScopeField.disabled = scopeLocked;
   settingsBranchField.disabled = !branchMode || scopeLocked;
   resetBranchSettingsButton.hidden = !branchMode;
@@ -1486,6 +1507,19 @@ policyField('addAcademicCumulativeTerm')?.addEventListener('click', () => {
 policyField('academicFeeClearanceMode')?.addEventListener('change', updateAcademicPolicyConditionalFields);
 policyField('academicPromotionMode')?.addEventListener('change', updateAcademicPolicyConditionalFields);
 policyField('academicProbationResitEnabled')?.addEventListener('change', updateAcademicPolicyConditionalFields);
+policySectionSelector.addEventListener('change', async () => {
+  if (loadedAcademicPolicyView && loadedAcademicPolicyFormSnapshot !== JSON.stringify(academicPolicyFromForm())) {
+    const previous = loadedAcademicPolicyView.Scope.Type === 'section' ? loadedAcademicPolicyView.Scope.Id : '';
+    if (!await window.DynamaxDialogs.confirm({ title:'Switch assessment policy?', message:'Discard the unsaved edits to this policy?', confirmText:'Discard and switch' })) {
+      policySectionSelector.value = previous;
+      return;
+    }
+  }
+  loadedAcademicPolicyView = null;
+  activateAcademicPolicyButton.disabled = true;
+  await loadAcademicPolicy({ silent:true });
+});
+
 academicPolicyInheritanceMode?.addEventListener('change', () => {
   if (academicPolicyInheritanceHelp) {
     academicPolicyInheritanceHelp.textContent = academicPolicyInheritanceMode.value === 'independent'
@@ -1545,17 +1579,19 @@ activateAcademicPolicyButton?.addEventListener('click', async (event) => {
 inheritAcademicPolicyButton?.addEventListener('click', async (event) => {
   const button = event.currentTarget;
   const branchName = settingsBranchField.selectedOptions[0]?.textContent || 'this branch';
+  const section = selectedPolicySection();
+  const parentName = section ? 'branch default' : 'organisation policy';
   if (!await window.DynamaxDialogs.confirm({
-    title: 'Use organisation academic policy',
-    message: `Remove the active and draft academic-policy overrides for ${branchName} in this session and term?`,
+    title: 'Use ' + parentName,
+    message: `Remove the active and draft academic-policy overrides for ${[branchName, section].filter(Boolean).join(' / ')} in this session and term?`,
     tone: 'danger',
-    confirmText: 'Use organisation policy'
+    confirmText: 'Use ' + parentName
   })) return;
   if (!window.DynamaxActionFeedback.begin(button, 'Resetting policy...')) return;
   try {
     await requestAcademicPolicy('inherit');
     announceSettingsChange();
-    setStatus(`${branchName} now inherits the organisation academic policy for this period.`, 'ok');
+    setStatus(`${[branchName, section].filter(Boolean).join(' / ')} now uses the ${parentName} for this period.`, 'ok');
   } catch (error) {
     setStatus(error.message, 'bad');
   } finally {

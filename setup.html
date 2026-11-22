@@ -310,6 +310,16 @@
             </div>
           </div>
 
+          <div id="academicPolicyTarget" class="settings-field" hidden>
+            <label for="academicPolicySection">Assessment policy applies to</label>
+            <select id="academicPolicySection">
+              <option value="">Branch default</option>
+              <option value="primary">Primary</option>
+              <option value="secondary">Secondary</option>
+            </select>
+            <small class="settings-help">A section uses the branch default until you activate its own assessment components and grade bands for this session and term.</small>
+          </div>
+
           <div id="academicPolicyScopeMode" class="settings-subsection" hidden>
             <div class="settings-subsection-title"><strong>Branch policy source</strong><span>Choose whether organisation changes may flow into this branch.</span></div>
             <div class="settings-fields">
@@ -324,7 +334,7 @@
             </div>
           </div>
 
-          <div class="settings-subsection">
+          <div class="settings-subsection" data-branch-policy-fields>
             <div class="settings-subsection-title"><strong>Parent result access</strong><span>The protected result module will enforce the active policy when it is introduced.</span></div>
             <div class="settings-fields two-column">
               <div class="settings-field">
@@ -359,7 +369,7 @@
             </div>
           </div>
 
-          <div class="settings-subsection">
+          <div class="settings-subsection" data-branch-policy-fields>
             <div class="settings-subsection-title"><strong>Position policy</strong><span>Calculation and parent display remain separate choices.</span></div>
             <div class="settings-fields two-column">
               <div class="settings-field">
@@ -395,7 +405,7 @@
             <button id="addAcademicGradeBand" type="button" class="settings-text-button academic-add-row">Add grade band</button>
           </div>
 
-          <div class="settings-subsection">
+          <div class="settings-subsection" data-branch-policy-fields>
             <div class="settings-subsection-title"><strong>Cumulative session results</strong><span>Choose the terms and weights used for annual results; weights must total 100%.</span></div>
             <div class="academic-policy-grid-head academic-cumulative-grid"><span>Term name</span><span>Weight %</span><span>Required</span><span></span></div>
             <div id="academicCumulativeTerms" class="academic-policy-rows"></div>
@@ -407,7 +417,7 @@
             <div class="academic-policy-checks"><label><input id="academicIncludeTransferredResults" type="checkbox" checked> Include locked results earned before a student transferred class or arm during the session</label></div>
           </div>
 
-          <div class="settings-subsection">
+          <div class="settings-subsection" data-branch-policy-fields>
             <div class="settings-subsection-title"><strong>Promotion</strong><span>Junior and Senior rules are independent; authorized staff still approve final decisions.</span></div>
             <div class="settings-fields">
               <div class="settings-field"><label for="academicPromotionMode">Promotion method</label><select id="academicPromotionMode"><option value="unconfigured">Choose a policy</option><option value="manual-review">Manual review only</option><option value="division-rules">Separate Junior and Senior rules</option><option value="criteria">General criteria (legacy)</option></select></div>
@@ -675,6 +685,6 @@
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20261016-grouped-form-validation"></script>
   <script src="js/paystack-connection-status.js?v=20261013-paystack-activation"></script>
-  <script src="js/setup.js?v=20261122-school-password"></script>
+  <script src="js/setup.js?v=20261122-section-policy"></script>
 </body>
 </html>
