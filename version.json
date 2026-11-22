@@ -1,8 +1,8 @@
 {
-  "version": "3.1.66",
+  "version": "3.1.67",
   "channel": "stable",
   "release_status": "published",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.66.exe",
-  "sha256": "baa1cff69d41d04613b16be6ad10e8e195f6024f550aee44b79791c1b3bda556",
-  "notes": "Total school-fee discounts use the applicable Regular fees and support separate rates for new intake, returning, day and boarding pupils. Full Scholarship pupils receive only explicitly assigned compulsory fees."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.67.exe",
+  "sha256": "a14cd8d925c444091eb6c88291fd7208da8e057cf1cbb6723acbb3c4ccdce951",
+  "notes": "Branch-paired school desktops can open school-wide settings in the portal. Local CBT face capture handles camera startup more reliably."
 }
