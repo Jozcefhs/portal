@@ -60,6 +60,24 @@ try{
   await expand('billHistory');await dates('billHistory');await page.locator('#billLoadPayments').click();await done('Dated receipts loaded');
   const original=f.rows('Payments').find(p=>p.Payer==='Patient');await page.locator('#billRefundReceipt').selectOption(await page.locator('#billRefundReceipt option').filter({hasText:original.ReceiptNumber}).getAttribute('value'));
   await fill('billRefundForm',{Amount:'10',Reference:'UI-REFUND',Reason:'Refund credited overpayment'});await page.locator('#billConfirm').check();await page.locator('#billRefundForm button').click();await done('Refund recorded');assert.equal(f.rows('Refunds').length,1);
+  await expand('billReport');
+  for (const [kind,width] of [['invoices',1366],['claims',390]]) {
+    await page.setViewportSize({width,height:960});
+    await page.locator('#financeReportKind').selectOption(kind);
+    await dates('financeReport');
+    const before=f.commits.length;
+    await page.locator('#financeReportFilter button').first().click();
+    await page.locator('#financePreview').filter({hasText:'Complete period'}).waitFor();
+    assert.match(await page.locator('#financePreview').innerText(),kind==='claims'?/Synthetic UI insurer/:/1 invoices?/);
+    const queries=f.queries.length;
+    await page.evaluate(()=>{window.print=()=>{window.reportPrint=document.querySelector('#cardPrint').textContent;};});
+    await page.locator('#financePrint').click();
+    await page.locator('#financeReportFilter button').first().click();
+    await page.waitForFunction(()=>!document.querySelector('#refresh').disabled);
+    assert.match(await page.evaluate(()=>window.reportPrint),/Complete period/);
+    assert.equal(f.queries.length,queries);assert.equal(f.commits.length,before);
+  }
+  await page.setViewportSize({width:1366,height:960});
   await expand('billSettings');await page.locator('#billLoadSettings').click();await done('Billing account mappings loaded');const settingWrites=f.commits.length;await page.locator('#billSettingsForm button').click();await done('No account changes to save');assert.equal(f.commits.length,settingWrites);
   await page.locator('#branch').selectOption('north');await done('Branch changed');assert.equal(await page.locator('#billInvoiceTitle').textContent(),'');assert.equal(await page.locator('#billPayments').textContent(),'');assert.equal(await page.locator('#billRows').textContent(),'');
   expire=true;await page.locator('#refresh').click();await done('Staff session expired');assert.equal(await page.locator('#workspace').isVisible(),false);assert.deepEqual(errors,[]);

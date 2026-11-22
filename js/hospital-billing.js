@@ -14,7 +14,7 @@
     let context=null,selected=null,claim=null,plan=null,settings=null,dirty=false,funds=null,corporate=null,corporateCoverage=null;
     const loaded=new Map();let charges=[],payments=[];
     $('billing').innerHTML=`<h2>Billing and HMO</h2><p>Open a patient’s reception visit to add charges or record HMO eligibility. Choose dates before loading financial records.</p>
-      <div id="billCorporateHost"></div><div id="billFundsHost"></div>
+      <details id="billReport"></details><div id="billCorporateHost"></div><div id="billFundsHost"></div>
       <form id="billRegister" class="toolbar">${dates('billList')}<label>Register<select id="billRegisterKind"><option value="billingInvoices">Invoices</option><option value="billingCharges">Charges and return credits</option><option value="hmoClaims">HMO claims</option></select></label><button>Load selected period</button><button id="billReload" type="button" class="secondary">Refresh selected period</button></form>
       <div id="billRows" class="table-wrap"></div><button id="billNext" hidden>Next page</button><button id="billPrev" hidden>Previous page</button><p id="billListNote" class="hint">No financial history requested.</p>
       <section id="billVisit" hidden><h3 id="billVisitTitle"></h3><p id="billCoverage"></p><button id="billVisitRefresh" type="button">Refresh billing context</button>
@@ -55,13 +55,15 @@
     const confirm=()=>{if(!$('billConfirm').checked)throw Error('Confirm the patient and financial information first.');};
     const scope=()=>({PatientId:context.patient.PatientId,VisitId:context.visit.VisitId});
     const invoiceScope=()=>({InvoiceId:selected.InvoiceId,PatientId:selected.PatientId,Revision:selected.Revision,ConfirmPatient:true});
+    const report=window.DynamaxHospitalBillingReport.create({$,esc,money,can,api,run});
     function permissions(){
+      report.permissions();
       funds?.permissions();corporate?.permissions();$('billUseCorporate').disabled=!can('billing.read')||!corporateCoverage;
       document.querySelector('[data-tab=billing]').hidden=!(can('billing.read')||can('hmo.work'));
       for(const [id,permission] of Object.entries({billService:'billing.write',billIssue:'billing.write',billPayment:'billing.collect',billCredit:'billing.write',billRefundForm:'billing.refund',billAdjustment:'billing.refund',billClaim:'hmo.work',billEligibility:'hmo.work',billPlanEditor:'hmo.work',billSettings:'billing.configure'}))$(id).hidden=!writable(permission);
       $('billRegisterKind').querySelector('[value=hmoClaims]').disabled=!can('hmo.work');
     }
-    function clear(){funds?.clear();corporate?.clear();corporateCoverage=null;context=selected=claim=plan=settings=editingPlan=null;listPages=[];listIndex=0;listPayload=listAction=null;charges=[];payments=[];loaded.clear();dirty=false;
+    function clear(){report.reset();funds?.clear();corporate?.clear();corporateCoverage=null;context=selected=claim=plan=settings=editingPlan=null;listPages=[];listIndex=0;listPayload=listAction=null;charges=[];payments=[];loaded.clear();dirty=false;
       $('billVisit').hidden=$('billInvoice').hidden=true;$('billing').querySelectorAll('form').forEach(f=>f.reset());
       for(const id of ['billRows','billChargeRows','billInvoiceLines','billHistoryRows','billPayments','billTariffs','billPlanFound','billInvoiceTitle','billInvoiceSummary','billClaimState','billCoverage','billVisitTitle','billEstimate','billRefundReceipt','billAdjustmentCharge'])$(id).replaceChildren();
       for(const id of ['billNext','billPrev','billChargeNext','billHistoryNext','billPaymentsNext'])$(id).hidden=true;
@@ -69,7 +71,7 @@
       $('billListNote').textContent='No financial history requested.';
     }
     async function cached(action,payload,force=false){const key=JSON.stringify([action,payload]);if(force)loaded.delete(key);if(!loaded.has(key))loaded.set(key,await api(action,payload));return loaded.get(key);}
-    function invalidate(){funds?.invalidate();corporate?.invalidate();loaded.clear();listPages=[];listIndex=0;$('billRows').replaceChildren();$('billNext').hidden=$('billPrev').hidden=true;$('billListNote').textContent='A record changed. Refresh the register for current balances.';}
+    function invalidate(){report.reset();funds?.invalidate();corporate?.invalidate();loaded.clear();listPages=[];listIndex=0;$('billRows').replaceChildren();$('billNext').hidden=$('billPrev').hidden=true;$('billListNote').textContent='A record changed. Refresh the register for current balances.';}
     let listPages=[],listIndex=0,listPayload=null,listAction=null;
     function rowsTable(head,rows){return `<table><thead><tr>${head.map(v=>`<th>${v}</th>`).join('')}</tr></thead><tbody>${rows.join('')||`<tr><td colspan="${head.length}">No records in the selected period.</td></tr>`}</tbody></table>`;}
     async function register(cursor=null,force=false){

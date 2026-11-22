@@ -1,3 +1,4 @@
+import { createBillingReport } from './hospital-billing-report.js';
 import {createHospitalProcurementService} from './hospital-procurement-service.js';
 import {theatreReference} from './hospital-theatre-model.js';
 import {clean,fail,id,digest,nameKey,patientSummary} from './hospital-model.js';
@@ -124,6 +125,7 @@ export function createHospitalBillingService(ctx){
   }
   const corporate=createHospitalCorporateService({...ctx,read,write,view,stamp,revision,confirmed,unchanged,keyFor,visit});
   return {
+    billingReport: createBillingReport(ctx),
     ...corporate.actions,
     ...createHospitalProcurementService({...ctx,read,write,view,stamp,revision,unchanged,keyFor,settings,posting,postingMany,journal,line}),
     ...createHospitalFundsService({...ctx,read,write,view,stamp,any,revision,confirmed,unchanged,keyFor,settings,postingMany,journal,line,event,corporate}),

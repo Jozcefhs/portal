@@ -2,15 +2,13 @@
 
 Scope confirmed: 26 October 2026, Africa/Lagos.
 
-## Latest increment — 14 November 2026
+## Current delivery status (22 November 2026)
 
-H12 now includes individually authorised patient/guardian financial access, clinician-released investigation results and discharge summaries, and private clinical conversations. Doctors open conversations for named recipients after consent checks; clinical staff and recipients can reply, close and retain history. Open inboxes are bounded; closed history is dated; reads do not write messages or trigger notifications. See [the messaging guide](hospital-patient-messages.md).
-
-This increment deploys only to the isolated Hospital Owner's Demo, without clinical/financial record migrations, deletions, desktop compilation or installer release. Patient cards remain NFC and card terminals remain disabled. Practitioner validation, specialist workflows and desktop/offline parity remain on the full roadmap.
+The Hospital Owner's Demo includes the H14 branch bed census and financial reports. The delivery log below records each deployed workflow and the remaining acceptance work. The next reporting items are dated waiting-time statistics and accounting-period revenue. Core clinical and recovery sign-off, specialist workflows and desktop/offline parity remain open.
 
 The user wants Hospital to become the fourth Dynamax edition, alongside School, Faith and Other Organisations, and wants every feature in the proposed Hospital scope included. This document is the implementation checklist for that full scope, covering the web companion, desktop and shared backend.
 
-All items below are pending implementation and verification for Hospital. Existing shared capabilities may be reused, but reuse alone does not establish that Hospital integration is complete. This document records scope; it does not claim a hospital release is ready.
+An unchecked item can have working features. It stays open until every acceptance requirement has evidence. Existing shared capabilities may be reused, but reuse alone does not establish that Hospital integration is complete. This document records scope; it does not claim a hospital release is ready.
 
 ## Scope decisions
 
@@ -467,3 +465,11 @@ Open **Pharmacy → Medicine usage report**, choose a branch and dates (WAT), th
 ### H14 branch bed occupancy
 
 Wards and admissions includes a date-scoped census of occupied beds at opening and closing, admissions and discharges. Transfers within the branch do not change the census. Dates use WAT. The current day is measured through the displayed database snapshot. The report counts admissions in place across the date boundaries and reads only aggregate counts. Print and repeat display reuse the loaded result. Occupied-bed counts do not measure historical bed capacity or occupancy percentage.
+
+### H14 financial reports — 22 November 2026
+
+Open **Billing and HMO → Financial reports**. Invoiced amounts and unpaid bills shows fees billed, fee credits, net payments applied, unpaid balances and overpayments by payer. An invoice with several unpaid payers counts once. Insurance claims groups claim counts, amounts and recorded settlements by insurer and current status. The selected dates refer to invoice or claim creation in West Africa Time. Balances and statuses use one database snapshot across all pages, including later credits and settlements applied to those invoices.
+
+Both reports use the existing branch/date indexes, project only the required fields and make no business-record writes. Load the next page explicitly. Preview and print show whether totals are partial. Refresh starts a new snapshot. Invoice reporting requires billing read access and claims reporting requires HMO access.
+
+H14 now covers attendance, bed census, outstanding investigations, medicine usage and expiry, invoiced fees, unpaid balances and claim status. Remaining reporting acceptance includes waiting-time statistics over a selected period and posted revenue by accounting period, including credits posted against earlier invoices. After those reports, reconcile core workflow acceptance and recovery evidence before practitioner testing. Specialist modules and desktop/offline workflows remain tracked above.
