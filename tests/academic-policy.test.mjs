@@ -416,8 +416,8 @@ test('primary and secondary grading activate independently in each branch and re
   };
   runInNewContext(policyStoreSource.replace(/^import [\s\S]*?;\s*/gm,'').replace(/^export /gm,''),store);
   const period = {Session:'2026/2027',Term:'First Term'};
-  function target(branch,section,schoolClass) {
-    const scopeChain = academicPolicyScopeChain({BranchId:branch,SectionId:section,ClassId:schoolClass});
+  function target(branch,section,schoolClass,metadata) {
+    const scopeChain = academicPolicyScopeChain({BranchId:branch,SectionId:section,ClassId:schoolClass,SchoolClass:metadata});
     return {scope:scopeChain.at(-1),scopeChain,period};
   }
   async function load(where) { return store.loadAcademicPolicyView({},where); }
@@ -455,6 +455,31 @@ test('primary and secondary grading activate independently in each branch and re
   const secondaryScheme=academicAssessmentScheme(await classPolicy('main','secondary'));
   const secondaryScore=calculateAcademicStudentScore(secondaryScheme,[{ComponentId:'ca',RawScore:40},{ComponentId:'exam',RawScore:30}]);
   assert.equal(secondaryScore.Percentage,62.5);
+  const nursery = target('main','nursery');
+  const early = target('main','primary','early',{Name:'Nursery Two',SchoolStage:'primary'});
+  assert.deepEqual((await load(early)).ActivePolicy.Assessment,primaryActive.Assessment);
+  const nurseryPolicy=structuredClone(original);
+  nurseryPolicy.Assessment.Components[0].WeightPercentage=80;
+  nurseryPolicy.Assessment.Components[1].WeightPercentage=20;
+  nurseryPolicy.Assessment.GradeBands=[{Grade:'N',MinimumPercentage:0,MaximumPercentage:100,GradePoint:1,Remark:'Nursery'}];
+  const nurseryDraft=await draft(nursery,nurseryPolicy);
+  assert.deepEqual((await load(early)).ActivePolicy.Assessment,primaryActive.Assessment);
+  await activate(nursery,nurseryDraft);
+  const nurseryScheme=academicAssessmentScheme((await load(early)).ActivePolicy);
+  const nurseryMarks=[{ComponentId:'ca',RawScore:40},{ComponentId:'exam',RawScore:30}];
+  const result=calculateAcademicStudentScore(nurseryScheme,nurseryMarks);
+  assert.equal(result.Percentage,90);
+  assert.equal(result.Grade,'N');
+  const ids=(branch,section,metadata)=>target(branch,section,'a',metadata).scopeChain.map(s=>s.Id);
+  for(const Name of ['KG 1','Pre-Nursery','Crèche','Reception','Kindergarten']) assert.ok(ids('main','primary',{Name}).includes('nursery'));
+  assert.ok(ids('main','primary',{SchoolStage:'nursery',Name:'Sunflowers'}).includes('nursery'));
+  assert.ok(!ids('main','secondary',{Name:'Nursery Two'}).includes('nursery'));
+  assert.deepEqual((await classPolicy('main','primary')).Assessment,primaryActive.Assessment);
+  assert.deepEqual((await load(target('west','primary','early',{Name:'Nursery Two'}))).ActivePolicy.Assessment,original.Assessment);
+  const activeNursery=await load(nursery);
+  await store.inheritAcademicPolicyAtScope({},{...nursery,expectedRevision:activeNursery.RevisionToken});
+  assert.deepEqual((await load(early)).ActivePolicy.Assessment,primaryActive.Assessment);
+  assert.deepEqual(calculateAcademicStudentScore(nurseryScheme,nurseryMarks),result);
   const view=await load(primary);
   await store.inheritAcademicPolicyAtScope({},{...primary,expectedRevision:view.RevisionToken});
   assert.deepEqual((await classPolicy('main','primary')).Assessment,original.Assessment);

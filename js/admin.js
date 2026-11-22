@@ -13142,7 +13142,7 @@ function academicRecordId(row = {}) {
 }
 
 function academicSchoolStageLabel(value = '') {
-  return ({ primary: 'Primary', 'junior-secondary': 'Junior Secondary', 'senior-secondary': 'Senior Secondary' })[clean(value).toLowerCase()] || 'Not classified';
+  return ({ nursery: 'Nursery', primary: 'Primary', 'junior-secondary': 'Junior Secondary', 'senior-secondary': 'Senior Secondary' })[clean(value).toLowerCase()] || 'Not classified';
 }
 
 async function schoolLibraryRequest(action = 'list', payload = {}) {
@@ -14627,7 +14627,7 @@ function academicStructureWorkspace(data, rows) {
         <div class="academic-management-form-grid"><label>Class name<input name="Name" placeholder="JSS 1" required></label><label>Code<input name="Code" placeholder="JSS1" required></label></div>
         ${academicManagementFilters.section === 'secondary'
           ? '<label>Secondary division<select name="SchoolStage" required><option value="">Choose division</option><option value="junior-secondary">Junior Secondary</option><option value="senior-secondary">Senior Secondary</option></select></label>'
-          : '<input type="hidden" name="SchoolStage" value="primary">'}
+          : '<label>Assessment section<select name="SchoolStage"><option value="primary">Use class name (Nursery or Primary)</option><option value="nursery">Nursery</option></select></label>'}
         <div class="academic-management-form-grid"><label>Capacity<input name="Capacity" type="number" min="0" value="0"></label><label>Progression order<input name="SortOrder" type="number" min="1" value="100"><small>Used only for the class progression sequence.</small></label></div>
         <label>Next class<select name="NextClassId">${nextClassOptions}</select></label>
         <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>

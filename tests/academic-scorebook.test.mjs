@@ -278,7 +278,7 @@ test('Milestone 5 server and web contracts expose controlled score sheets, impor
   ['academicScoreSheets', 'academicStudentScores', 'academicScoreImports'].forEach((name) => assert.match(academicManagementSource, new RegExp(name)));
   ['getAcademicScorebookContext', 'saveAcademicScoreDraft', 'changeAcademicScoreSheetStatus', 'previewAcademicScoreImport', 'importAcademicScores', 'rollbackAcademicScoreImport']
     .forEach((action) => assert.match(academicManagementSource, new RegExp(action)));
-  assert.match(academicManagementSource, /SectionId: scope\.section, ClassId: classId, SubjectId: subjectId/);
+  assert.match(academicManagementSource, /SectionId: scope\.section, ClassId: schoolClass\?\.ClassId, SchoolClass: schoolClass, SubjectId: subjectId/);
   assert.match(academicManagementSource, /academicAssessmentFingerprint/);
   assert.match(academicManagementSource, /existing\.AssessmentComponents/);
   assert.match(academicManagementSource, /ACADEMIC_SCORE_SNAPSHOT_INVALID/);

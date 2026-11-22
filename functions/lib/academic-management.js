@@ -576,7 +576,7 @@ function uniqueIds(value) {
 }
 
 function schoolStageValue(value, section = '', className = '') {
-  if (lower(section) === 'primary') return 'primary';
+  if (lower(section) === 'primary') return lower(value) === 'nursery' ? 'nursery' : 'primary';
   const wanted = lower(value).replace(/[\s_]+/g, '-');
   if (['junior', 'jss', 'junior-secondary'].includes(wanted)) return 'junior-secondary';
   if (['senior', 'sss', 'senior-secondary'].includes(wanted)) return 'senior-secondary';
@@ -2510,7 +2510,8 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
   const includeAssessmentPolicy = !registerOnly && !readPlan.deferred && input.IncludeAssessmentPolicy !== false && lower(input.IncludeAssessmentPolicy) !== 'false';
   if (includeAssessmentPolicy && selectedSession && selectedTerm && ['scorebook', 'cbt'].includes(focusedView)) {
     try {
-      assessmentScheme = await academicAssessmentForPeriod(env, scope, selectedSession, selectedTerm, { required: false });
+      const schoolClass = findById(state.classes, teacherWorkspace?.ClassId || requestedClassId || input.ClassId);
+      assessmentScheme = await academicAssessmentForPeriod(env, scope, selectedSession, selectedTerm, { required: false, schoolClass });
     } catch (error) {
       assessmentScheme = { ...academicAssessmentScheme({}), Issues: [clean(error?.message || error)] };
     }
@@ -6008,9 +6009,9 @@ async function academicResultReference(resultId) {
   return `TR-${[...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('').slice(0, 16).toUpperCase()}`;
 }
 
-async function academicAssessmentForPeriod(env, scope, session, term, { required = true, classId = '', subjectId = '' } = {}) {
+async function academicAssessmentForPeriod(env, scope, session, term, { required = true, schoolClass, subjectId = '' } = {}) {
   const scopeChain = academicPolicyScopeChain({
-    BranchId: scope.branchId, SectionId: scope.section, ClassId: classId, SubjectId: subjectId
+    BranchId: scope.branchId, SectionId: scope.section, ClassId: schoolClass?.ClassId, SchoolClass: schoolClass, SubjectId: subjectId
   });
   const view = await loadAcademicPolicyView(env, {
     scope: scopeChain.at(-1),
@@ -6175,12 +6176,12 @@ async function academicScoreSheetContext(env, user, input, capability = 'canEnte
     }
   } else {
     scheme = await academicAssessmentForPeriod(env, scope, session, term, {
-      classId: schoolClass.ClassId, subjectId: subject.SubjectId
+      schoolClass, subjectId: subject.SubjectId
     });
   }
   const snapshotScheme = scheme;
   const activeScheme = existing ? await academicAssessmentForPeriod(env, scope, session, term, {
-    required: false, classId: schoolClass.ClassId, subjectId: subject.SubjectId
+    required: false, schoolClass, subjectId: subject.SubjectId
   }) : scheme;
   scheme = academicEffectiveScoreSources(snapshotScheme, activeScheme);
   return { ...context, schoolClass, arm, subject, SheetId, existing, allocation, roster, scheme, snapshotScheme, activeScheme };
@@ -6229,7 +6230,9 @@ export async function getAcademicClassroomScoreRegister(env, user = {}, input = 
     { ...(canViewAllClassrooms ? {} : { ClassroomRegisterTeacher: actorUsername(user) }), ClassId: input.ClassId, SessionId: input.SessionId, TermId: input.TermId });
   const classScoreRegister = await loadAcademicClassroomScoreRegister(env, scope, state, actorUsername(user), input, {
     canViewAllClassrooms,
-    assessmentScheme: (session, term) => academicAssessmentForPeriod(env, scope, session, term, { required: false })
+    assessmentScheme: (session, term) => academicAssessmentForPeriod(env, scope, session, term, {
+      required: false, schoolClass: findById(state.classes, input.ClassId)
+    })
   });
   return { ok: true, partialAcademicManagement: true, classScoreRegister };
 }
@@ -6857,7 +6860,7 @@ async function academicTermResultContext(env, user, input, capability = 'canCalc
     writePrecondition(selectedResult, resultRevisionToken(input, selectedResult.ResultId));
   }
   const scopeChain = academicPolicyScopeChain({
-    BranchId: scope.branchId, SectionId: scope.section, ClassId: schoolClass.ClassId
+    BranchId: scope.branchId, SectionId: scope.section, ClassId: schoolClass.ClassId, SchoolClass: schoolClass
   });
   const [policyView, scores] = await Promise.all([
     loadAcademicPolicyView(env, {scope:scopeChain.at(-1),scopeChain,period:{Session:session.Name,Term:term.Name}}),
@@ -6892,7 +6895,7 @@ export async function applyActiveAcademicScoreLayout(env, user = {}, input = {})
     throw failure('Only a Draft score sheet can adopt a newer assessment layout.', 409, 'ACADEMIC_SCORE_SHEET_LOCKED');
   }
   const activeScheme = await academicAssessmentForPeriod(env, scope, context.session, context.term, {
-    classId: context.schoolClass.ClassId,
+    schoolClass: context.schoolClass,
     subjectId: context.subject.SubjectId
   });
   if (clean(activeScheme.RevisionId) === clean(context.scheme.RevisionId)) {
@@ -8810,7 +8813,7 @@ async function academicCbtClassContext(env, user = {}, input = {}, loadedContext
     throw failure('No students in this class offer the selected subject.', 409, 'ACADEMIC_CBT_ROSTER_EMPTY');
   }
   const scheme = await academicAssessmentForPeriod(env, scope, session, term, {
-    classId: schoolClass.ClassId, subjectId: subject.SubjectId
+    schoolClass, subjectId: subject.SubjectId
   });
   return {
     ...context, schoolClass, subject, allocation, roster, scheme,
@@ -9997,9 +10000,12 @@ export async function grantAcademicResultClearance(env, user = {}, input = {}) {
   const membership = scopedState.studentMemberships.find((row) => lower(row.StudentRef) === lower(studentRef)
     && row.SessionId === session.SessionId && row.TermId === term.TermId);
   if (!membership) throw failure('The selected student has no membership in this academic period.', 404, 'ACADEMIC_CLEARANCE_STUDENT_NOT_FOUND');
+  const scopeChain = academicPolicyScopeChain({
+    BranchId: scope.branchId, SectionId: scope.section, ClassId: membership.ClassId,
+    SchoolClass: findById(scopedState.classes, membership.ClassId)
+  });
   const policyView = await loadAcademicPolicyView(env, {
-    scope: academicPolicyScopeChain({ BranchId: scope.branchId, SectionId: scope.section, ClassId: membership.ClassId }).at(-1),
-    scopeChain: academicPolicyScopeChain({ BranchId: scope.branchId, SectionId: scope.section, ClassId: membership.ClassId }),
+    scope: scopeChain.at(-1), scopeChain,
     period: { SessionId: session.SessionId, TermId: term.TermId, Session: session.Name, Term: term.Name }
   });
   const financial = normalizeAcademicPolicy(policyView.ActivePolicy || {}).ResultAccess.FinancialClearance;

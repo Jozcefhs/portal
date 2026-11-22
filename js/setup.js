@@ -86,6 +86,7 @@ let activeSettingsEdition = 'school';
 let loadedAcademicPolicyView = null;
 let academicPolicyRequestSequence = 0;
 const policySectionSelector = document.getElementById('academicPolicySection');
+const inheritedPolicyLabel = section => section === 'nursery' ? 'Primary policy' : section ? 'branch default' : 'organisation policy';
 const selectedPolicySection = () => settingsScopeField.value === 'branch' ? policySectionSelector.value : '';
 let loadedAcademicPolicyFormSnapshot = '';
 let activeSettingsAccess = { scope: requestedSettingsScope, branchId: requestedSettingsBranch, scopeLocked: false };
@@ -839,11 +840,11 @@ function renderAcademicPolicyView(view = {}, message = '') {
   renderAcademicPolicyIssues(view.ActivationIssues || [], hasDraft);
   activateAcademicPolicyButton.disabled = !view.CanActivate;
   inheritAcademicPolicyButton.hidden = !branchMode;
-  inheritAcademicPolicyButton.textContent = section ? 'Use branch default' : 'Use organisation policy';
+  inheritAcademicPolicyButton.textContent = 'Use ' + inheritedPolicyLabel(section);
   for (const group of document.querySelectorAll('[data-branch-policy-fields]')) group.hidden = Boolean(section);
   if (section) {
-    const label = section === 'primary' ? 'Primary' : 'Secondary';
-    policyField('academicPolicyStateTitle').textContent = label + (hasDraft ? ' · Draft awaiting activation' : active ? ' · Active section policy' : ' · Using branch default');
+    const label = { nursery: 'Nursery', primary: 'Primary', secondary: 'Secondary' }[section];
+    policyField('academicPolicyStateTitle').textContent = label + (hasDraft ? ' · Draft awaiting activation' : active ? ' · Active section policy' : ' · Using ' + inheritedPolicyLabel(section));
     policyField('academicPolicyStateSummary').textContent = [view.Period.Session, view.Period.Term, settingsBranchField.selectedOptions[0]?.textContent].join(' · ');
   }
   loadedAcademicPolicyFormSnapshot = JSON.stringify(academicPolicyFromForm());
@@ -1580,7 +1581,7 @@ inheritAcademicPolicyButton?.addEventListener('click', async (event) => {
   const button = event.currentTarget;
   const branchName = settingsBranchField.selectedOptions[0]?.textContent || 'this branch';
   const section = selectedPolicySection();
-  const parentName = section ? 'branch default' : 'organisation policy';
+  const parentName = inheritedPolicyLabel(section);
   if (!await window.DynamaxDialogs.confirm({
     title: 'Use ' + parentName,
     message: `Remove the active and draft academic-policy overrides for ${[branchName, section].filter(Boolean).join(' / ')} in this session and term?`,

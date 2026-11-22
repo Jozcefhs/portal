@@ -162,7 +162,7 @@ export async function loadAcademicResultsReadiness(env, state, scope, options = 
       {field:'SessionId',op:'==',value:scope.SessionId},{field:'TermId',op:'==',value:scope.TermId},
       {field:'StudentRef',op:'in',value:batch}],pageSize:100,maxRows:1000}));
   }
-  const chain = academicPolicyScopeChain({BranchId:scope.BranchId,SectionId:scope.SchoolSection,ClassId:scope.ClassId});
+  const chain = academicPolicyScopeChain({BranchId:scope.BranchId,SectionId:scope.SchoolSection,ClassId:scope.ClassId,SchoolClass:schoolClass});
   const policyView = await readPolicy(env,{scope:chain.at(-1),scopeChain:chain,period:{Session:session.Name,Term:term.Name}});
   return {...buildAcademicResultsReadiness(state,scope,policyView,students,related),CheckedAt:new Date().toISOString()};
 }

@@ -314,10 +314,11 @@
             <label for="academicPolicySection">Assessment policy applies to</label>
             <select id="academicPolicySection">
               <option value="">Branch default</option>
+              <option value="nursery">Nursery</option>
               <option value="primary">Primary</option>
               <option value="secondary">Secondary</option>
             </select>
-            <small class="settings-help">A section uses the branch default until you activate its own assessment components and grade bands for this session and term.</small>
+            <small class="settings-help">Primary and Secondary use the branch default until you activate a section policy. Nursery uses the Primary policy until you activate its own for this session and term.</small>
           </div>
 
           <div id="academicPolicyScopeMode" class="settings-subsection" hidden>
@@ -685,6 +686,6 @@
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20261016-grouped-form-validation"></script>
   <script src="js/paystack-connection-status.js?v=20261013-paystack-activation"></script>
-  <script src="js/setup.js?v=20261122-section-policy"></script>
+  <script src="js/setup.js?v=20261122-nursery-policy"></script>
 </body>
 </html>

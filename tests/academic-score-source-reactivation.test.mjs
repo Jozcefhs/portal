@@ -187,7 +187,7 @@ test('ordinary teachers cannot reopen a class before data loading', async () => 
 
 test('live permission overlay is used by score contexts without replacing the historical snapshot', () => {
   const body = functionSource('academicScoreSheetContext');
-  assert.match(body, /academicAssessmentForPeriod[\s\S]*classId: schoolClass.ClassId, subjectId: subject.SubjectId/);
+  assert.match(body, /academicAssessmentForPeriod[\s\S]*schoolClass, subjectId: subject.SubjectId/);
   assert.match(body, /academicEffectiveScoreSources\(snapshotScheme, activeScheme\)/);
   assert.match(body, /snapshotScheme, activeScheme/);
 });

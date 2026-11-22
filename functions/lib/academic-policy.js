@@ -1,3 +1,4 @@
+import { normalizeClassKey } from './class-names.js';
 import { safeScopeId } from './school-scope.js';
 
 const clean = (value) => String(value ?? '').trim();
@@ -535,9 +536,16 @@ export function academicPolicyAssignmentId(scopeValue = {}, periodValue = {}) {
 
 export function academicPolicyScopeChain(value = {}) {
   const scopes = [{ Type: 'organisation', Id: 'organisation' }];
+  const section = lower(value.SectionId || value.sectionId);
+  const stage = lower(value.SchoolStage || value.SchoolClass?.SchoolStage);
+  const classKey = normalizeClassKey(value.ClassName || value.SchoolClass?.Name);
+  const nursery = section === 'nursery' || (section === 'primary' && (
+    stage === 'nursery' || /^(?:creche|prenursery|nursery|kindergarten|kg|reception|earlyyears)\d*$/.test(classKey)
+  ));
   const definitions = [
     ['branch', value.BranchId || value.branchId],
-    ['section', value.SectionId || value.sectionId],
+    ['section', section === 'nursery' ? 'primary' : section],
+    ['section', nursery ? 'nursery' : ''],
     ['class', value.ClassId || value.classId],
     ['subject', value.SubjectId || value.subjectId]
   ];

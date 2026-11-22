@@ -1338,7 +1338,7 @@ async function parentAcademicResults(env, {
     const chain = academicPolicyScopeChain({
       BranchId: selectedScope.branchId,
       SectionId: selectedScope.schoolSection,
-      ClassId: result.ClassId
+      ClassId: result.ClassId, ClassName: result.ClassName, SchoolStage: result.SchoolStage
     });
     let view = null;
     try {
