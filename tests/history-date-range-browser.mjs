@@ -4,6 +4,12 @@ import { readFile, mkdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url), { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const source = await readFile('js/history-date-range.js', 'utf8');
+const admin = await readFile('js/admin.js', 'utf8');
+const adminFunction = name => {
+  const start = admin.indexOf(`function ${name}(`);
+  assert.notEqual(start, -1, name);
+  return admin.slice(start, admin.indexOf('\n}', start) + 2);
+};
 await mkdir('tmp/history-date-range', { recursive: true });
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 try {
@@ -53,6 +59,63 @@ try {
     assert.equal(await from.isVisible(), true); assert.match(await page.locator('#panel').innerText(), /Choose dates/);
     await page.getByRole('button', { name: 'Open requests', exact: true }).click();
     assert.equal(await from.isVisible(), false); assert.equal(await page.locator('#panel').innerText(), 'Current records ready');
+
+    await page.addScriptTag({ content: `
+      ${adminFunction('admissionFormPurchaseHeader')}
+      ${adminFunction('bindAdmissionFormPurchaseQr')}
+      ${adminFunction('admissionFormPurchasesWorkspace')}
+      ${adminFunction('renderSection')}
+      const panelEl = document.querySelector('#panel');
+      const summaryEl = document.createElement('div');
+      const dashboardStatus = document.createElement('div');
+      let dashboardData = null;
+      const currentUser = { role: 'Super Admin' };
+      const legacyDashboardSections = new Set(['formPurchases']);
+      const invalidatedDashboardSections = new Set(), dashboardSectionRequests = new Map();
+      const staffTabLabel = () => 'Form Purchases', escapeHtml = value => value;
+      const table = (_title, rows) => '<p>' + rows[0].ReceiptNo + '</p>';
+      const directTransferVerificationWorkspace = () => '';
+      const loadDirectTransferVerification = () => {};
+      const setButtonLoading = (button, busy) => { button.disabled = busy; };
+      const setStatus = (_node, message) => { throw new Error(message); };
+      window.qrRequests = [];
+      const staffFetch = async (path, options) => {
+        qrRequests.push({path, body: JSON.parse(options.body)});
+        return {ok:true, json: async () => ({ok:true})};
+      };
+      window.open = () => ({document:{write(){},close(){}},close(){}});
+      const showAdmissionFormPurchaseQr = () => { window.qrShown = true; };
+      const historyDateWorkspace = DynamaxHistoryDates.createHistoryDateWorkspace({
+        panel: panelEl, scope: () => branch, title: () => 'Purchase history',
+        header: module => module === 'formPurchases' ? admissionFormPurchaseHeader() : '',
+        load: renderSection
+      });
+      const loadDashboard = async () => {
+        loads.push({ module: 'formPurchases', range: historyDateWorkspace.range('formPurchases') });
+        dashboardData.departments.formPurchases = [{ReceiptNo:'Fixture receipt'}];
+        renderSection('formPurchases');
+      };
+      window.workspace.clear();
+      window.loads = [];
+      renderSection('formPurchases');
+    ` });
+    const purchaseQr = page.getByRole('button', { name: 'Purchase QR' });
+    assert.equal(await purchaseQr.isVisible(), true);
+    assert.ok((await purchaseQr.boundingBox()).y < (await from.boundingBox()).y, 'Purchase QR appears above the date fields');
+    assert.equal(await page.evaluate(() => loads.length), 0, 'Opening Form Purchases does not request history');
+    await purchaseQr.click();
+    assert.equal(await page.evaluate(() => window.qrShown), true);
+    assert.deepEqual(await page.evaluate(() => qrRequests), [{ path: '/api/staff-admission-forms', body: { action: 'genericQr' } }]);
+    assert.equal(await page.evaluate(() => loads.length), 0, 'Opening the QR does not request history');
+    await page.evaluate(() => { dashboardData = { departments: {} }; });
+    await from.fill('2026-11-01'); await to.fill('2026-11-10');
+    await page.getByRole('button', { name: 'Load selected period' }).click();
+    await page.getByText('Fixture receipt', { exact: true }).waitFor();
+    assert.equal(await purchaseQr.count(), 1);
+    assert.deepEqual(await page.evaluate(() => loads), [{ module: 'formPurchases', range: { fromDate: '2026-11-01', toDate: '2026-11-10' } }]);
+    await page.evaluate(() => { branch = 'new-branch'; renderSection('formPurchases'); });
+    assert.equal(await purchaseQr.isVisible(), true);
+    assert.equal(await page.getByText('Fixture receipt', { exact: true }).count(), 0);
     assert.deepEqual(errors, []);
     await context.close(); console.log(`History ${width}px: optional disclosure, zero requests on toggle, retained loaded range, isolated branch, required history and pending finance behavior passed.`);
   }

@@ -47,7 +47,8 @@ const tabsEl = document.getElementById('adminTabs');
 const panelEl = document.getElementById('adminPanel');
 const historyDateWorkspace = window.DynamaxHistoryDates.createHistoryDateWorkspace({
   panel: panelEl, scope: () => JSON.stringify([currentUser?.username, selectedBranchId]),
-  title: module => staffTabLabel(module, module),
+  title: module => module === 'formPurchases' ? 'Purchase history' : staffTabLabel(module, module),
+  header: module => module === 'formPurchases' ? admissionFormPurchaseHeader() : '',
   load: module => { if(module!=='financeRequests')staffWorkspaceReads.clear(); invalidatedDashboardSections.add(module); renderSection(module); }
 });
 const welcomeEl = document.querySelector('.staff-welcome');
@@ -2650,7 +2651,10 @@ function mergeDashboardResponse(current, incoming) {
 
 async function loadDashboard(options = {}) {
   const section = clean(options.section || (legacyDashboardSections.has(activeSection) ? activeSection : ''));
-  if (section === 'formPurchases' && !window.DynamaxHistoryDates.validHistoryDates(historyDateWorkspace.range(section))) { historyDateWorkspace.show(section); return; }
+  if (section === 'formPurchases' && !window.DynamaxHistoryDates.validHistoryDates(historyDateWorkspace.range(section))) {
+    if (activeSection === section) renderSection(section);
+    return;
+  }
   const mode = clean(options.mode || (section ? 'section' : 'shell')).toLowerCase();
   const merge = options.merge === true || mode === 'section';
   const refreshOverview = options.refreshOverview === true && activeSection === 'overview';
@@ -4963,12 +4967,16 @@ async function loadDirectTransferVerification(contexts = [], workspaceId = '') {
   }
 }
 
-function admissionFormPurchasesWorkspace(rows = []) {
+function admissionFormPurchaseHeader() {
   return `
     <section class="workflow-intro">
       <div><small>Applicant self-service</small><h2>Admission Form Purchases</h2><p class="muted">Share one reusable QR code that opens the public admission form purchase page.</p></div>
       <button type="button" id="admissionFormPurchaseQrButton">&#9638; Purchase QR</button>
-    </section>
+    </section>`;
+}
+
+function admissionFormPurchasesWorkspace(rows = []) {
+  return `
     ${table('Purchase records', rows, [
       { label: 'Receipt', value: (row) => pick(row, ['ReceiptNo', '__id']) },
       { label: 'Applicant', value: (row) => pick(row, ['ApplicantName']) },
@@ -21279,11 +21287,14 @@ async function loadHotelServices() {
 }
 
 function renderSection(active) {
-  if (!dashboardData) return;
+  if (!dashboardData && active !== 'formPurchases') return;
   window.DynamaxVendors?.unmount();
   window.DynamaxVendorPOS?.unmount();
   window.DynamaxProcurement?.unmount();
-  if (!historyDateWorkspace.show(active)) { summaryEl.replaceChildren(); return; }
+  const historyReady = historyDateWorkspace.show(active);
+  if (active === 'formPurchases') bindAdmissionFormPurchaseQr();
+  if (!historyReady) { summaryEl.replaceChildren(); return; }
+  if (!dashboardData) return;
   if (currentUser?.role === 'Vendor User' && ['tuckShop','organizationStore','restaurant'].includes(active)) {
     summaryEl.replaceChildren();
     window.DynamaxVendorPOS?.mount(panelEl,async (action,payload,signal) => {
@@ -21436,7 +21447,6 @@ function renderSection(active) {
     }
   } else if (active === 'formPurchases') {
     panelEl.innerHTML = admissionFormPurchasesWorkspace(departments.formPurchases || []);
-    bindAdmissionFormPurchaseQr();
     loadDirectTransferVerification(['admission-form'], 'admissionDirectTransferVerification');
   } else if (active === 'students') {
     const students = departments.students || [];
