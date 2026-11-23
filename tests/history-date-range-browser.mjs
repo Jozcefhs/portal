@@ -62,6 +62,10 @@ try {
 
     await page.addScriptTag({ content: `
       ${adminFunction('admissionFormPurchaseHeader')}
+      ${adminFunction('churchGivingQrHeader')}
+      ${adminFunction('bindChurchGivingQr')}
+      const churchDonationRequest = async action => { window.givingAction = action; return {}; };
+      const showChurchGivingQr = (_result, viewer) => { window.givingOpened = Boolean(viewer); };
       ${adminFunction('bindAdmissionFormPurchaseQr')}
       ${adminFunction('admissionFormPurchasesWorkspace')}
       ${adminFunction('renderSection')}
@@ -87,7 +91,7 @@ try {
       const showAdmissionFormPurchaseQr = () => { window.qrShown = true; };
       const historyDateWorkspace = DynamaxHistoryDates.createHistoryDateWorkspace({
         panel: panelEl, scope: () => branch, title: () => 'Purchase history',
-        header: module => module === 'formPurchases' ? admissionFormPurchaseHeader() : '',
+        header: module => module === 'formPurchases' ? admissionFormPurchaseHeader() : module === 'donations' ? churchGivingQrHeader() : '',
         load: renderSection
       });
       const loadDashboard = async () => {
@@ -116,6 +120,13 @@ try {
     await page.evaluate(() => { branch = 'new-branch'; renderSection('formPurchases'); });
     assert.equal(await purchaseQr.isVisible(), true);
     assert.equal(await page.getByText('Fixture receipt', { exact: true }).count(), 0);
+    await page.evaluate(() => { dashboardData = null; renderSection('donations'); });
+    const givingQr = page.getByRole('button', {name:'Generic Giving QR'});
+    assert.equal(await from.inputValue(), '');
+    assert.equal(await to.inputValue(), '');
+    const beforeGiving = await page.evaluate(() => loads.length);
+    await givingQr.click();
+    assert.deepEqual(await page.evaluate(() => [givingAction, givingOpened, loads.length]), ['genericqr', true, beforeGiving]);
     assert.deepEqual(errors, []);
     await context.close(); console.log(`History ${width}px: optional disclosure, zero requests on toggle, retained loaded range, isolated branch, required history and pending finance behavior passed.`);
   }

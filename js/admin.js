@@ -48,7 +48,8 @@ const panelEl = document.getElementById('adminPanel');
 const historyDateWorkspace = window.DynamaxHistoryDates.createHistoryDateWorkspace({
   panel: panelEl, scope: () => JSON.stringify([currentUser?.username, selectedBranchId]),
   title: module => module === 'formPurchases' ? 'Purchase history' : staffTabLabel(module, module),
-  header: module => module === 'formPurchases' ? admissionFormPurchaseHeader() : '',
+  header: module => module === 'formPurchases' ? admissionFormPurchaseHeader()
+    : module === 'donations' ? churchGivingQrHeader() : '',
   load: module => { if(module!=='financeRequests')staffWorkspaceReads.clear(); invalidatedDashboardSections.add(module); renderSection(module); }
 });
 const welcomeEl = document.querySelector('.staff-welcome');
@@ -8521,10 +8522,39 @@ function printChurchDonationReceipt(donation = {}, format = 'standard') {
   receiptWindow.document.close();
 }
 
-function showChurchGivingQr(data = {}) {
+function churchGivingQrHeader() {
+  return '<section class="workflow-intro"><h2>Church Donations</h2><button type="button" id="genericChurchGivingQr">▦ Generic Giving QR</button></section>';
+}
+
+function bindChurchGivingQr() {
+  document.getElementById('genericChurchGivingQr')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    const viewer = window.open('', '_blank', 'width=620,height=780');
+    if (!viewer) {
+      setStatus(dashboardStatus, 'Allow pop-ups to view and print the giving QR code.', 'bad');
+      return;
+    }
+    viewer.opener = null;
+    viewer.document.write('<title>Preparing giving QR</title><p>Preparing reusable giving QR code…</p>');
+    viewer.document.close();
+    const normalText = button.textContent;
+    setButtonLoading(button, true, 'Generating…', normalText);
+    try {
+      const qr = await churchDonationRequest('genericqr');
+      showChurchGivingQr(qr, viewer);
+    } catch (error) {
+      viewer.close();
+      setStatus(document.getElementById('churchDonationStatus') || dashboardStatus, error.message || String(error), 'bad');
+    } finally {
+      if (button.isConnected) setButtonLoading(button, false, 'Generating…', normalText);
+    }
+  });
+}
+
+function showChurchGivingQr(data = {}, viewer = null) {
   const donation = data.donation || {};
   const generic = Boolean(data.generic);
-  const qrWindow = window.open('', '_blank', 'width=620,height=780');
+  const qrWindow = viewer || window.open('', '_blank', 'width=620,height=780');
   if (!qrWindow) {
     setStatus(document.getElementById('churchDonationStatus') || dashboardStatus, 'Allow pop-ups to view and print the giving QR code.', 'bad');
     return;
@@ -8640,7 +8670,7 @@ async function loadChurchDonations() {
           <h2>Church Donations</h2>
           <p class="muted">Branch ${escapeHtml(data.branchId || 'main')} � ${summary.count || 0} entries � ${summary.paid || 0} paid � ${summary.pending || 0} pending</p>
         </div>
-        <span class="compact-row-actions"><button type="button" id="genericChurchGivingQr">▦ Generic Giving QR</button>${capabilities.canCollect ? '<button type="button" id="syncChurchDonationAccounting">Sync paid giving</button>' : ''}<button type="button" id="refreshChurchDonations">Refresh</button></span>
+        <span class="compact-row-actions">${capabilities.canCollect ? '<button type="button" id="syncChurchDonationAccounting">Sync paid giving</button>' : ''}<button type="button" id="refreshChurchDonations">Refresh</button></span>
       </div>
       <div class="workflow-kpis">
         <div><small>NGN equivalent</small><strong>${money(summary.totalAmount || 0)}</strong><span>Converted records only</span></div>
@@ -9082,20 +9112,6 @@ async function loadChurchDonations() {
         if (button.isConnected) setButtonLoading(button, false, '', normalText);
       }
     }));
-
-    document.getElementById('genericChurchGivingQr')?.addEventListener('click', async (event) => {
-      const button = event.currentTarget;
-      const normalText = button.textContent;
-      setButtonLoading(button, true, 'Generating…', normalText);
-      try {
-        const qr = await churchDonationRequest('genericqr');
-        showChurchGivingQr(qr);
-      } catch (error) {
-        setStatus(document.getElementById('churchDonationStatus') || dashboardStatus, error.message || String(error), 'bad');
-      } finally {
-        if (button.isConnected) setButtonLoading(button, false, 'Generating…', normalText);
-      }
-    });
 
     document.getElementById('syncChurchDonationAccounting')?.addEventListener('click', async (event) => {
       const button = event.currentTarget;
@@ -21287,12 +21303,13 @@ async function loadHotelServices() {
 }
 
 function renderSection(active) {
-  if (!dashboardData && active !== 'formPurchases') return;
+  if (!dashboardData && active !== 'formPurchases' && active !== 'donations') return;
   window.DynamaxVendors?.unmount();
   window.DynamaxVendorPOS?.unmount();
   window.DynamaxProcurement?.unmount();
   const historyReady = historyDateWorkspace.show(active);
   if (active === 'formPurchases') bindAdmissionFormPurchaseQr();
+  if (active === 'donations') bindChurchGivingQr();
   if (!historyReady) { summaryEl.replaceChildren(); return; }
   if (!dashboardData) return;
   if (currentUser?.role === 'Vendor User' && ['tuckShop','organizationStore','restaurant'].includes(active)) {
