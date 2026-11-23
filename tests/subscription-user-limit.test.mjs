@@ -5,10 +5,32 @@ import test from 'node:test';
 import {
   activeSeatDelta,
   activeStaffAccountCount,
+  loadSubscriptionUserLimit,
   assertSubscriptionSeatAvailable,
   staffAccountsForSubscription,
   staffAccountIsActive
 } from '../functions/lib/subscription-user-limit.js';
+
+test('staff management enforces the purchased Flex seats across current and legacy profiles', async () => {
+  const rows = Array.from({ length: 12 }, (_, index) => ({ Username: String(index), Active: true }));
+  for (const legacy of [false, true]) {
+    const limit = await loadSubscriptionUserLimit({}, async (_, collection, id) => {
+      assert.equal(collection, 'settings');
+      if (legacy && id === 'organisationProfile') return null;
+      return legacy ? { SubscriptionPlan: 'Flex', UserLimit: '5' } : { Plan: 'Flex', UserLimit: 5 };
+    });
+    assert.equal(limit, 5);
+    assert.throws(() => assertSubscriptionSeatAvailable(rows, null, true, limit), /allows 5.*12 are currently active/);
+    assert.doesNotThrow(() => assertSubscriptionSeatAvailable(rows, rows[0], false, limit));
+  }
+});
+
+test('an unreadable or invalid Flex entitlement cannot grant extra seats', async () => {
+  for (const UserLimit of [undefined, 0, -1, 'invalid', 1.5]) {
+    await assert.rejects(loadSubscriptionUserLimit({ USER_LIMIT: 250 }, async () => ({ Plan: 'Flex', UserLimit })), /purchased Flex seat count/);
+  }
+  await assert.rejects(loadSubscriptionUserLimit({ USER_LIMIT: 250 }, async () => { throw new Error('Read failed'); }), /Read failed/);
+});
 
 test('staff account activity accepts legacy boolean and text values', () => {
   assert.equal(staffAccountIsActive({}), true);

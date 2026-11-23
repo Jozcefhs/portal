@@ -81,14 +81,20 @@ export function assertSubscriptionSeatAvailable(rows, existing, requestedActive,
     !existing || !staffAccountIsActive(existing)
   ) && (!existingIdentity || !activeIdentities.has(existingIdentity));
   const projected = active + Number(consumesNewIdentity);
-  if (projected > normalizedLimit) {
+  if (consumesNewIdentity && projected > normalizedLimit) {
     throw subscriptionUserLimitError(normalizedLimit, active);
   }
   return { active, projected, limit: normalizedLimit };
 }
 
-export async function loadSubscriptionUserLimit(env) {
-  const profile = await getDocument(env, 'settings', 'organisationProfile').catch(() => null);
+function purchasedFlexSeats(value) {
+  const seats = Number(value);
+  if (Number.isSafeInteger(seats) && seats > 0) return seats;
+  throw Object.assign(new Error('The purchased Flex seat count could not be verified. Check the organisation subscription.'), { status: 409 });
+}
+
+export async function loadSubscriptionUserLimit(env, readDocument = getDocument) {
+  const profile = await readDocument(env, 'settings', 'organisationProfile');
   if (profile) {
     const configuredPlan = clean(profile.Plan || profile.SubscriptionPlan);
     if (profile.OwnerDemo === true || configuredPlan.toLowerCase() === 'owner demo') {
@@ -96,16 +102,18 @@ export async function loadSubscriptionUserLimit(env) {
     }
     if (configuredPlan) {
       const plan = normalizeSubscriptionPlan(configuredPlan);
+      if (plan === 'Flex') return purchasedFlexSeats(profile.UserLimit);
       if (plan !== 'Enterprise') return subscriptionPlanUserLimit(plan);
     }
     if (profile.UserLimit !== undefined && profile.UserLimit !== null && clean(profile.UserLimit)) {
       return Math.max(1, Number(profile.UserLimit || 5) || 5);
     }
   }
-  const legacy = await getDocument(env, 'settings', 'schoolProfile').catch(() => null);
+  const legacy = await readDocument(env, 'settings', 'schoolProfile');
   const legacyPlan = clean(legacy?.SubscriptionPlan || legacy?.Plan || env.SUBSCRIPTION_PLAN);
   if (legacyPlan) {
     const plan = normalizeSubscriptionPlan(legacyPlan);
+    if (plan === 'Flex') return purchasedFlexSeats(legacy?.UserLimit ?? env.USER_LIMIT);
     if (plan !== 'Enterprise') return subscriptionPlanUserLimit(plan);
   }
   return Math.max(1, Number(legacy?.UserLimit || env.USER_LIMIT || 5) || 5);
