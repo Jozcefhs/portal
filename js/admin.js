@@ -3572,7 +3572,7 @@ function selectSection(key, allowed = activeTabs.map(([tabKey]) => tabKey)) {
   url.searchParams.set('section', key);
   let savedView = '';
   try { savedView = clean(window.localStorage.getItem(workspaceViewStorageKey(key))); } catch (_error) { /* optional */ }
-  if (savedView) url.searchParams.set('view', savedView);
+  if (key !== 'donations' && savedView) url.searchParams.set('view', savedView);
   else url.searchParams.delete('view');
   window.history.replaceState(window.history.state, '', url);
   renderTabs(allowed);
