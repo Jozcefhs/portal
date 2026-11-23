@@ -1,3 +1,4 @@
+import { billingDiscountId } from './billing-category-discounts.js';
 import { modulePermissionRole } from './module-authority.js';
 import { batchCommitDocuments, getDocument, queryCollectionPages } from './firestore.js';
 import { financialPreviewFingerprint } from './financial-preview-fingerprint.js';
@@ -113,12 +114,43 @@ export async function obsoleteSchoolChargeReversalPlan(student, data, { candidat
   const profiles = savedType ? [profile] : ['Day Student', 'Boarding Student'].map(StudentType => ({ ...profile, StudentType }));
   const invoices = (data.invoices || []).map(normalizeInvoice);
   const current = invoices.filter(row => sameFinancialPeriod(row, profile.AcademicSession, profile.Term) && !closedInvoice(row));
+  // Reprice only a single, identifiable posted component at its verified original
+  // price. A changed fee schedule alone cannot authorize a discount correction.
+  const discounted = new Map();
+  if (profile.BillingDiscount?.recordVersion && !fullScholarship &&
+      ['ClassName', 'AcademicSession', 'Term', 'BillingCategory', 'EnrollmentCategory', 'StudentType'].every(field => savedValue(student, field))) {
+    for (const row of preview.rows) {
+      const discount = row.discount;
+      if (!discount || row.invoiceIds.length !== 1 || row.invoiced !== discount.BeforeAmount ||
+          !(row.expected < row.invoiced) || money(row.invoiced - row.expected) !== discount.Amount) continue;
+      const invoice = current.find(item => same(item.InvoiceId, row.invoiceIds[0]));
+      if (!invoice || invoice.BillingDiscount || !same(invoice.FeeName, row.name) ||
+          !same(invoice.AcademicSession, profile.AcademicSession) || !same(invoice.Term, profile.Term) ||
+          !same(invoice.Currency || 'NGN', 'NGN') || invoice.Credit < 0 || invoice.Credit > invoice.Debit) continue;
+      discounted.set(invoice.InvoiceId, row);
+    }
+  }
   const candidates = current.filter(row => (!invoiceIds || invoiceIds.some(id => same(id, row.InvoiceId))) &&
-    (fullScholarship || supported(row)) && isSchoolFeeInvoice(row) && row.Debit > 0 &&
-    preview.rows.some(component => same(component.code, row.FeeCode) && component.expected === 0));
+    (discounted.has(row.InvoiceId) || fullScholarship || supported(row)) && isSchoolFeeInvoice(row) && row.Debit > 0 &&
+    (discounted.has(row.InvoiceId) || preview.rows.some(component => same(component.code, row.FeeCode) && component.expected === 0)));
   const fees = (data.feeItems || []).map(normalizeFeeItem);
   const charges = [], replacementInvoicesToCreate = [];
   for (const invoice of candidates) {
+    const discountedRow = discounted.get(invoice.InvoiceId);
+    if (discountedRow) {
+      let replacement;
+      if (discountedRow.expected > 0) {
+        replacement = await replacementInvoice(student, profile, { ...invoice, Amount: discountedRow.expected });
+        replacement.InvoiceId += '-DISCOUNT';
+        replacement.BillingDiscount = discountedRow.discount;
+        replacementInvoicesToCreate.push(replacement);
+      }
+      charges.push({ invoiceId: invoice.InvoiceId, code: invoice.FeeCode, name: invoice.FeeName,
+        amount: invoice.Debit, releasedCredit: invoice.Credit, outstandingRemoved: money(invoice.Debit - invoice.Credit),
+        ready: true, reason: '', basis: 'billing-discount', replacementInvoiceId: replacement?.InvoiceId || '',
+        explanation: 'Apply the saved billing discount and carry excess payments forward as school-fee credit.' });
+      continue;
+    }
     const componentFees = fees.filter(fee => same(fee.FeeCode, invoice.FeeCode) && (fullScholarship || supported(fee)) && active(fee.Active));
     const rulesByType = profiles.map(candidate => componentFees.filter(fee =>
       feeMatchesAccountPeriod(fee, candidate, { enrollmentCategoryOverride: 'Returning' })));
@@ -234,7 +266,7 @@ export async function obsoleteSchoolChargeReversalPlan(student, data, { candidat
   }
   // Reuse existing payment credit only, capped by the category allocations
   // released here. Other periods, disputed charges and future invoices stay put.
-  const categoryCharges = charges.filter(row => row.ready && (row.basis === 'different-billing-category' ||
+  const categoryCharges = charges.filter(row => row.ready && (row.basis === 'billing-discount' || row.basis === 'different-billing-category' ||
     row.basis === 'different-class' && replacementInvoicesToCreate.some(invoice => invoice.InvoiceId === row.replacementInvoiceId)));
   let remainingCategoryCredit = money(categoryCharges.reduce((sum, row) => sum + row.releasedCredit, 0));
   if (remainingCategoryCredit > 0) {
@@ -247,7 +279,7 @@ export async function obsoleteSchoolChargeReversalPlan(student, data, { candidat
       if (remainingCategoryCredit <= 0) break;
       const component = preview.rows.find(row => same(row.code, invoice.FeeCode));
       const newReplacement = replacementInvoicesToCreate.some(row => row.InvoiceId === invoice.InvoiceId);
-      if (!sameFinancialPeriod(invoice, profile.AcademicSession, profile.Term) || !component || component.conflict ||
+      if (!sameFinancialPeriod(invoice, profile.AcademicSession, profile.Term) || !component || (component.conflict && !newReplacement) ||
         component.expected <= 0 || !newReplacement && component.expected !== component.invoiced ||
         !newReplacement && current.filter(row => same(row.FeeCode, invoice.FeeCode)).length !== 1 ||
         reallocations.some(row => same(row.invoiceId, invoice.InvoiceId)) ||
@@ -264,6 +296,8 @@ export async function obsoleteSchoolChargeReversalPlan(student, data, { candidat
   if (['invoices', 'ledger', 'payments'].some(key => (data[key] || []).some(row =>
     !same(row.BranchId || 'main', profile.BranchId) || (clean(row.SchoolSection || row.schoolSection) &&
       !same(row.SchoolSection || row.schoolSection, profile.SchoolSection))))) reason = 'Financial record scope differs from the student profile; finance review is required.';
+  if (charges.some(row => row.basis === 'billing-discount') && data.accountSummaries?.some(row => row.SchoolFeeCreditManaged === true))
+    reason = 'This account uses a separately managed advance-credit schedule and needs individual finance review.';
   let baselineJournals = [];
   if (!reason && !candidateOnly) {
     try { baselineJournals = financialEvidence(profile, [...new Map([...candidates, ...current.filter(invoice =>
@@ -276,10 +310,15 @@ export async function obsoleteSchoolChargeReversalPlan(student, data, { candidat
   if (!candidateOnly && writeCount > 450) reason = 'Too many source records for one safe correction; individual finance review is required.';
   const amount = money(charges.reduce((sum, row) => sum + row.amount, 0));
   const releasedCredit = money(charges.reduce((sum, row) => sum + row.releasedCredit, 0));
-  const previewToken = candidateOnly ? '' : await financialPreviewFingerprint({ kind: 'obsolete-school-fees-v7-scholarship', invoiceIds, replacementInvoicesToCreate,
+  // Identical-value policy guards on a sibling account advance its revision.
+  // The fresh revision is checked at commit. Fingerprint the financial terms.
+  const fingerprintProfile = profile.BillingDiscount ? { ...profile, BillingDiscount: { ...profile.BillingDiscount, recordVersion: '' } } : profile;
+  const fingerprintReplacements = replacementInvoicesToCreate.map(row => row.BillingDiscount
+    ? { ...row, BillingDiscount: { ...row.BillingDiscount, PolicyVersion: '' } } : row);
+  const previewToken = candidateOnly ? '' : await financialPreviewFingerprint({ kind: 'obsolete-school-fees-v7-scholarship', invoiceIds, replacementInvoicesToCreate: fingerprintReplacements,
     // Other students' no-op fee guards advance revisions. Keep all rule values
     // in the token; the commit still guards the freshly read fee revisions.
-    profile, revision: student.__updateTime, charges, reallocations, feeItems: (data.feeItems || []).map(({ __updateTime, __createTime, ...rule }) => rule), invoices: data.invoices, ledger: data.ledger,
+    profile: fingerprintProfile, revision: student.__updateTime, charges, reallocations, feeItems: (data.feeItems || []).map(({ __updateTime, __createTime, ...rule }) => rule), invoices: data.invoices, ledger: data.ledger,
     payments: data.payments, summaries: data.accountSummaries, journals: data.journals }, ['feeItems', 'invoices', 'ledger', 'payments', 'summaries', 'journals']);
   const replacementTotal = money(replacementInvoicesToCreate.reduce((sum, row) => sum + row.Amount, 0));
   return { ok: true, readOnly: true, candidateOnly, profile, charges, amount, releasedCredit, reallocations, replacementInvoicesToCreate, replacementTotal,
@@ -331,6 +370,11 @@ export async function reverseObsoleteSchoolCharges(env, student, token, actor, a
     if (!row.__id || !row.__updateTime || !field) fail('A source record lacks its database revision; no reversal was posted.');
     writes.push({ collectionPath, documentId: row.__id, updateTime: row.__updateTime, updateMask: [field], data: { [field]: row[field] } });
   };
+  if (plan.charges.some(charge => charge.basis === 'billing-discount')) {
+    const policy = plan.profile.BillingDiscount;
+    writes.push({ collectionPath: 'billingCategoryDiscounts', documentId: await billingDiscountId(identity.branch, policy.Name),
+      updateTime: policy.recordVersion, updateMask: ['Name'], data: { Name: policy.Name } });
+  }
   guard(student, student.__scopePath || 'students');
   for (const [key, collection] of [['feeItems', 'feeItems'], ['ledger', 'ledger'], ['payments', 'payments'], ['journals', 'accountingJournals']]) {
     for (const row of data[key]) guard(row, collection);

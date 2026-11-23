@@ -3457,6 +3457,8 @@ export async function buildStudentBillingPreview(student, data = {}) {
     const key = lower(fee.FeeCode);
     const row = components.get(key) || { code: fee.FeeCode, name: fee.FeeName, expected: 0, invoiced: 0, invoiceIds: [], reversedInvoiceIds: [] };
     row.expected = asMoneyNumber(row.expected + asMoneyNumber(fee.Amount));
+    if (!components.has(key) && fee.BillingDiscount) row.discount = fee.BillingDiscount;
+    else delete row.discount;
     components.set(key, row);
   }
   for (const invoice of periodInvoices) {

@@ -331,5 +331,5 @@ export async function handleBillingDiscounts(env, user, body, overrides = {}) {
       Before: publicRule(old), After: value, Details: 'Applies to new billing. Existing invoices, payments and ledgers preserved.' } }
   ]);
   return { ok: true, changed: true, rule: publicRule({ ...value, __updateTime: saved.writeResults[0].updateTime }),
-    message: 'Discount saved for this branch. Existing invoices and payments are unchanged; existing billing differences require finance review.' };
+    message: 'Discount saved for this branch. For existing invoices, open Students > Review incorrect school fee charges in the web companion. Approved discounts carry excess payments forward as school-fee credit.' };
 }

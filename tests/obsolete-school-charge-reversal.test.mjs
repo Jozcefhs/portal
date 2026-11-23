@@ -38,7 +38,7 @@ function harness({ configure = () => {}, beforeCommit, closed = () => false, los
   const db = new Map(), commits = [];
   db.set(`${profile.__scopePath}/${profile.__id}`, copy(profile));
   for (const [key, rows] of Object.entries(data)) if (Array.isArray(rows)) for (const row of rows) db.set(`${key === 'journals' ? 'accountingJournals' : key}/${row.__id}`, copy(row));
-  const read = () => ({ schoolProfile: {}, ...Object.fromEntries(['feeItems', 'invoices', 'ledger', 'payments', 'accountSummaries', 'journals'].map(key =>
+  const read = () => ({ schoolProfile: {}, ...Object.fromEntries(['feeItems', 'invoices', 'ledger', 'payments', 'accountSummaries', 'journals', 'billingCategoryDiscounts'].map(key =>
     [key, [...db.entries()].filter(([path]) => path.startsWith(`${key === 'journals' ? 'accountingJournals' : key}/`)).map(([, row]) => copy(row))])) });
   const deps = {
     getStudentBillingData: async (_env, _student, options) => { assert.equal(options.section, 'secondary'); return read(); },
@@ -836,4 +836,30 @@ test('a broad regular price replaces a class-specific generic textbook rule in t
   assert.equal(plan.ready,true,plan.reason);
   assert.ok(plan.charges.some(row=>row.code==='TXT_OLD'&&row.basis==='different-billing-category'));
   await h.post(plan.previewToken);assert.equal(h.commits.length,1);
+});
+
+
+test('applying a saved discount to a paid bill carries only the excess into school-fee credit', async () => {
+  const { billingDiscountId } = await import('../functions/lib/billing-category-discounts.js');
+  const id = await billingDiscountId('main', 'Church Staff Child');
+  const h = harness({ configure(data, profile) {
+    profile.BillingCategory = 'Church Staff Child';
+    const fee = { ...data.feeItems[0], Amount: 198000 };
+    data.feeItems = [fee];
+    data.invoices = [{ ...data.invoices[0], ...fee, __id: 'original', InvoiceId: 'ORIGINAL',
+      Amount: 198000, Debit: 198000, Credit: 198000, Status: 'Paid' }];
+    data.payments[0].Amount = data.ledger[0].Credit = 198000;
+    data.journals = [];
+    data.billingCategoryDiscounts = [{ __id: id, __updateTime: 'v1', Name: profile.BillingCategory,
+      BranchId: 'main', Currency: 'NGN', DiscountType: 'Fixed amount', DiscountValue: 47000, Rates: [], recordVersion: 'v1' }];
+  } });
+  const plan = await h.plan();
+  assert.equal(plan.ready, true, plan.reason);
+  assert.equal(plan.afterPostedTotal, 151000);
+  const receipt = h.read().payments;
+  const result = await h.post(plan.previewToken);
+  assert.equal(result.reallocatedCredit, 151000);
+  assert.equal(result.summary.CreditBalance, 47000);
+  assert.deepEqual(h.read().payments.map(withoutRevision), receipt.map(withoutRevision));
+  assert.equal((await h.plan()).ready, false);
 });
