@@ -1,7 +1,7 @@
 (() => {
 const HISTORY_MODULES = Object.freeze({
   formPurchases: { required: true }, financeRequests: { pending: true }, payroll: { required: true },
-  donations: { required: true }, offerings: { required: true }, services: {}, members: {}, funds: {},
+  donations: {}, offerings: { required: true }, services: {}, members: {}, funds: {},
   hotel: {}, humanResources: {}, organizationStore: {}, bookstore: {}, uniformStore: {}
 });
 

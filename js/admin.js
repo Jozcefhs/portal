@@ -3754,6 +3754,7 @@ function savedWorkspaceView(section, available = []) {
   const params = new URLSearchParams(window.location.search);
   const urlView = params.get('section') === section ? clean(params.get('view')) : '';
   if (keys.includes(urlView)) return urlView;
+  if (section === 'donations' && keys.includes('record')) return 'record';
   try {
     const stored = clean(window.localStorage.getItem(workspaceViewStorageKey(section)));
     if (keys.includes(stored)) return stored;
@@ -8682,7 +8683,7 @@ async function loadChurchDonations() {
       <div class="church-dashboard-grid giving-source-chart">
         ${verticalBars('Giving by source', givingSourceRows, 'Name', 'Amount', 'teal')}
       </div>
-      <section class="config-group" id="donationGivingPanel">
+      <section class="config-group" id="donationGivingPanel" ${capabilities.canCollect ? '' : 'hidden'}>
         <header><strong>New donation entry</strong><small>Record offline and online payments, then optionally send confirmation and link.</small></header>
         <form id="churchDonationForm" class="workflow-form config-form">
           <div class="config-grid">
@@ -8868,7 +8869,7 @@ async function loadChurchDonations() {
       ${directTransferVerificationWorkspace('churchDirectTransferVerification', 'Donation transfers awaiting verification')}`;
     mountWorkspaceTabs('donations', [
       { key: 'overview', label: 'Overview', icon: '\u25A6', nodes: [...panelEl.querySelectorAll(':scope > .workflow-kpis, :scope > .church-dashboard-grid')] },
-      { key: 'record', label: 'Record donation', icon: '+', nodes: document.getElementById('donationGivingPanel') },
+      { key: 'record', label: 'Record donation', icon: '+', nodes: capabilities.canCollect ? document.getElementById('donationGivingPanel') : null },
       { key: 'donors', label: 'Donor register', icon: '\u{1F465}', count: donors.length, nodes: document.getElementById('donationDonorPanel') },
       { key: 'currency', label: 'Foreign currency', icon: '\u00A4', count: foreignHoldings.length, nodes: document.getElementById('donationCurrencyPanel') },
       { key: 'records', label: 'Records & audit', icon: '\u{1F5C2}', count: (data.donations || []).length, nodes: document.getElementById('donationRecordsPanel') },
