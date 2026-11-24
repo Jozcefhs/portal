@@ -18672,6 +18672,11 @@ function openAcademicCbtRescheduleDialog(record = {}) {
   form.elements.TheoryDurationMinutes.value = split ? record.TheoryDurationMinutes : '';
   form.querySelector('[data-split-time-options]').innerHTML = split ? academicCbtPaperTimeControls(Boolean(record.TheoryStartsAt),
     academicCbtLocalInput(record.TheoryStartsAt)) : '';
+  if (split && (record.LocalDownloadedAt || record.LocalPackageIssuedAt)) {
+    const guidance = document.createElement('small');
+    guidance.textContent = 'For separate sittings, use desktop v3.1.68 or later on every CBT server. After saving, use Pull Online Tests on each server before pupils start.';
+    form.querySelector('[data-split-time-options]').appendChild(guidance);
+  }
   bindAcademicCbtPaperTimes(form);
   form.elements.TheoryDurationMinutes.required = split;
   form.elements.TheoryDurationMinutes.disabled = !split;

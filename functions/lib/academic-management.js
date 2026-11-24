@@ -9414,9 +9414,6 @@ export async function rescheduleAcademicCbtTest(env, user = {}, input = {}) {
   }
   const { endsAt, theoryStartsAt } = splitPaperSchedule(startsAt, durationMinutes, theoryDurationMinutes,
     input.TheoryStartsAt ?? record.TheoryStartsAt);
-  if (theoryStartsAt && !record.TheoryStartsAt && (record.LocalPackageIssuedAt || record.LocalDownloadedAt)) {
-    throw failure('This shared-schedule package has already been issued. Set separate times on the local CBT server.', 409, 'ACADEMIC_CBT_PACKAGE_ISSUED');
-  }
   if (!Number.isInteger(durationMinutes) || durationMinutes < 1
     || (record.PaperMode === 'split' && (!Number.isInteger(theoryDurationMinutes) || theoryDurationMinutes < 1))
     || endsAt.getTime() <= Date.now()) {

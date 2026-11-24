@@ -57,7 +57,25 @@ test('separate sittings preserve a distinct Theory date and may return to the sh
   assert.equal(shared.TheoryStartsAt, undefined);
   assert.equal(shared.EndsAt, '2099-01-01T11:40:00.000Z');
   await assert.rejects(harness().run({ TheoryStartsAt: theory }), /split test/);
-  await assert.rejects(harness({ ...split, LocalDownloadedAt: 'issued' }).run({ TheoryStartsAt: theory }), /already been issued/);
+});
+test('issued and downloaded split tests can switch an existing package to separate sittings', async () => {
+  for (const marker of ['LocalPackageIssuedAt', 'LocalDownloadedAt']) {
+    const h = harness({ PaperMode: 'split', LocalDownloadedAt: '', [marker]: 'issued', TheoryDurationMinutes: 40,
+      TheoryPaperFiles: [{ Url: 'theory-paper' }], LocalPackageRevision: 3, RosterRevision: 2 });
+    const input = { TheoryStartsAt: '2099-01-03T14:00:00Z', DurationMinutes: 35, TheoryDurationMinutes: 50 };
+    const { CbtTest: saved } = await h.run(input);
+    assert.equal(saved.StartsAt, '2099-01-01T10:00:00.000Z');
+    assert.equal(saved.TheoryStartsAt, '2099-01-03T14:00:00.000Z');
+    assert.equal(saved.EndsAt, '2099-01-03T14:50:00.000Z');
+    assert.equal(saved.ObjectiveDurationMinutes, 35);
+    assert.equal(saved.TheoryDurationMinutes, 50);
+    assert.equal(saved.PackageRevision, 4);
+    assert.equal(saved.ScheduleRevision, 2);
+    for (const field of [marker, 'LocalPackageRevision', 'RosterRevision', 'CbtTestId', 'PaperFiles', 'TheoryPaperFiles', 'AnswerKey', 'StudentRefs']) {
+      assert.deepEqual(saved[field], h.record[field]);
+    }
+    assert.equal(h.writes.length, 2);
+  }
 });
 test('invalid durations, dates and missing tests never commit',async()=>{
  for (const value of [0,-1,481,1.5,'','bad',Infinity]) {
