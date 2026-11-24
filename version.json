@@ -1,8 +1,8 @@
 {
-  "version": "3.1.67",
+  "version": "3.1.68",
   "channel": "stable",
   "release_status": "published",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.67.exe",
-  "sha256": "a14cd8d925c444091eb6c88291fd7208da8e057cf1cbb6723acbb3c4ccdce951",
-  "notes": "Branch-paired school desktops can open school-wide settings in the portal. Local CBT face capture handles camera startup more reliably."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.68.exe",
+  "sha256": "2e3f43ed649b35cee1a4bced1947055f6daaf2dba562799957e011274e2f7089",
+  "notes": "Split CBT assessments can schedule Objective and Theory on different dates and times. Each paper has its own timer and both marks count toward the same subject. Shared sittings remain the default."
 }
