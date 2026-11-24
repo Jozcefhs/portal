@@ -1291,6 +1291,14 @@ function feeClassRuleMatches(ruleValue, actualValue) {
   return String(ruleValue).split(',').some((part) => classNamesMatch(part, actualValue));
 }
 
+function excludedForRepeatingStudent(fee, progress) {
+  if (normalizeMatchText(progress) !== 'repeating') return false;
+  // A yearbook is a publication. A combined charge can still include textbooks or uniforms.
+  const description = [fee.FeeCategory, fee.FeeName].map(value =>
+    normalizeMatchText(value).replace(/\byear[\s-]*books?\b/g, ' ')).join(' ');
+  return /book|uniform|school wear/.test(description);
+}
+
 export function feeMatchesApplication(fee, app) {
   if (!feeMatchesBranch(fee, app)) return false;
   const appClass = app.ClassApplyingFor || app.ClassAdmitted || app.ClassName || '';
@@ -1300,7 +1308,7 @@ export function feeMatchesApplication(fee, app) {
   const appGender = app.Gender || '';
   const enrollmentCategory = resolveStudentEnrollmentCategory(app);
   const academicProgress = app.AcademicProgress || app.ProgressCategory || 'Promoted';
-  if (normalizeMatchText(academicProgress) === 'repeating' && /book|uniform|school wear/.test(normalizeMatchText(`${fee.FeeCategory || ''} ${fee.FeeName || ''}`))) return false;
+  if (excludedForRepeatingStudent(fee, academicProgress)) return false;
   return feeClassRuleMatches(fee.ClassName, appClass) &&
     feeFieldMatches(fee.StudentType, appType) &&
     feeBillingCategoryMatches(fee, app) &&
@@ -1373,14 +1381,14 @@ function feeMatchesAccountPeriod(fee, app, { enrollmentCategoryOverride = '' } =
   const appType = app.StudentType || '';
   const appSession = app.AcademicSession || '';
   const appTerm = app.Term || '';
-  if (normalizeMatchText(app.AcademicProgress || 'Promoted') === 'repeating' && /book|uniform|school wear/.test(normalizeMatchText(`${fee.FeeCategory || ''} ${fee.FeeName || ''}`))) return false;
+  if (excludedForRepeatingStudent(fee, app.AcademicProgress || app.ProgressCategory)) return false;
   if (!feeClassRuleMatches(fee.ClassName, appClass)) return false;
   if (!feeFieldMatches(fee.StudentType, appType)) return false;
   if (!feeBillingCategoryMatches(fee, app)) return false;
   if (!feeFieldMatches(fee.Gender || 'All', app.Gender || '')) return false;
   const enrollmentCategory = enrollmentCategoryOverride || resolveStudentEnrollmentCategory(app);
   if (!feeFieldMatches(fee.EnrollmentCategory || 'All', enrollmentCategory, true)) return false;
-  if (!feeFieldMatches(fee.AcademicProgress || 'All', app.AcademicProgress || 'Promoted', true)) return false;
+  if (!feeFieldMatches(fee.AcademicProgress || 'All', app.AcademicProgress || app.ProgressCategory || 'Promoted', true)) return false;
   if (!feeFieldMatches(fee.AcademicSession, appSession)) return false;
   const feeTerm = normalizeMatchText(fee.Term || 'All');
   if (!feeTerm || feeTerm === 'all' || feeTerm === '*') return true;
@@ -1550,13 +1558,13 @@ function feeMatchesAccountBase(fee, app) {
   const appClass = app.ClassApplyingFor || app.ClassAdmitted || app.ClassName || '';
   const appType = app.StudentType || '';
   const appSession = app.AcademicSession || '';
-  if (normalizeMatchText(app.AcademicProgress || 'Promoted') === 'repeating' && /book|uniform|school wear/.test(normalizeMatchText(`${fee.FeeCategory || ''} ${fee.FeeName || ''}`))) return false;
+  if (excludedForRepeatingStudent(fee, app.AcademicProgress || app.ProgressCategory)) return false;
   return feeClassRuleMatches(fee.ClassName, appClass) &&
     feeFieldMatches(fee.StudentType, appType) &&
     feeBillingCategoryMatches(fee, app) &&
     feeFieldMatches(fee.Gender || 'All', app.Gender || '') &&
     feeFieldMatches(fee.EnrollmentCategory || 'All', app.EnrollmentCategory || 'Returning', true) &&
-    feeFieldMatches(fee.AcademicProgress || 'All', app.AcademicProgress || 'Promoted', true) &&
+    feeFieldMatches(fee.AcademicProgress || 'All', app.AcademicProgress || app.ProgressCategory || 'Promoted', true) &&
     feeFieldMatches(fee.AcademicSession, appSession, true);
 }
 

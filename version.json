@@ -1,8 +1,8 @@
 {
-  "version": "3.1.68",
+  "version": "3.1.69",
   "channel": "stable",
   "release_status": "published",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.68.exe",
-  "sha256": "2e3f43ed649b35cee1a4bced1947055f6daaf2dba562799957e011274e2f7089",
-  "notes": "Split CBT assessments can schedule Objective and Theory on different dates and times. Each paper has its own timer and both marks count toward the same subject. Shared sittings remain the default."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.69.exe",
+  "sha256": "1ba9034697069144a9f57ca378990a1003a2564ad5ff2ef73443c0ba9ddf9e52",
+  "notes": "Returning pupils who repeat a class receive the configured Legacy Magazine/Yearbook fee when their academic progress rule applies."
 }

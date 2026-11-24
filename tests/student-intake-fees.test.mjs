@@ -59,3 +59,14 @@ test('unstructured legacy references retain their explicit category and linked a
     assert.equal(resolveStudentEnrollmentCategory({ ...student, AdmissionNo: 'LEGACY-ID', EnrollmentCategory }), EnrollmentCategory);
   }
 });
+test('a returning Grade 10 repeater owes the configured yearbook charge', async () => {
+  const pupil = { ...student, AdmissionNo: 'DCA/24/001', ClassName: 'Grade 10', AcademicProgress: 'Repeating' };
+  const yearbook = { ...fee, FeeCode: 'LEG', FeeName: 'Legacy Magazine/Yearbook',
+    Amount: 10000, BillingCategory: 'Regular', EnrollmentCategory: 'Returning' };
+  for (const [overrides, expected] of [[{}, 10000], [{ AcademicProgress: 'Promoted' }, 0],
+    [{ Term: 'Second Term' }, 0], [{ FeeName: 'Yearbook and textbooks' }, 0]]) {
+    const rule = { ...yearbook, ...overrides };
+    assert.equal(feeMatchesApplication(rule, pupil), expected > 0);
+    assert.equal((await buildStudentBillingPreview(pupil, { feeItems: [rule] })).expectedTotal, expected);
+  }
+});
