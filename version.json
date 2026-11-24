@@ -1,8 +1,8 @@
 {
-  "version": "3.1.69",
+  "version": "3.1.70",
   "channel": "stable",
   "release_status": "published",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.69.exe",
-  "sha256": "1ba9034697069144a9f57ca378990a1003a2564ad5ff2ef73443c0ba9ddf9e52",
-  "notes": "Returning pupils who repeat a class receive the configured Legacy Magazine/Yearbook fee when their academic progress rule applies."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.70.exe",
+  "sha256": "431924334480f681e829380b0d478b1b97e276b4f24dd2edbff0b4eacb700215",
+  "notes": "Student Fee Lookup uses the working branch's class register. Editing an arm name keeps its pupils and scores linked. Credit Action can apply a pupil's existing school fee credit to a selected unpaid invoice."
 }
