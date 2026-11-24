@@ -7,7 +7,8 @@ const lower = value => clean(value).toLowerCase();
 const referenceKey = value => lower(value).replace(/[^a-z0-9]/g, '');
 const identityReferenceKey = value => lower(value).split(/[^a-z0-9]+/).filter(Boolean).join('|');
 const money = value => Math.round(Number(value || 0) * 100) / 100;
-const accountReferences = row => [row.AccountRef, row.AdmissionNo, row.ApplicationReference,
+const accountFields = ['AccountRef', 'AdmissionNo', 'ApplicationReference', 'accountRef', 'admissionNo', 'applicationReference'];
+const accountReferences = row => [...accountFields.map(field => row[field]),
   ...(Array.isArray(row.LinkedReferences) ? row.LinkedReferences : [])].map(clean).filter(Boolean);
 const fail = message => Object.assign(new Error(message), { status: 409, code: 'SCHOOL_FEE_CREDIT_SCOPE' });
 
@@ -79,7 +80,7 @@ export function schoolFeeCreditRowMatchesScope(row, scope) {
 function accountQuery(scope) {
   return { filters: scope.references.flatMap(value => [
     { field: 'AccountRefNormalized', op: '==', value: referenceKey(value) },
-    ...['AccountRef', 'AdmissionNo', 'ApplicationReference'].map(field => ({ field, op: '==', value }))
+    ...accountFields.map(field => ({ field, op: '==', value }))
   ]), filterJoin: 'OR', pageSize: 500, maxRows: 20000 };
 }
 

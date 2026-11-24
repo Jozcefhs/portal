@@ -114,6 +114,19 @@ test('a class label edit changes only its existing definition and one audit unde
   assert.equal(f.records.academicClasses.find(row => row.BranchId === 'main').Name, schoolClass.Name);
 });
 
+test('editing an arm label keeps its ID, enrolled pupils and results, including on a retry', async () => {
+  const f = fixture(), scores = structuredClone(f.records.academicStudentScores);
+  f.records.academicStudentMemberships.push({ ArmId: arm.ArmId, ClassId: schoolClass.ClassId, StudentRef: 'PUPIL/1' });
+  const edit = input({ Arms: 'Emerald', ArmRecords: [{ ...baseRow.ArmRecords[0], Name: 'Emerald' }] });
+  await f.context.saveBranchAcademicClassSetup({}, actor, edit);
+  assert.deepEqual(f.records.academicArms.map(row => [row.ArmId, row.Name]), [[arm.ArmId, 'Emerald']]);
+  assert.equal(f.records.academicStudentMemberships[0].ArmId, arm.ArmId);
+  assert.deepEqual(f.records.academicStudentScores, scores);
+  assert.deepEqual(f.commits[0].map(w => w.collectionPath).sort(), ['academicArms', 'academicManagementAudit', 'branchSchoolSettings']);
+  assert.equal((await f.context.saveBranchAcademicClassSetup({}, actor, edit)).changed, false);
+  assert.equal(f.commits.length, 1);
+});
+
 test('stale catalogue revision and concurrent commits fail atomically without any saved changes', async () => {
   for (const concurrent of [false, true]) {
     const f = fixture(), before = structuredClone(f.records);

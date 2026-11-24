@@ -968,7 +968,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'saveFeeItem', 'saveFeeItems', 'deleteFeeItem', 'seedDefaultFeeItems',
   'saveBillingCategory', 'deleteBillingCategory', 'updateStudentBillingCategory', 'getBillingDiscountSettings', 'saveBillingDiscountSettings', 'getPartPaymentSettings', 'savePartPaymentSettings',
   'generateSchoolFeeInvoices', 'recordManualPayment', 'importHistoricalPayments',
-  'saveWalletCard', 'recordWalletPurchase', 'recordCreditAction',
+  'saveWalletCard', 'recordWalletPurchase', 'recordCreditAction', 'schoolFeeInvoiceCredit',
   'getTuckShopCatalog', 'searchTuckShopCustomers', 'recordTuckShopStaffSale',
   'saveStoreItem', 'saveStoreCategory', 'deleteStoreCategory', 'updateStoreOrderStatus',
   'getClinicRecords', 'saveClinicRecord', 'getClinicInventory', 'getKitchenInventory',
@@ -1052,7 +1052,7 @@ const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
   'getSchoolClasses', 'saveSchoolClasses', 'resetSchoolClasses',
   'getAdmissionClasses', 'saveAdmissionClasses', 'resetAdmissionClasses',
   'getAccountsOverview', 'getAccountSnapshot', 'getHistoricalPaymentTemplateAccounts', 'importHistoricalPayments', 'recordManualPayment',
-  'getWalletCardAccount', 'saveWalletCard', 'recordWalletPurchase',
+  'getWalletCardAccount', 'saveWalletCard', 'recordWalletPurchase', 'schoolFeeInvoiceCredit',
   'getTuckShopCatalog', 'searchTuckShopCustomers', 'recordTuckShopStaffSale',
   'getAccountingRequisitionDocument',
   'saveAccountingJournal', 'saveAccountingExpense', 'saveAccountingBudget',
@@ -5979,9 +5979,7 @@ export function calculateAccountFinancialSummary(invoiceRows = [], ledgerRows = 
 // Invoice Credit allocates an existing ledger receipt; it is not another receipt.
 // Keep allocations already made to a specific invoice, then carry only the
 // remaining credit into school invoices once their due date has arrived.
-export function calculateDueSchoolFeeCreditAllocations(invoiceRows = [], ledgerRows = [], today = new Date().toISOString().slice(0, 10)) {
-  const invoices = invoiceRows.map(normalizeInvoice);
-  const ledger = ledgerRows.map(normalizeLedger).filter((row) => !isWalletLedger(row));
+function unappliedSchoolFeeCredit(invoices, ledger) {
   const received = ledger.filter(isAvailableSchoolCreditReceipt)
     .reduce((sum, row) => sum + asMoneyNumber(row.Credit), 0);
   const creditActions = ledger.reduce((sum, row) =>
@@ -5991,7 +5989,13 @@ export function calculateDueSchoolFeeCreditAllocations(invoiceRows = [], ledgerR
     const applied = Math.min(debit, asMoneyNumber(row.Credit));
     return sum + applied;
   }, 0);
-  let remaining = Math.max(0, asMoneyNumber(received - creditActions - reserved));
+  return Math.max(0, asMoneyNumber(received - creditActions - reserved));
+}
+
+export function calculateDueSchoolFeeCreditAllocations(invoiceRows = [], ledgerRows = [], today = new Date().toISOString().slice(0, 10)) {
+  const invoices = invoiceRows.map(normalizeInvoice);
+  const ledger = ledgerRows.map(normalizeLedger).filter((row) => !isWalletLedger(row));
+  let remaining = unappliedSchoolFeeCredit(invoices, ledger);
   const allocations = [];
   invoices.filter((row) => invoiceIsDue(row, today) && isSchoolFeeInvoice(row))
     .sort((a, b) => {
@@ -7498,6 +7502,102 @@ export function buildCreditActionAccountingJournal({
     TotalDebit: value, TotalCredit: value,
     CreatedAt: nowIso(), UpdatedAt: nowIso()
   });
+}
+
+export async function schoolFeeInvoiceCredit(env, body, db = {
+  findStudentByAccountRef, getDocument, readSchoolFeeCreditHistory, assertScopedAccountSummary,
+  syncSchoolAccountCreditJournals, accountingPeriodIsClosed, loadNotificationSettings, batchCommitDocuments
+}) {
+  requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
+  if (accountingEditionForRequest(env) !== 'school') throw financeFailure('Select a school account.', 403);
+  const requested = manualPaymentRequestScope(body);
+  const accountRef = clean(body.AccountRef);
+  if (!requested?.branchId || !accountRef || !['preview', 'apply'].includes(body.Operation)) {
+    throw financeFailure('Select a pupil in one working branch.');
+  }
+  const student = await db.findStudentByAccountRef(env, accountRef, { ...requested, strictReads: true });
+  if (!student) throw applicationNotFound(accountRef);
+  bindManualPaymentIdentity(body, student, requested);
+  const scope = schoolFeeCreditScope({ ...student, AccountRef: student.AdmissionNo || student.AccountRef,
+    SchoolSection: student.SchoolSection || schoolSectionFor(student) });
+  const apply = body.Operation === 'apply';
+  const amount = apply ? financeMoney(body.Amount, 'Allocation amount', { min: 0.01 }) : 0;
+  const reference = clean(body.Reference), invoiceId = clean(body.InvoiceId), notes = clean(body.Notes);
+  let journalId;
+  if (apply) {
+    if (!reference || !invoiceId || !notes || !clean(body.InvoiceRevision)) {
+      throw financeFailure('Choose an invoice and record the reason before applying credit.');
+    }
+    journalId = await financeOperationId('SYS-INVCREDIT-SELECT', scope.branchId, scope.schoolSectionAccess, scope.accountRef, reference);
+    const prior = await db.getDocument(env, 'accountingJournals', journalId);
+    if (prior) {
+      if (prior.Status !== 'Posted' || prior.AccountRef !== scope.accountRef || prior.BranchId !== scope.branchId ||
+          prior.Source !== 'Student Invoice Credit' || prior.SourceId !== invoiceId || prior.TotalDebit !== amount || prior.AllocationReason !== notes) {
+        throw financeFailure('This reference already belongs to a different allocation.', 409);
+      }
+      return { ok: true, duplicate: true, message: 'This invoice allocation was already recorded.' };
+    }
+  }
+  const managed = await db.getDocument(env, 'accountSummaries', schoolFeeCreditSummaryId(scope.accountRef, scope));
+  const legacy = managed ? null : await db.assertScopedAccountSummary(env, scope.accountRef, scope);
+  if (legacy) assertManualPaymentScope(legacy, scope, 'Account summary');
+  const history = await db.readSchoolFeeCreditHistory(env, scope, {}, { summary: managed });
+  const review = schoolFeeCreditReviewReason({ ...history, summary: managed || legacy }, student,
+    { normalizeLedger, normalizeInvoice, isSchoolFeeInvoice, isAvailableSchoolCreditReceipt });
+  if (review) throw financeFailure(review, 409);
+  const invoices = history.invoices.map(normalizeInvoice);
+  const available = unappliedSchoolFeeCredit(invoices, history.ledger.map(normalizeLedger).filter(row => !isWalletLedger(row)));
+  const eligible = invoices.filter(row => isSchoolFeeInvoice(row) && !isAcceptanceFeeLike(row)
+    && !['reversed', 'cancelled', 'canceled', 'void', 'voided', 'paid'].includes(lower(row.Status))
+    && row.Credit >= 0 && row.Balance > 0 && row.Balance === asMoneyNumber(row.Debit - row.Credit) && row.__updateTime);
+  if (!apply) return { ok: true, AvailableCredit: available, invoices: eligible.map(row => ({
+    InvoiceId: row.InvoiceId, FeeName: row.FeeName || row.FeeCode, AcademicSession: row.AcademicSession,
+    Term: row.Term, DueDate: row.DueDate, Balance: row.Balance, Revision: row.__updateTime
+  })) };
+  const invoice = eligible.find(row => row.InvoiceId === invoiceId);
+  if (!invoice || invoice.__updateTime !== body.InvoiceRevision) throw financeFailure('The invoice changed. Reload the invoice list.', 409);
+  if (amount > available || amount > invoice.Balance) {
+    throw financeFailure('The amount exceeds the available school-fee credit or the unpaid invoice balance.', 409);
+  }
+  const now = nowIso(), today = now.slice(0, 10);
+  if (await db.accountingPeriodIsClosed(env, today)) throw financeFailure('The allocation date belongs to a closed accounting period.', 409);
+  if (!managed) {
+    const check = await db.syncSchoolAccountCreditJournals(env, scope.accountRef,
+      scope.references.filter(ref => ref !== scope.accountRef), { ...history.scope, strictReads: true });
+    if (check.unreconciledAllocation || check.unreconciledLegacyActions?.length) throw financeFailure('The account journals require finance review.', 409);
+  }
+  const credit = asMoneyNumber(invoice.Credit + amount), balance = asMoneyNumber(invoice.Debit - credit);
+  const patch = { Credit: credit, Balance: balance, Status: balance ? 'Part Paid' : 'Paid', UpdatedAt: now };
+  for (const key of ['paidAmount', 'PaidAmount']) if (Object.hasOwn(invoice, key)) patch[key] = credit;
+  for (const key of ['balanceAmount', 'BalanceAmount']) if (Object.hasOwn(invoice, key)) patch[key] = balance;
+  if (Object.hasOwn(invoice, 'status')) patch.status = patch.Status;
+  Object.assign(patch, invoiceReminderFields({ ...invoice, ...patch }, await db.loadNotificationSettings(env), today));
+  const updated = history.invoices.map(row => row.__id === invoice.__id ? { ...row, ...patch } : row);
+  const totals = calculateAccountFinancialSummary(updated, history.ledger, scope.accountRef, today);
+  let summary;
+  if (managed) {
+    const remaining = asMoneyNumber(available - amount);
+    const queue = schoolFeeCreditQueueFields(remaining, updated.map(normalizeInvoice), today, isSchoolFeeInvoice);
+    if (remaining && calculateDueSchoolFeeCreditAllocations(updated, history.ledger, today).allocations.length) {
+      queue.NextSchoolFeeCreditDueDate = today;
+    }
+    summary = schoolFeeCreditSummaryWrite(scope, { ...managed, ...totals, ...queue }, managed);
+  } else {
+    summary = financeWrite('accountSummaries', safeDocumentId(scope.accountRef), { ...legacy, ...totals, BranchId: scope.branchId,
+      SchoolSection: scope.schoolSectionAccess, LinkedReferences: scope.references.filter(ref => ref !== scope.accountRef) }, legacy);
+  }
+  const journal = buildSchoolInvoiceCreditAccountingJournal(invoice, { amount, journalNo: journalId, date: today });
+  const studentWrite = financeWrite(scope.scopePath, scope.studentDocumentId, { SchoolFeeCreditUpdatedAt: now }, student);
+  const audit = accountingAuditWrite('ALLOCATE', 'Student Invoice Credit', invoiceId, body, notes, now);
+  await db.batchCommitDocuments(env, [
+    { ...financeWrite('invoices', invoice.__id, patch, invoice), updateMask: Object.keys(patch) },
+    { ...summary, data: financeData(summary.data) },
+    { ...studentWrite, updateMask: ['SchoolFeeCreditUpdatedAt'] },
+    financeWrite('accountingJournals', journalId, { ...journal, RecordedBy: body.RecordedBy || body.UserUsername, CreatedAt: now,
+      AllocationReference: reference, AllocationReason: notes }),
+    { ...audit, exists: false }
+  ]);
+  return { ok: true, message: `Applied ${formatNairaAmount(amount)} to invoice ${invoiceId}. Remaining invoice balance: ${formatNairaAmount(balance)}.` };
 }
 
 async function recordCreditAction(env, body) {
@@ -12442,6 +12542,8 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
         }
       }
       return recordWalletPurchase(env, body);
+    case 'schoolFeeInvoiceCredit':
+      return schoolFeeInvoiceCredit(env, body);
     case 'recordCreditAction':
       return recordCreditAction(env, body);
     case 'updateStudentBillingCategory':
