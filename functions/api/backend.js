@@ -1434,7 +1434,10 @@ export function applyBillingCategoryOverrides(fees, app) {
   Object.values(grouped).forEach((items) => {
     const bestSpecificity = Math.max(...items.map((item) => feeBillingSpecificity(item, app)));
     items.forEach((item) => {
-      if (feeBillingSpecificity(item, app) === bestSpecificity) result.push(item);
+      if (feeBillingSpecificity(item, app) !== bestSpecificity) return;
+      const sessionDate = item.SessionDueDates?.[app.AcademicSession];
+      const dueDate = sessionDate && feeDueDate(sessionDate);
+      result.push(dueDate ? { ...item, DueDate: dueDate } : item);
     });
   });
   return applyTotalBillingDiscount(result, app, isSchoolFeeInvoice);

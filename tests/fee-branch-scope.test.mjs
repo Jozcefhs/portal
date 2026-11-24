@@ -3,8 +3,18 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { feeBranchId, feeRowsForBranch, feeMatchesBranch, feeSetupBranch, scopedFeeDocumentId, resolveFeeDocument, feeDocumentWrite } from '../functions/lib/fee-branch-scope.js';
-import { feeMatchesApplication, feeCodeRenameAllowed, getAccountsOverview } from '../functions/api/backend.js';
+import { applyBillingCategoryOverrides, feeMatchesApplication, feeCodeRenameAllowed, getAccountsOverview } from '../functions/api/backend.js';
 import { canonicalConfiguredClassRule } from '../functions/lib/class-names.js';
+
+test('an all-session fee can have a due date for a single session without duplicating the charge', () => {
+  const fee = { FeeCode: 'TUITION', FeeName: 'Tuition', FeeCategory: 'School Fee', AcademicSession: 'All',
+    Amount: 97150, DueDate: '14/09/2027', SessionDueDates: { '2026/2027': '2026-09-14' } };
+  const resolve = AcademicSession => applyBillingCategoryOverrides([fee], { AcademicSession, BillingCategory: 'Regular' });
+  const [current] = resolve('2026/2027');
+  assert.deepEqual(current, { ...fee, DueDate: '2026-09-14' });
+  assert.deepEqual(resolve('2027/2028'), [fee]);
+  assert.equal(resolve('2026/2027').length, 1);
+});
 
 test('legacy fees belong only to Main; empty branches do not inherit charges', () => {
   const rows = [{ FeeCode: 'OLD' }, { FeeCode: 'GLOBAL-OLD', BranchId: 'all' }, { FeeCode: 'MAIN', BranchId: 'main' }, { FeeCode: 'NORTH', BranchId: 'north' }];
