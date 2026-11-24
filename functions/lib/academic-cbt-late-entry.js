@@ -62,8 +62,11 @@ export function academicCbtLateEntryPlan(source, roster, tests, scores, input = 
   if (selected.some(ref => !eligibleSet.has(lower(ref)))) throw fail('The selected students are no longer eligible. Review again.', 'ACADEMIC_CBT_LATE_ENTRY_CHANGED');
   if (selected.length > 1000) throw fail('Select no more than 1,000 late-entry students per sitting.');
   const canonical = new Map(eligible.map(ref => [lower(ref), ref]));
-  return { Eligible:eligible, Excluded:excluded, StudentRefs:selected.map(ref=>canonical.get(lower(ref))),
-    StartsAt:new Date(start).toISOString(), EndsAt:new Date(start + (duration + theory) * 60000).toISOString(),
+  const theoryStart = source.TheoryStartsAt ? start + Date.parse(source.TheoryStartsAt) - Date.parse(source.StartsAt) : null;
+  if (theoryStart !== null && theoryStart <= now) throw fail('Choose a later sitting so both paper starts are in the future.');
+  const end = theoryStart === null ? start + (duration + theory) * 60000 : Math.max(start + duration * 60000, theoryStart + theory * 60000);
+  return { ...(theoryStart === null ? {} : { TheoryStartsAt: new Date(theoryStart).toISOString() }), Eligible:eligible, Excluded:excluded, StudentRefs:selected.map(ref=>canonical.get(lower(ref))),
+    StartsAt:new Date(start).toISOString(), EndsAt:new Date(end).toISOString(),
     DurationMinutes:duration, TheoryDurationMinutes:theory };
 }
 
@@ -75,6 +78,6 @@ export function academicCbtLateEntryRecord(source, plan, id, actor, timestamp) {
     LateEntrySourceDigest:source.PackageDigest, LateEntryProtocolVersion:1,
     Title:`${source.Title || source.AssessmentComponentName} · Late entry`,
     StudentRefs:plan.StudentRefs, RosterCount:plan.StudentRefs.length,
-    StartsAt:plan.StartsAt, EndsAt:plan.EndsAt, Status:'Scheduled', PackageRevision:1,
+    StartsAt:plan.StartsAt, EndsAt:plan.EndsAt, ...(plan.TheoryStartsAt ? {TheoryStartsAt:plan.TheoryStartsAt} : {}), Status:'Scheduled', PackageRevision:1,
     CreatedAt:timestamp, CreatedBy:actor, UpdatedAt:timestamp, UpdatedBy:actor };
 }

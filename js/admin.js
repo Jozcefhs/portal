@@ -17284,6 +17284,36 @@ function academicCbtLocalParts(value = '') {
   };
 }
 
+function academicCbtLocalInput(instant) {
+  if (!instant) return '';
+  const { date, time } = academicCbtLocalParts(instant);
+  return date + 'T' + time;
+}
+
+function academicCbtWindowEnd(start, duration, theoryDuration, theoryStart) {
+  const objectiveEnd = start.getTime() + duration * 60000;
+  const theoryEnd = (theoryStart ? Date.parse(theoryStart) : objectiveEnd) + theoryDuration * 60000;
+  return Math.max(objectiveEnd, theoryEnd);
+}
+
+function academicCbtPaperTimeControls(separate = false, localTime = '') {
+  return `<label><input type="checkbox" name="SeparatePaperTimes"${separate ? ' checked' : ''}> Schedule papers separately</label>
+    <label data-theory-start${separate ? '' : ' hidden'}>Theory date and start time
+    <input type="datetime-local" name="TheoryStart" value="${escapeHtml(localTime)}"${separate ? ' required' : ' disabled'}></label>`;
+}
+
+function bindAcademicCbtPaperTimes(form) {
+  const toggle = form.elements.SeparatePaperTimes;
+  if (!toggle) return;
+  const update = () => {
+    form.querySelector('[data-theory-start]').hidden = !toggle.checked;
+    form.elements.TheoryStart.disabled = !toggle.checked;
+    form.elements.TheoryStart.required = toggle.checked;
+  };
+  toggle.onchange = update;
+  update();
+}
+
 function resetAcademicCbtDraft() {
   clearAcademicCbtPreviewUrls();
   clearAcademicCbtPreviewUrls('theoryPreviewUrls');
@@ -17446,6 +17476,7 @@ function academicCbtWorkspace(data, rows) {
       ${splitPaper ? `<label>Objective A mark<small>Configured in the active assessment layout.</small><input value="${escapeHtml(component?.ObjectiveMaximumScore ?? '')}" readonly></label><label>Theory B mark<small>Configured in the active assessment layout.</small><input value="${escapeHtml(component?.TheoryMaximumScore ?? '')}" readonly></label>` : ''}
       <label>${splitPaper ? 'Paper 1 duration (minutes)' : 'Duration (minutes)'}<small>${splitPaper ? 'Independent timer for the Objective paper.' : 'The test closes automatically after this time.'}</small><input type="number" name="DurationMinutes" min="1" max="480" value="${escapeHtml(academicCbtDraft.durationMinutes)}" required></label>
       ${splitPaper ? `<label>Paper 2 duration (minutes)<small>Independent timer for the Theory paper.</small><input type="number" name="TheoryDurationMinutes" min="1" max="480" value="${escapeHtml(academicCbtDraft.theoryDurationMinutes)}" required></label>` : ''}
+      ${splitPaper ? academicCbtPaperTimeControls(academicCbtDraft.separatePaperTimes, academicCbtDraft.theoryStart) : ''}
       <label>Number of questions<small>Choose between 1 and 200 questions.</small><input type="number" name="NumberOfQuestions" min="1" max="200" value="${escapeHtml(academicCbtDraft.questionCount)}" required></label>
       <label>Multiple-choice style<small>Controls the answer choices shown to students.</small><select name="OptionStyle" data-academic-cbt-option-style>${Object.keys(ACADEMIC_CBT_OPTION_STYLES).map((key) => `<option value="${key}"${key === academicCbtDraft.optionStyle ? ' selected' : ''}>${key === 'TRUE_FALSE' ? 'True / False' : key}</option>`).join('')}</select></label>
     </div>
@@ -17481,7 +17512,9 @@ function academicCbtWorkspace(data, rows) {
 
   const editor = `<form class="academic-management-editor academic-management-editor-wide academic-cbt-editor" data-academic-cbt-editor>${stepOne}${stepTwo}</form>`;
   const register = table('Scheduled CBT Tests', rows.cbtTests, [
-    { label: 'Date and time', value: (row) => DynamaxTime.formatDateTime(row.StartsAt) },
+    { label: 'Date and time', value: (row) => row.TheoryStartsAt
+      ? `Objective ${DynamaxTime.formatDateTime(row.StartsAt)} · Theory ${DynamaxTime.formatDateTime(row.TheoryStartsAt)}`
+      : DynamaxTime.formatDateTime(row.StartsAt) },
     { label: 'Test Type', value: (row) => `${row.AssessmentComponentName} / ${row.MaximumScore}${row.PaperMode === 'split' ? ' · A/B' : ''}${row.LateEntryParentId ? ' · Late entry' : ''}` },
     { label: 'Class', value: (row) => academicLabel(rows.classes, row.ClassId) },
     { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId, row.SubjectName) },
@@ -18489,6 +18522,8 @@ function readAcademicCbtStepOne(form) {
   academicCbtDraft.startTime = clean(form.elements.StartTime?.value);
   academicCbtDraft.durationMinutes = clean(form.elements.DurationMinutes?.value);
   if (form.elements.TheoryDurationMinutes) academicCbtDraft.theoryDurationMinutes = clean(form.elements.TheoryDurationMinutes.value);
+  academicCbtDraft.separatePaperTimes = Boolean(form.elements.SeparatePaperTimes?.checked);
+  academicCbtDraft.theoryStart = form.elements.TheoryStart?.value || '';
   academicCbtDraft.questionCount = clean(form.elements.NumberOfQuestions?.value);
   academicCbtDraft.optionStyle = clean(form.elements.OptionStyle?.value) || 'ABCD';
 }
@@ -18618,6 +18653,7 @@ function openAcademicCbtRescheduleDialog(record = {}) {
           <label>New start time<input type="time" name="StartTime" required></label>
           <label><span data-academic-cbt-duration-label>Duration (minutes)</span><input type="number" name="DurationMinutes" min="1" max="480" step="1" required></label>
           <label data-academic-cbt-theory-duration>Paper 2 duration (minutes)<input type="number" name="TheoryDurationMinutes" min="1" max="480" step="1"></label>
+          <div data-split-time-options></div>
         </div>
         <p class="status" data-academic-cbt-reschedule-status></p>
         <div class="config-dialog-actions"><button type="button" class="secondary" data-academic-cbt-reschedule-cancel>Cancel</button><button type="submit">Save new schedule</button></div>
@@ -18634,6 +18670,9 @@ function openAcademicCbtRescheduleDialog(record = {}) {
   const split = record.PaperMode === 'split';
   form.elements.DurationMinutes.value = record.ObjectiveDurationMinutes || record.DurationMinutes || 40;
   form.elements.TheoryDurationMinutes.value = split ? record.TheoryDurationMinutes : '';
+  form.querySelector('[data-split-time-options]').innerHTML = split ? academicCbtPaperTimeControls(Boolean(record.TheoryStartsAt),
+    academicCbtLocalInput(record.TheoryStartsAt)) : '';
+  bindAcademicCbtPaperTimes(form);
   form.elements.TheoryDurationMinutes.required = split;
   form.elements.TheoryDurationMinutes.disabled = !split;
   form.querySelector('[data-academic-cbt-theory-duration]').hidden = !split;
@@ -18652,7 +18691,7 @@ function openAcademicCbtRescheduleDialog(record = {}) {
         if (![duration, ...(split ? [theoryDuration] : [])].every(value => Number.isInteger(value) && value >= 1 && value <= 480)) {
           throw new Error('Each paper duration must be a whole number between 1 and 480 minutes.');
         }
-        if (!Number.isFinite(startsAt.getTime()) || startsAt.getTime() + (duration + theoryDuration) * 60 * 1000 <= Date.now()) {
+        if (!Number.isFinite(startsAt.getTime()) || academicCbtWindowEnd(startsAt, duration, theoryDuration, form.elements.SeparatePaperTimes?.checked && form.elements.TheoryStart.value) <= Date.now()) {
           throw new Error('Choose a date and time that leaves the full test duration available.');
         }
         const result = await academicManagementRequest('rescheduleAcademicCbtTest', {
@@ -18662,6 +18701,7 @@ function openAcademicCbtRescheduleDialog(record = {}) {
           CbtTestId: record.CbtTestId,
           RevisionToken: record.RevisionToken,
           StartsAt: startsAt.toISOString(),
+          TheoryStartsAt: form.elements.SeparatePaperTimes?.checked ? new Date(form.elements.TheoryStart.value).toISOString() : '',
           DurationMinutes: duration,
           TheoryDurationMinutes: theoryDuration
         });
@@ -19050,6 +19090,7 @@ function bindAcademicManagement() {
   }));
   const cbtForm = panelEl.querySelector('[data-academic-cbt-editor]');
   if (cbtForm) {
+    bindAcademicCbtPaperTimes(cbtForm);
     const refreshCbtEditor = () => {
       readAcademicCbtStepOne(cbtForm);
       renderAcademicManagement(academicManagementData || {});
@@ -19144,7 +19185,7 @@ function bindAcademicManagement() {
         if (splitPaper && (!Number.isInteger(theoryDuration) || theoryDuration < 1 || theoryDuration > 480)) return setStatus(status, 'Paper 2 duration must be between 1 and 480 minutes.', 'bad');
         const startsAt = new Date(`${academicCbtDraft.startDate}T${academicCbtDraft.startTime}:00`);
         if (!Number.isFinite(startsAt.getTime())) return setStatus(status, 'Choose a valid scheduled date and start time.', 'bad');
-        if (startsAt.getTime() + (duration + (splitPaper ? theoryDuration : 0)) * 60 * 1000 <= Date.now()) return setStatus(status, 'The test schedule has already ended. Choose a current or future time.', 'bad');
+        if (academicCbtWindowEnd(startsAt, duration, splitPaper ? theoryDuration : 0, splitPaper && academicCbtDraft.separatePaperTimes && academicCbtDraft.theoryStart) <= Date.now()) return setStatus(status, 'The test schedule has already ended. Choose a current or future time.', 'bad');
         const options = ACADEMIC_CBT_OPTION_STYLES[academicCbtDraft.optionStyle] || [];
         academicCbtDraft.answerKey = Array.from({ length: questionCount }, (_unused, index) => options.includes(academicCbtDraft.answerKey[index]) ? academicCbtDraft.answerKey[index] : '');
         clearAcademicCbtPreviewUrls();
@@ -19190,6 +19231,7 @@ function bindAcademicManagement() {
             SubjectId: context.subjectId,
             TeacherUsername: context.teacherUsername,
             AssessmentComponentId: academicCbtDraft.componentId,
+            TheoryStartsAt: splitPaper && academicCbtDraft.separatePaperTimes ? new Date(academicCbtDraft.theoryStart).toISOString() : '',
             StartsAt: startsAt,
             DurationMinutes: Number(academicCbtDraft.durationMinutes),
             TheoryDurationMinutes: splitPaper ? Number(academicCbtDraft.theoryDurationMinutes) : 0,
@@ -19262,6 +19304,8 @@ function bindAcademicManagement() {
       startTime: schedule.time,
       durationMinutes: String(record.DurationMinutes || 40),
       theoryDurationMinutes: String(record.TheoryDurationMinutes || 40),
+      separatePaperTimes: Boolean(record.TheoryStartsAt),
+      theoryStart: academicCbtLocalInput(record.TheoryStartsAt),
       questionCount: String(record.NumberOfQuestions || 20),
       optionStyle: record.OptionStyle || 'ABCD',
       answerKey: [...(record.AnswerKey || [])],

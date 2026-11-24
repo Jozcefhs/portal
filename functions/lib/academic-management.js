@@ -8839,6 +8839,7 @@ async function academicCbtPackageDigest(record = {}) {
     ObjectiveMaximumScore: record.ObjectiveMaximumScore,
     TheoryMaximumScore: record.TheoryMaximumScore,
     StartsAt: record.StartsAt,
+    ...(record.TheoryStartsAt ? { TheoryStartsAt: record.TheoryStartsAt } : {}),
     EndsAt: record.EndsAt,
     ObjectiveDurationMinutes: record.ObjectiveDurationMinutes || record.DurationMinutes,
     TheoryDurationMinutes: record.TheoryDurationMinutes || 0,
@@ -8922,6 +8923,16 @@ export function academicCbtUploadMatches(row, target) {
       || (clean(row.AssessmentComponentName) && lower(row.AssessmentComponentName) === lower(target.AssessmentComponentName)));
 }
 
+function splitPaperSchedule(startsAt, objectiveMinutes, theoryMinutes, theoryStart) {
+  if (!clean(theoryStart)) return { endsAt: new Date(startsAt.getTime() + (objectiveMinutes + theoryMinutes) * 60000) };
+  const theory = new Date(theoryStart);
+  if (!theoryMinutes || !Number.isFinite(theory.getTime())) {
+    throw failure('Choose a valid Theory start time for a split test.', 400, 'ACADEMIC_CBT_SCHEDULE_INVALID');
+  }
+  return { theoryStartsAt: theory.toISOString(), endsAt: new Date(Math.max(
+    startsAt.getTime() + objectiveMinutes * 60000, theory.getTime() + theoryMinutes * 60000)) };
+}
+
 export async function academicCbtUploadId(target) {
   const material = JSON.stringify([lower(target.BranchId), lower(target.SchoolSection),
     ...['SessionId', 'TermId', 'ClassId', 'SubjectId'].map(key => clean(target[key])),
@@ -8976,8 +8987,6 @@ export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
   }
   const startsAt = new Date(clean(input.StartsAt));
   if (!Number.isFinite(startsAt.getTime())) throw failure('Choose a valid test date and start time.', 400, 'ACADEMIC_CBT_SCHEDULE_INVALID');
-  const endsAt = new Date(startsAt.getTime() + (durationMinutes + theoryDurationMinutes) * 60 * 1000);
-  if (endsAt.getTime() <= Date.now()) throw failure('The test schedule has already ended. Choose a current or future start time.', 400, 'ACADEMIC_CBT_SCHEDULE_ENDED');
   const suppliedPaperFiles = academicCbtPaperFiles(input);
   const suppliedTheoryPaperFiles = academicCbtPaperFiles(input, 'theory');
   if (input.RequirePaper !== false) {
@@ -9012,6 +9021,8 @@ export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
     if (!clean(previous.__updateTime)) throw failure('Reload the test register before replacing its paper.', 409, 'ACADEMIC_WRITE_CONFLICT');
   }
   const existing = requested || candidates[0] || null;
+  const { endsAt, theoryStartsAt } = splitPaperSchedule(startsAt, durationMinutes, theoryDurationMinutes, input.TheoryStartsAt ?? (splitPaper ? existing?.TheoryStartsAt : null));
+  if (endsAt.getTime() <= Date.now()) throw failure('The test schedule has already ended. Choose a current or future start time.', 400, 'ACADEMIC_CBT_SCHEDULE_ENDED');
   const replacementCandidates = candidates.filter(row => row !== existing);
   const timestamp = nowIso();
   const cbtTestId = existing?.CbtTestId || await academicCbtUploadId(target);
@@ -9082,6 +9093,8 @@ export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
     UpdatedAt: timestamp,
     UpdatedBy: actorName(user)
   };
+  if (theoryStartsAt) record.TheoryStartsAt = theoryStartsAt;
+  else delete record.TheoryStartsAt;
   record.PackageDigest = await academicCbtPackageDigest(record);
   return { context, component, existing, replacementCandidates, record,
     replacementRevisionToken: requestedId ? clean(input.RevisionToken) : clean(existing?.__updateTime) };
@@ -9399,7 +9412,11 @@ export async function rescheduleAcademicCbtTest(env, user = {}, input = {}) {
   if (record.PaperMode === 'split' && (!Number.isInteger(theoryDurationMinutes) || theoryDurationMinutes < 1 || theoryDurationMinutes > 480)) {
     throw failure('Paper 2 duration must be a whole number between 1 and 480 minutes.', 400, 'ACADEMIC_CBT_THEORY_DURATION_INVALID');
   }
-  const endsAt = new Date(startsAt.getTime() + (durationMinutes + theoryDurationMinutes) * 60 * 1000);
+  const { endsAt, theoryStartsAt } = splitPaperSchedule(startsAt, durationMinutes, theoryDurationMinutes,
+    input.TheoryStartsAt ?? record.TheoryStartsAt);
+  if (theoryStartsAt && !record.TheoryStartsAt && (record.LocalPackageIssuedAt || record.LocalDownloadedAt)) {
+    throw failure('This shared-schedule package has already been issued. Set separate times on the local CBT server.', 409, 'ACADEMIC_CBT_PACKAGE_ISSUED');
+  }
   if (!Number.isInteger(durationMinutes) || durationMinutes < 1
     || (record.PaperMode === 'split' && (!Number.isInteger(theoryDurationMinutes) || theoryDurationMinutes < 1))
     || endsAt.getTime() <= Date.now()) {
@@ -9421,6 +9438,8 @@ export async function rescheduleAcademicCbtTest(env, user = {}, input = {}) {
     UpdatedAt: timestamp,
     UpdatedBy: actorName(user)
   };
+  if (theoryStartsAt) updated.TheoryStartsAt = theoryStartsAt;
+  else delete updated.TheoryStartsAt;
   updated.PackageDigest = await academicCbtPackageDigest(updated);
   const commit = await commitAcademicBatch(env, [
     {
@@ -9430,7 +9449,7 @@ export async function rescheduleAcademicCbtTest(env, user = {}, input = {}) {
       ...writePrecondition(record, input.RevisionToken)
     },
     auditWrite(user, 'RESCHEDULE', 'cbtTests', updated,
-      `${clean(record.StartsAt)} -> ${updated.StartsAt}; duration ${record.DurationMinutes} -> ${durationMinutes} minutes; theory ${record.TheoryDurationMinutes || 0} -> ${theoryDurationMinutes} minutes; running timers and completed local attempts preserved`)
+      `${clean(record.StartsAt)} -> ${updated.StartsAt}; duration ${record.DurationMinutes} -> ${durationMinutes} minutes; theory ${record.TheoryDurationMinutes || 0} -> ${theoryDurationMinutes} minutes; theory start ${record.TheoryStartsAt || 'shared'} -> ${theoryStartsAt || 'shared'}; running timers and completed local attempts preserved`)
   ], 'The CBT schedule changed while it was being updated. Reload and try again.');
   const savedRecord = publicRecord({ ...updated, __updateTime: clean(commit?.writeResults?.[0]?.updateTime) });
   return {
@@ -9630,6 +9649,9 @@ export async function downloadAcademicCbtTestPackage(env, user = {}, input = {})
   const record = findById(context.state.cbtTests, input.CbtTestId);
   if (!record) throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
   academicCbtAuthority(user, context, record);
+  if (record.TheoryStartsAt && input.SeparatePaperSchedulesSupported !== true) {
+    throw failure('Update the local CBT server to download separately scheduled papers.', 409, 'ACADEMIC_CBT_CLIENT_UPDATE_REQUIRED');
+  }
   if (clean(record.CloudPaperRemovedAt)) {
     throw failure(
       'The cloud paper for this test was permanently removed after local synchronization. Restore the local CBT backup instead of downloading it again.',

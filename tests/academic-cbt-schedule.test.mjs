@@ -23,6 +23,7 @@ function harness(overrides = {}) {
     auditWrite:(_u,action,_c,_r,detail)=>({action,detail}),
     commitAcademicBatch:async (_env,batch)=>{writes.push(...batch);return {writeResults:[{updateTime:'saved'}]};}
   });
+  vm.runInContext(backend.match(/function splitPaperSchedule\([^]*?\n}/)[0], context);
   const start = backend.indexOf('export async function rescheduleAcademicCbtTest(');
   vm.runInContext(backend.slice(start,backend.indexOf('async function deleteAcademicCbtPapers(',start)).replace('export ',''),context);
   return {record,writes,run:input=>context.rescheduleAcademicCbtTest({}, {}, {CbtTestId:'test',RevisionToken:'known',StartsAt:'2099-01-01T10:00:00Z',...input}), authorised:()=>authorised};
@@ -44,6 +45,19 @@ test('split timers can be edited independently and legacy date-only requests ret
  const result=await h.run({DurationMinutes:20,TheoryDurationMinutes:80});
  assert.equal(result.CbtTest.DurationMinutes,20); assert.equal(result.CbtTest.TheoryDurationMinutes,80);
  assert.equal(result.CbtTest.EndsAt,'2099-01-01T11:40:00.000Z');
+});
+test('separate sittings preserve a distinct Theory date and may return to the shared schedule', async () => {
+  const theory = '2099-01-03T09:00:00.000Z';
+  const split = { PaperMode: 'split', TheoryDurationMinutes: 60, LocalDownloadedAt: '' };
+  const saved = (await harness(split).run({ TheoryStartsAt: theory })).CbtTest;
+  assert.equal(saved.TheoryStartsAt, theory);
+  assert.equal(saved.EndsAt, '2099-01-03T10:00:00.000Z');
+  assert.equal((await harness(saved).run({}).then(r => r.CbtTest)).TheoryStartsAt, theory);
+  const shared = (await harness(saved).run({ TheoryStartsAt: '' })).CbtTest;
+  assert.equal(shared.TheoryStartsAt, undefined);
+  assert.equal(shared.EndsAt, '2099-01-01T11:40:00.000Z');
+  await assert.rejects(harness().run({ TheoryStartsAt: theory }), /split test/);
+  await assert.rejects(harness({ ...split, LocalDownloadedAt: 'issued' }).run({ TheoryStartsAt: theory }), /already been issued/);
 });
 test('invalid durations, dates and missing tests never commit',async()=>{
  for (const value of [0,-1,481,1.5,'','bad',Infinity]) {

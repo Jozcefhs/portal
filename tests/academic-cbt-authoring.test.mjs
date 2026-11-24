@@ -170,7 +170,7 @@ test('teachers may author online packages that are pulled onto the local desktop
   assert.match(backend, /TheoryPaperFiles: theoryPaperFiles/);
   assert.match(backend, /TheoryPapers: theoryPapers/);
   assert.match(backend, /PaperMode: splitPaper \? 'split' : 'single'/);
-  assert.match(backend, /durationMinutes \+ theoryDurationMinutes/);
+  assert.match(backend, /objectiveMinutes \+ theoryMinutes/);
   assert.match(backend, /rescheduleAcademicCbtTest/);
   assert.match(backend, /removeAcademicCbtCloudPapers/);
   assert.match(backend, /DELETE_CLOUD_PAPERS/);

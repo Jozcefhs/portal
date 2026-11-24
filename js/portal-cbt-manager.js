@@ -91,7 +91,15 @@
     $('remoteSchedule').hidden = false; $('testEditor').hidden = true; $('remoteSchedule').scrollIntoView({ behavior: 'smooth' });
   }
   function remotePartChanged() {
-    if (!remoteExisting) $('remoteDuration').value = remoteSource?.Parts.find(part => part.Id === $('remotePart').value)?.DurationMinutes || 30;
+    if (!remoteExisting) {
+      const part = remoteSource?.Parts.find(row => row.Id === $('remotePart').value);
+      $('remoteDuration').value = part?.DurationMinutes || 30;
+      if (part?.StartsAt) {
+        const localStart = Date.parse(part.StartsAt) + 3600000; // The form displays WAT.
+        $('remoteStart').value = new Date(localStart).toISOString().slice(0, 16);
+        $('remoteEnd').value = new Date(localStart + part.DurationMinutes * 60000).toISOString().slice(0, 16);
+      }
+    }
     $('remotePartNote').textContent = $('remotePart').value === 'theory' ? 'Students type their written answers, labelled by question number. Staff review and mark the theory paper.' : 'The saved paper and answer key are reused without another upload.';
   }
   async function saveRemoteSchedule() {

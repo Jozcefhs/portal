@@ -314,6 +314,15 @@ async function uploadedFixture(split = false) {
   return { ...f, input, sourceRecord, sourceKey: key };
 }
 
+test('separately scheduled uploads offer the correct date and duration for each remote paper', async () => {
+  const f = await uploadedFixture(true);
+  const objective = '2099-01-01T09:00:00.000Z', theory = '2099-01-03T14:00:00.000Z';
+  f.put('academicCbtTests', 'uploaded-cbt', { ...f.sourceRecord, StartsAt: objective, TheoryStartsAt: theory });
+  const { tests } = await f.service.uploadedTests({ ...scope, SessionId: 'session', TermId: 'term', ClassId: 'class7' });
+  assert.deepEqual(tests[0].Parts.map(p => [p.Id, p.StartsAt, p.DurationMinutes]),
+    [['objective', objective, 30], ['theory', theory, 40]]);
+});
+
 test('uploaded CBT selection is period-scoped, private, verified and safe to retry without changing local tests', async () => {
   const f = await uploadedFixture();
   const filter = { ...scope, Audience: 'student', SessionId: 'session', TermId: 'term', ClassId: 'class7' };

@@ -157,8 +157,8 @@ export function createPortalCbtService(env, user = null, dependencies = {}) {
       && !['superseded', 'archived', 'cancelled'].includes(lower(row.Status)) && !row.CloudPaperRemovedAt && uploadedPaperFiles(row).length)
       .map(row => ({ CbtTestId: row.CbtTestId || row.__id, Revision: row.__updateTime, PackageDigest: row.PackageDigest || '', Title: row.Title, SubjectName: row.SubjectName,
         AssessmentComponentName: row.AssessmentComponentName, Status: row.Status,
-        Parts: row.PaperMode === 'split' ? [{ Id: 'objective', Name: 'Objective', DurationMinutes: row.ObjectiveDurationMinutes || row.DurationMinutes },
-          ...(uploadedPaperFiles(row, 'theory').length ? [{ Id: 'theory', Name: 'Theory — written answers', DurationMinutes: row.TheoryDurationMinutes }] : [])]
+        Parts: row.PaperMode === 'split' ? [{ Id: 'objective', Name: 'Objective', ...(row.TheoryStartsAt ? { StartsAt: row.StartsAt } : {}), DurationMinutes: row.ObjectiveDurationMinutes || row.DurationMinutes },
+          ...(uploadedPaperFiles(row, 'theory').length ? [{ Id: 'theory', Name: 'Theory — written answers', ...(row.TheoryStartsAt ? { StartsAt: row.TheoryStartsAt } : {}), DurationMinutes: row.TheoryDurationMinutes }] : [])]
           : [{ Id: '', Name: 'Complete paper', DurationMinutes: row.DurationMinutes }] })) };
   }
   async function uploadedResults(input) {
