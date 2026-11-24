@@ -487,3 +487,9 @@ Reports load on demand at a single snapshot. Pages contain at most 30 source rec
 The integrated synthetic drill follows one registered patient through reception, triage, signed consultation, a verified and released laboratory result, dispensing, ward admission, signed discharge, invoice and payment. It restores the encrypted whole-hospital records archive into a separate store, compares every source record by ID and field, and reopens the released result. Replaying a restore batch, discharge, dispensing and payment preserves the original entries and posted journals. A second preview finds no changes.
 
 Whole-hospital database exports pin collection discovery, branch structure and paginated records to the same Firestore snapshot. An expired snapshot requires a fresh export. The recovery drill covers database records. Practitioner acceptance, uploaded-file disaster recovery on live infrastructure and desktop/offline parity are separate checks.
+
+### Encrypted attachment recovery on hospital storage — 24 November 2026
+
+The recovery drill restored a 1,188,000-byte synthetic attachment from an encrypted backup on the Hospital Owner’s Demo R2 bucket. The document reference, contents, original upload time and upload operation ID survived recovery. A repeated restore retained the same R2 version, and the second preview found nothing to restore. Older archives can still be restored when they lack the two upload fields.
+
+The drill uses a unique synthetic workspace prefix and removes its test file at the end. Its visit and restore-job records run in memory. Run `node scripts/verify-hospital-file-recovery.mjs` for local R2, or add `--live` with the demo’s Cloudflare account selected. A full disaster exercise against a separate live Firestore database and practitioner validation remain open.

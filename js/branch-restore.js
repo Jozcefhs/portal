@@ -158,7 +158,9 @@ export async function previewRestoreFiles(plan, opened, eligibleOwners, request,
     const bytes = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
     const sha256 = Array.from(new Uint8Array(bytes), n => n.toString(16).padStart(2,'0')).join('');
     const {key, size, version, etag, name, type} = entry;
-    pending.push({number, file: {key, size, version, etag, name, type, sha256, ...(owner ? {owner} : {})}});
+    pending.push({number, file: {key, size, version, etag, name, type, sha256,
+      ...(entry.uploadedAt !== undefined ? {uploadedAt:entry.uploadedAt} : {}),
+      ...(entry.operationId !== undefined ? {operationId:entry.operationId} : {}), ...(owner ? {owner} : {})}});
     if (pending.length === 40) await compare();
   }
   await compare();

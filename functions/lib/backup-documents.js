@@ -10,9 +10,12 @@ const maxPage = 100;
 const db = { getDocument, getDocuments };
 
 function describe(object) {
+  const metadata = object.customMetadata || {};
   return { key: object.key, version: object.version, etag: object.etag, size: object.size,
-    name: object.customMetadata?.fileName || object.key.split('/').at(-1),
-    type: object.httpMetadata?.contentType || 'application/octet-stream' };
+    name: metadata.fileName || object.key.split('/').at(-1),
+    type: object.httpMetadata?.contentType || metadata.mimeType || 'application/octet-stream',
+    ...(metadata.uploadedAt ? {uploadedAt:metadata.uploadedAt} : {}),
+    ...(metadata.operationId ? {operationId:metadata.operationId} : {}) };
 }
 
 export async function backupDocuments(env, user, action, body, database = db) {

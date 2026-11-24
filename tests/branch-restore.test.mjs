@@ -138,6 +138,7 @@ for (const edition of ['school','faith','organization','hospital']) {
     const entry = (id, branch = 'west') => ({key:base + branch + '/all/person/receipt/' + id,
       size:4, name:id, type:'application/pdf', version:'original', etag:'original'});
     const missing = entry('missing.pdf'), same = entry('same.pdf'), conflict = entry('conflict.pdf'), sibling = entry('sibling.pdf','east');
+    Object.assign(missing,{uploadedAt:'2026-11-24T08:00:00.000Z',operationId:'upload-42'});
     const files = [missing, same, conflict, sibling, missing];
     const payload = {...f.payload, documentArchive:{files, missing:[entry('missing-at-export.pdf').key]}};
     objects.set(same.key, same);
@@ -165,12 +166,15 @@ for (const edition of ['school','faith','organization','hospital']) {
       const body = {...plan.scope, ...batch, jobId,index};
       if (!batch.file) { await f.call('apply-branch-restore',body); continue; }
       Object.assign(body,{binary:new TextEncoder().encode('data'),byteLength:4});
-      for (const change of [{branchId:'east'},{byteLength:3},{file:{...body.file,key:sibling.key}}]) {
+      for (const change of [{branchId:'east'},{byteLength:3},{file:{...body.file,key:sibling.key}},
+        {file:{...body.file,operationId:'replaced'}}]) {
         await assert.rejects(f.call('apply-branch-restore-document',{...body,...change}));
       }
       const commit = f.db.commit;
       f.db.commit = async () => { throw Error('interrupted'); };
       await assert.rejects(f.call('apply-branch-restore-document',body),/interrupted/);
+      assert.equal(objects.get(missing.key).customMetadata.uploadedAt,missing.uploadedAt);
+      assert.equal(objects.get(missing.key).customMetadata.operationId,missing.operationId);
       f.db.commit = commit;
       assert.ok((await f.call('apply-branch-restore-document',body)).complete);
       assert.ok((await f.call('apply-branch-restore-document',body)).complete);

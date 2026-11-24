@@ -222,10 +222,13 @@ export async function branchRestoreRequest(env, user, action, body, db = databas
     }
     if (state === 'create') {
       const [, edition, workspaceId, category, branchId, schoolSection, ownerId, documentType] = file.key.split('/');
+      const uploadMetadata = { fileName:file.name, mimeType:file.type,
+        ...(file.uploadedAt !== undefined ? {uploadedAt:file.uploadedAt} : {}),
+        ...(file.operationId !== undefined ? {operationId:file.operationId} : {}) };
       const result = await putRestoreFile(env.DYNAMAX_DOCUMENTS, file, body.binary, {
         onlyIf: new Headers({ 'If-None-Match': '*' }), sha256: file.sha256, httpMetadata: { contentType: file.type },
-        customMetadata: file.key.startsWith('private-portal-cbt/') ? { ...identity, fileName:file.name, mimeType:file.type } :
-          { edition, workspaceId, category, branchId, schoolSection, ownerId, documentType, fileName: file.name, mimeType: file.type }
+        customMetadata: file.key.startsWith('private-portal-cbt/') ? { ...identity, ...uploadMetadata } :
+          { edition, workspaceId, category, branchId, schoolSection, ownerId, documentType, ...uploadMetadata }
       });
       if (!result && await inspectFile(file) !== 'unchanged') throw fail('Another file now uses this location. Preview again.');
     }
@@ -284,6 +287,10 @@ async function inspectRestoreFile(env, identity, branch, structure, file) {
   if (branch === 'main' && !file.owner || file.owner && (!collectionKind(file.owner.path, identity, branch) ||
       typeof file.owner.id !== 'string' || !file.owner.id || /[/]/.test(file.owner.id) || ['.', '..'].includes(file.owner.id))) return 'unverified';
   if (typeof file.name !== 'string' || file.name.length > 256 || typeof file.type !== 'string' || file.type.length > 160 ||
+      (file.uploadedAt !== undefined && (typeof file.uploadedAt !== 'string' ||
+        !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(file.uploadedAt) || !Number.isFinite(Date.parse(file.uploadedAt)))) ||
+      (file.operationId !== undefined && (typeof file.operationId !== 'string' || file.operationId.length > 180 ||
+        /[\x00-\x1f\x7f]/.test(file.operationId))) ||
       /[\x00-\x1f\x7f]/.test(file.name + file.type) || !Number.isSafeInteger(file.size) || file.size < 0 ||
       !/^[a-f0-9]{64}$/.test(file.sha256)) throw fail('Invalid archived document details.');
   const bucket = env.DYNAMAX_DOCUMENTS;

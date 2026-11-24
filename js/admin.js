@@ -22520,7 +22520,7 @@ function renderDataBackup() {
     }
   });
   const restoreCard = document.getElementById('restoreBranch');
-  import('/js/branch-restore.js?v=20261120-organisation').then(({ mountBranchRestore }) => {
+  import('/js/branch-restore.js?v=20261124-upload-metadata').then(({ mountBranchRestore }) => {
     if (!restoreCard.isConnected) return;
     mountBranchRestore({ request: dataBackupRequest, staffFetch, decrypt: decryptOrganizationBackup, chunks: chunkRestoreRows,
       status: setDataBackupStatus, dialogs: window.DynamaxDialogs, derive: deriveBackupEncryptionKey, safetyBackup: async password => {
