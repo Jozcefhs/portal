@@ -11,6 +11,31 @@ const defaults = { getDocument, queryCollectionPages };
 export function branchClassNameKey(name) { return normalizeClassKey(name); }
 export function branchArmNameKey(name) { return lower(name).replace(/\s+/g, ' '); }
 
+export async function studentRegisterCatalogueLabels(env, students, load = getBranchClassCatalogue) {
+  const catalogues = new Map();
+  return Promise.all(students.map(async student => {
+    const path = /^schoolBranches\/([^/]+)\/sections\/([^/]+)\/students$/.exec(clean(student.__scopePath));
+    const branchId = lower(path?.[1] || student.BranchId || 'main');
+    if (!catalogues.has(branchId)) catalogues.set(branchId, load(env, { branchId, metadata: {} }));
+    const { classes } = await catalogues.get(branchId);
+    const className = clean(student.ClassName || student.ClassAdmitted);
+    const section = path?.[2] || schoolSectionFor({ ...student, ClassName: className });
+    const scoped = classes.filter(row => row.SchoolSection === section);
+    const armName = clean(student.ClassArm);
+    const bareName = armName && lower(className).endsWith(' / ' + lower(armName))
+      ? className.slice(0, -(armName.length + 3)) : className;
+    const matches = student.AcademicClassId
+      ? scoped.filter(row => row.ClassId === student.AcademicClassId)
+      : scoped.filter(row => branchClassNameKey(row.ClassName) === branchClassNameKey(bareName));
+    if (matches.length !== 1) return student;
+    const schoolClass = matches[0];
+    const arms = schoolClass.ArmRecords.filter(arm => student.AcademicArmId
+      ? arm.ArmId === student.AcademicArmId : branchArmNameKey(arm.Name) === branchArmNameKey(armName));
+    return { ...student, CatalogueClassName: schoolClass.ClassName,
+      CatalogueArmName: arms.length === 1 ? arms[0].Name : armName };
+  }));
+}
+
 function selectedBranch(value) {
   const branchId = clean(value);
   if (!branchId || lower(branchId) === 'all') {

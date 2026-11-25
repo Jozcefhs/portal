@@ -5755,6 +5755,7 @@ async function scanWalletNfc(form, button, options = {}) {
 }
 
 function studentExportClass(row) {
+  if (row.CatalogueClassName) return [row.CatalogueClassName, row.CatalogueArmName].filter(Boolean).join(' / ');
   const className = clean(pick(row, ['ClassName', 'ClassAdmitted']));
   const arm = clean(pick(row, ['ClassArm']));
   if (!className || !arm || className.toLowerCase().endsWith(arm.toLowerCase())) return className;
@@ -18943,7 +18944,7 @@ function bindAcademicManagement() {
   deadlineButton.onclick = async () => {
     try {
       if (!academicManagementFilters.sessionId || !academicManagementFilters.termId) throw new Error('Choose a session and term first.');
-      const { openSubmissionSettings } = await import('./academic-submissions.js');
+      const { openSubmissionSettings } = await import('./academic-submissions.js?v=saved-deadlines');
       await openSubmissionSettings({ request: academicManagementRequest,
         context: { SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId, TermId: academicManagementFilters.termId },
         classes: academicManagementData?.classes || [], subjects: academicManagementData?.subjects || [] });
@@ -21542,6 +21543,7 @@ function renderSection(active) {
         pick(row, ['AdmissionNo', 'AccountRef', '__id']),
         pick(row, ['DisplayName', 'ApplicantName', 'StudentName']),
         pick(row, ['WalletCardId', 'walletCardId', 'CardId', 'cardId']),
+        studentExportClass(row),
         pick(row, ['ClassName']),
         pick(row, ['ClassArm']),
         pick(row, ['StudentType']),

@@ -1,11 +1,11 @@
-import { getDocument, batchCommitDocuments, queryCollection } from './firestore.js';
+import { getDocument, batchCommitDocuments, queryCollection, queryCollectionPages } from './firestore.js';
 import { findStaffUserRecord, staffAccessFor } from './staff-auth.js';
 
 const clean = value => String(value ?? '').trim();
 const actor = user => clean(user.username || user.Username).toLowerCase();
 const plain = row => Object.fromEntries(Object.entries(row || {}).filter(([key]) => !key.startsWith('__')));
 const fail = (message, status = 400, code = 'ACADEMIC_SUBMISSION_INVALID') => Object.assign(new Error(message), { status, code });
-const ioDefault = { getDocument, batchCommitDocuments, queryCollection, findStaffUserRecord, staffAccessFor, fetch: (...args) => fetch(...args) };
+const ioDefault = { getDocument, batchCommitDocuments, queryCollection, queryCollectionPages, findStaffUserRecord, staffAccessFor, fetch: (...args) => fetch(...args) };
 export const SUBMISSION_TYPES = Object.freeze({ cbt: 'CBT test upload', scheme: 'Scheme of work',
   'diary-entry': 'Weekly subject work', diary: 'Compiled weekly diary', scorebook: 'Scorebook submission', attendance: 'Attendance register' });
 export const SUBMISSION_COLLECTIONS = Object.freeze({ settings: 'academicSubmissionSettings', pending: 'academicPendingSubmissions', receipts: 'academicSubmissionReceipts', history: 'academicSubmissionSettingsHistory' });
@@ -68,7 +68,23 @@ export async function submissionSettings(env, context, user, input, save = false
       .filter(row => !['archived', 'inactive', 'deleted', 'closed'].includes(clean(row.Status).toLowerCase()))
       .map(row => ({ [id]: row[id], Name: row.Name || row[id] }))
       .sort((a, b) => a.Name.localeCompare(b.Name));
-    return { ok: true, settings: { ...scope, Enabled: false, Rules: [], ...plain(previous), RevisionToken: previous?.__updateTime || '' }, canManage, recordTypes: SUBMISSION_TYPES,
+    let activeDeadlines;
+    if (input.IncludeActiveDeadlines === true) {
+      const filters = [{ field: 'BranchId', op: '==', value: scope.BranchId }];
+      const sectionAccess = clean(user.schoolSectionAccess || user.SchoolSectionAccess || 'all').toLowerCase();
+      if (sectionAccess !== 'all') filters.push({ field: 'SchoolSection', op: '==', value: scope.SchoolSection });
+      const policies = await io.queryCollectionPages(env, SUBMISSION_COLLECTIONS.settings, { filters,
+        select: [...fields, 'Enabled', 'Rules'] });
+      const label = (key, id, value) => context.state?.[key]?.find(row => row[id] === value)?.Name || value;
+      activeDeadlines = policies.filter(policy => policy.Enabled === true && policy.BranchId === scope.BranchId
+        && (sectionAccess === 'all' || policy.SchoolSection === scope.SchoolSection))
+        .flatMap(policy => (policy.Rules || []).filter(rule => rule.Enabled === true).map(rule => ({
+          ...rule, SchoolSection: policy.SchoolSection, Session: label('sessions', 'SessionId', policy.SessionId),
+          Term: label('terms', 'TermId', policy.TermId), Class: label('classes', 'ClassId', rule.ClassId),
+          Subject: label('subjects', 'SubjectId', rule.SubjectId)
+        }))).sort((a, b) => Date.parse(a.Deadline) - Date.parse(b.Deadline));
+    }
+    return { ok: true, ...(activeDeadlines ? { activeDeadlines } : {}), settings: { ...scope, Enabled: false, Rules: [], ...plain(previous), RevisionToken: previous?.__updateTime || '' }, canManage, recordTypes: SUBMISSION_TYPES,
       ...(input.IncludeChoices === true ? { classes: choices('classes', 'ClassId'), subjects: choices('subjects', 'SubjectId') } : {}) };
   }
   if (!canManage) throw fail('Only authorised Academic Management reviewers can configure submission deadlines.', 403);

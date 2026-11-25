@@ -223,3 +223,12 @@ test('large attendance registers retain their transfer guards in one atomic subm
   assert.equal(result.submission.Status,'Submitted');
   assert.equal(paid.docs.has('academicStudentAttendance/guarded-599'),true);
 });
+test('active saved deadlines include prior terms and respect branch, section and both enabled switches', async () => {
+  const policy = { BranchId: 'main', SchoolSection: 'secondary', SessionId: '2025', TermId: 'third', Enabled: true, Rules: [rule, { ...rule, Enabled: false }] };
+  const io = { getDocument: async () => null, queryCollectionPages: async () => [
+    policy, { ...policy, Enabled: false }, { ...policy, SchoolSection: 'primary' }, { ...policy, BranchId: 'other' }
+  ] };
+  const load = access => submissionSettings({}, context, { schoolSectionAccess: access }, { IncludeActiveDeadlines: true }, false, io);
+  assert.deepEqual((await load('secondary')).activeDeadlines.map(row => row.Term), ['third']);
+  assert.equal((await load('all')).activeDeadlines.length, 2);
+});

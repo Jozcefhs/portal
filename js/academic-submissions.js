@@ -70,7 +70,7 @@ export async function openSubmissionSettings({ request, context, classes = [], s
     .academic-submission-settings .submission-actions button{margin:0}
     </style><h2>Submission deadlines &amp; surcharges</h2><p>Settings apply only to the selected branch, school section, session and term. Amounts are per late submission, paid into the school Paystack account. Draft score entry and draft weekly work remain available.</p>
     <p>Times below are West Africa Time (UTC+01:00). A more specific class/subject/week/test rule overrides the general rule. Avoid equally specific overlapping rules.</p>
-    <p role="status" data-status>Loading…</p><section data-settings></section><h3>Pending submissions and payment register</h3><p>Resume your checkout or check a payment without paying again. Paid records needing review are not reported as submitted.</p><section data-register></section><button data-close>Close</button>`;
+    <p role="status" data-status>Loading…</p><section data-active-deadlines></section><section data-settings></section><h3>Pending submissions and payment register</h3><p>Resume your checkout or check a payment without paying again. Paid records needing review are not reported as submitted.</p><section data-register></section><button data-close>Close</button>`;
   document.body.append(dialog); dialog.showModal();
   const status = dialog.querySelector('[data-status]'), settingsEl = dialog.querySelector('[data-settings]'), register = dialog.querySelector('[data-register]');
   let current, types, canManage, busy = false;
@@ -89,6 +89,16 @@ export async function openSubmissionSettings({ request, context, classes = [], s
     <td><input data-deadline type="datetime-local" required value="${rule.Deadline ? escape(new Date(Date.parse(rule.Deadline) + 3600000).toISOString().slice(0,16)) : ''}"></td>
     <td><input data-amount type="number" min="1" max="1000000" step="0.01" value="${Number(rule.AmountKobo || 10000) / 100}" aria-label="Surcharge in naira" style="width:100px"></td>
     <td><input data-enabled type="checkbox" ${rule.Enabled !== false ? 'checked' : ''} aria-label="Rule enabled"></td><td><button type="button" data-remove>Remove</button></td></tr>`;
+  const showDeadlines = (rows = []) => {
+    const panel = dialog.querySelector('[data-active-deadlines]');
+    panel.innerHTML = '<h3>Active saved deadlines</h3>' + (rows.length
+      ? '<div style="overflow:auto"><table><thead><tr><th>Section / session / term</th><th>Record</th><th>Applies to</th><th>Deadline (WAT)</th><th>Surcharge</th></tr></thead><tbody>' + rows.map(rule => {
+        const selectors = [rule.Class || 'All classes', rule.Subject || 'All subjects', rule.Week && 'Week ' + rule.Week, rule.AssessmentComponentId].filter(Boolean);
+        const time = new Date(rule.Deadline).toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
+        return '<tr>' + [[rule.SchoolSection, rule.Session, rule.Term].join(' / '), types[rule.RecordType], selectors.join(' · '), time, money(rule.AmountKobo)]
+          .map(value => '<td>' + escape(value) + '</td>').join('') + '</tr>';
+      }).join('') + '</tbody></table></div>' : '<p>No active saved deadlines in your accessible sections of this branch.</p>');
+  };
   const render = () => {
     settingsEl.innerHTML = `<form><fieldset style="min-width:0" ${canManage ? '' : 'disabled'}><label class="submission-master-switch"><input name="Enabled" type="checkbox" ${current.Enabled ? 'checked' : ''}><span>Enable submission deadlines and surcharges</span></label>
       <div style="overflow:auto;margin:15px 0"><table style="min-width:1050px"><thead><tr>${['Record','Class','Subject','Week','Test ID','Deadline (WAT)','Amount (NGN)','Enabled',''].map(t => `<th>${t}</th>`).join('')}</tr></thead><tbody>${current.Rules.map(row).join('')}</tbody></table></div>
@@ -102,7 +112,10 @@ export async function openSubmissionSettings({ request, context, classes = [], s
           Week: tr.querySelector('[data-week]').value, AssessmentComponentId: tr.querySelector('[data-component]').value.trim(),
           Deadline: `${tr.querySelector('[data-deadline]').value}:00+01:00`, AmountKobo: Math.round(Number(tr.querySelector('[data-amount]').value) * 100), Enabled: tr.querySelector('[data-enabled]').checked }));
         const result = await request('saveAcademicSubmissionSettings', { ...context, Enabled: settingsEl.querySelector('[name=Enabled]').checked, Rules, RevisionToken: current.RevisionToken });
-        current = result.settings; render(); status.textContent = 'Deadline and surcharge settings saved.';
+        current = result.settings; render();
+        dialog.querySelector('[data-active-deadlines]').textContent = 'Refreshing saved deadlines…';
+        const saved = await request('getAcademicSubmissionSettings', { ...context, IncludeChoices: true, IncludeActiveDeadlines: true });
+        showDeadlines(saved.activeDeadlines); status.textContent = 'Deadline and surcharge settings saved.';
       });
     };
   };
@@ -119,9 +132,9 @@ export async function openSubmissionSettings({ request, context, classes = [], s
     }); });
   };
   await run(async () => {
-    const result = await request('getAcademicSubmissionSettings', { ...context, IncludeChoices: true });
+    const result = await request('getAcademicSubmissionSettings', { ...context, IncludeChoices: true, IncludeActiveDeadlines: true });
     classes = result.classes || classes; subjects = result.subjects || subjects;
     current = result.settings; types = result.recordTypes; canManage = result.canManage;
-    render(); await loadRegister(); status.textContent = canManage ? 'Set a deadline and amount, then enable the feature when ready.' : 'Your submission deadlines and payment register.';
+    showDeadlines(result.activeDeadlines); render(); await loadRegister(); status.textContent = canManage ? 'Set a deadline and amount, then enable the feature when ready.' : 'Your submission deadlines and payment register.';
   });
 }

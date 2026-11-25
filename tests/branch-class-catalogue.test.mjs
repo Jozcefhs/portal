@@ -1,6 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { studentRegisterCatalogueLabels } from '../functions/lib/branch-class-catalogue.js';
 import { getBranchClassCatalogue, projectBranchClassCatalogue, branchClassCatalogueRevisionWrite } from '../functions/lib/branch-class-catalogue.js';
+
+test('register resolves imported labels and linked renames with one catalogue load per branch', async () => {
+  const imported = { ClassName: 'NURSERY2', ClassArm: 'EXCELLENCE', __scopePath: 'schoolBranches/garden/sections/primary/students' };
+  const linked = { ...imported, ClassName: 'Old name', ClassArm: 'Old arm', AcademicClassId: 'original-nursery', AcademicArmId: 'original-arm' };
+  const loads = [];
+  const rows = await studentRegisterCatalogueLabels({}, [imported, linked], async (_, options) => {
+    loads.push(options.branchId);
+    return { classes: projectBranchClassCatalogue(classes, arms, options) };
+  });
+  assert.deepEqual(loads, ['garden']);
+  assert.deepEqual(rows.map(row => [row.CatalogueClassName, row.CatalogueArmName]),
+    [['Nursery 2', 'Excellence'], ['Nursery 2', 'Excellence']]);
+  assert.equal(imported.ClassArm, 'EXCELLENCE');
+  assert.equal(imported.CatalogueArmName, undefined);
+});
 
 const classes = [
   { __id:'original-nursery', ClassId:'original-nursery', Name:'Nursery 2', BranchId:'garden', SchoolSection:'primary', Status:'Active', __updateTime:'v1' },

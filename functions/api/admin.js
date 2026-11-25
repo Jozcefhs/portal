@@ -15,6 +15,7 @@ import { studentWalletProfile } from '../lib/student-wallet-profile.js';
 import { loadFinanceSchoolProfile } from '../lib/finance-school-profile.js';
 import { branchProfilesForRecords } from '../lib/branch-profile-settings.js';
 import { recordBranchId } from '../lib/branch-scope.js';
+import { studentRegisterCatalogueLabels } from '../lib/branch-class-catalogue.js';
 import { debtorReportRow, schoolDebtorsReport } from '../lib/school-debtors-report.js';
 
 function clean(value) {
@@ -346,7 +347,9 @@ export async function onRequestPost(context) {
 
     const allDepartments = {
       admissions: publicRows(sortRecent(visibleApplications, ['SubmittedAt', 'UpdatedAt', 'Timestamp']), 80),
-      students: publicRows(sortRecent(visibleStudents, ['UpdatedAt', 'EnrolledAt', 'CreatedAt']), visibleStudents.length),
+      students: publicRows(sortRecent(user.edition === 'school' && shouldLoad('students')
+        ? await studentRegisterCatalogueLabels(env, visibleStudents) : visibleStudents,
+        ['UpdatedAt', 'EnrolledAt', 'CreatedAt']), visibleStudents.length),
       formPurchases: publicRows(sortRecent(visibleFormSales, ['PaymentDate', 'UpdatedAt', 'CreatedAt']), 80),
       accounts: {
         payments: publicRows(sortRecent(visiblePayments, ['PaidAt', 'Date', 'RecordedAt']), 80),
