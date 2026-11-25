@@ -1,6 +1,6 @@
 import { hasFullModuleAccess, modulePermissionRole } from './module-authority.js';
 import { academicTradeRequired, academicCurriculumSettingId } from './academic-curriculum-settings.js';
-import { listBranchCollection } from './branch-reads.js';
+import { staffAccountVisibleInBranch } from './staff-branch-access.js';
 import { batchCommitDocuments, getDocument, getDocuments, listCollection, queryCollection, queryCollectionPages } from './firestore.js';
 import { commitAcademicCbtRoster } from './academic-cbt-roster-commit.js';
 import { academicCbtRetentionActivationWrites, assertAcademicTermRetentionEdit } from './academic-cbt-paper-retention.js';
@@ -2057,7 +2057,7 @@ async function loadPeople(env, user, scope, options = {}) {
   const includeStaff = options.staff !== false;
   const includeStudents = options.students !== false;
   const [staff, students] = await Promise.all([
-    includeStaff ? listBranchCollection(env, 'staffUsers', scope.branchId) : Promise.resolve([]),
+    includeStaff ? listCollection(env, 'staffUsers') : Promise.resolve([]),
     includeStudents ? listSchoolCollection(env, 'students', {
       branchId: scope.branchId,
       schoolSectionAccess: scope.section || user.schoolSectionAccess || 'All'
@@ -2066,7 +2066,7 @@ async function loadPeople(env, user, scope, options = {}) {
   return {
     staff: staff.filter((row) => staffRecordMatchesEdition(row, { ...user, edition: 'school' })
       && activeValue(row.Active, true)
-      && lower(row.BranchId || 'main') === lower(scope.branchId)),
+      && staffAccountVisibleInBranch(row, { branchId: scope.branchId })),
     students
   };
 }

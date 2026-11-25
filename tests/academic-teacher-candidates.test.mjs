@@ -4,6 +4,7 @@ import test from 'node:test';
 import { runInNewContext } from './helpers/module-policy-vm.mjs';
 import { academicSubjectTeacherCandidates, academicManagementCapabilities } from '../functions/lib/academic-management.js';
 import { staffRecordMatchesEdition } from '../functions/lib/records-desk.js';
+import { staffAccountVisibleInBranch } from '../functions/lib/staff-branch-access.js';
 
 const [library, admin] = await Promise.all([
   readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8'),
@@ -94,16 +95,19 @@ test('server accepts Teacher subject, form and assistant allocations, and still 
 test('Teacher candidates still pass through the existing edition and branch boundary', async () => {
   const rows = [
     ...staff.map(row => ({ ...row, BranchId: 'main', OrganisationEdition: 'school' })),
+    { Username: 'shared', Role: 'Teacher', BranchId: 'main', BranchIds: ['main','garden'], SchoolSectionAccess: 'All', OrganisationEdition: 'school' },
     { Username: 'other-branch', Role: 'Teacher', BranchId: 'north', OrganisationEdition: 'school' },
     { Username: 'other-edition', Role: 'Teacher', BranchId: 'main', OrganisationEdition: 'church' }
   ];
   const { activeValue } = libraryHelpers(['activeValue']);
   const load = runInNewContext(`async ${declaration(library, 'loadPeople')}\nloadPeople`, {
-    lower, activeValue, staffRecordMatchesEdition, listBranchCollection: async () => rows,
+    lower, activeValue, staffRecordMatchesEdition, staffAccountVisibleInBranch, listCollection: async () => rows,
     listSchoolCollection: async () => { throw new Error('Students are not needed'); }
   });
   const people = await load({}, { edition: 'school' }, { branchId: 'main', section: 'primary' }, { students: false });
-  assert.deepEqual(Array.from(academicSubjectTeacherCandidates(people.staff, 'primary'), row => row.Username), ['teacher', 'science', 'academics', 'accounts']);
+  assert.deepEqual(Array.from(academicSubjectTeacherCandidates(people.staff, 'primary'), row => row.Username), ['teacher', 'science', 'academics', 'accounts', 'shared']);
+  const garden = await load({}, { edition: 'school' }, { branchId: 'garden', section: 'primary' }, { students: false });
+  assert.deepEqual(Array.from(academicSubjectTeacherCandidates(garden.staff, 'primary'), row => row.Username), ['shared']);
 });
 
 test('selection eligibility does not grant Teacher accounts administrator permissions', () => {
