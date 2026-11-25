@@ -1,8 +1,8 @@
 {
-  "version": "3.1.70",
+  "version": "3.1.71",
   "channel": "stable",
   "release_status": "published",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.70.exe",
-  "sha256": "431924334480f681e829380b0d478b1b97e276b4f24dd2edbff0b4eacb700215",
-  "notes": "Student Fee Lookup uses the working branch's class register. Editing an arm name keeps its pupils and scores linked. Credit Action can apply a pupil's existing school fee credit to a selected unpaid invoice."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.71.exe",
+  "sha256": "17f69948155851ef205d9605c212d2540b73d6c73a91182ab96022c91fe415eb",
+  "notes": "New Practice Test supports Objective and Theory papers. Practice answers and scores stay on the local CBT server."
 }
