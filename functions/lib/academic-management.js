@@ -2173,6 +2173,7 @@ function sortAcademicState(state) {
   const byName = (a, b) => clean(a.Name).localeCompare(clean(b.Name), undefined, { numeric: true, sensitivity: 'base' });
   const byOrder = (a, b) => Number(a.SortOrder || 100) - Number(b.SortOrder || 100) || byName(a, b);
   return {
+    curriculumSettings: state.curriculumSettings,
     sessions: [...state.sessions].sort((a, b) => clean(b.StartDate).localeCompare(clean(a.StartDate))),
     terms: [...state.terms].sort((a, b) => clean(a.StartDate).localeCompare(clean(b.StartDate))),
     classes: [...state.classes].sort(byOrder), armTemplates: [...state.armTemplates].sort(byName), arms: [...state.arms].sort(byName),
@@ -2554,7 +2555,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
     })),
     allocationPeriod: teacherAllocationView ? allocationPeriod : null,
     ...(teacherAllocationView ? { studentMovements: [] } : {}),
-    curriculumSettings: { RequireTradeSubject: academicTradeRequired(state) },
+    ...(state.curriculumSettings ? { curriculumSettings: { RequireTradeSubject: academicTradeRequired(state) } } : {}),
     sections: scope.structure.Sections,
     ...(selection ? { selection } : {}),
     ...(includeAssessmentPolicy && ['scorebook', 'cbt'].includes(focusedView) ? { assessmentScheme } : {}),

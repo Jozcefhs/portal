@@ -139,7 +139,7 @@ test('web subject register renders mixed Core checkboxes as editable and single-
   assert.ok(singleInputs.every(input => input.includes(' checked') && input.includes(' disabled')));
 });
 
-test('web save payload includes exactly the selected Core subjects and no personal department', () => {
+test('web save respects the branch Trade rule and submits the selected Core subjects', async () => {
   const context = browserContext();
   context.academicManagementData = fixture();
   Object.assign(context.academicManagementData.studentMemberships[0], {
@@ -155,10 +155,23 @@ test('web save payload includes exactly the selected Core subjects and no person
   };
   const start = admin.indexOf('function academicWorkflowPayload(');
   const end = admin.indexOf('function populateAcademicMovementForm(', start);
-  const payload = vm.runInNewContext(`${admin.slice(start, end)}\nacademicWorkflowPayload`, context)(form);
+  const build = vm.runInNewContext(`${admin.slice(start, end)}\nacademicWorkflowPayload`, context);
+  const payload = build(form);
   assert.deepEqual(clone(payload.Assignments[0]), {
     MembershipId: 'membership', RevisionToken: 'rev-1', CoreSubjectIds: ['english', 'economics'], TradeSubjectIds: ['catering'], OptionalSubjectIds: []
   });
+  row.querySelectorAll = selector => selector.includes('"Core"') ? [{value:'english'}] : [];
+  row.querySelector = () => null;
+  for (const settings of [{RequireTradeSubject:false}, undefined]) {
+    context.academicManagementData.curriculumSettings = settings;
+    const assignment = clone(build(form).Assignments[0]);
+    assert.deepEqual(assignment.TradeSubjectIds, []);
+    const state = fixture();
+    state.curriculumSettings = {RequireTradeSubject:false};
+    await batchHarness(state).save(assignment);
+  }
+  context.academicManagementData.curriculumSettings = {RequireTradeSubject:true};
+  assert.throws(() => build(form), /must have at least one Trade subject/);
 });
 
 function batchHarness(state = fixture()) {
@@ -294,6 +307,11 @@ test('Trade switch saves only branch settings and audit, and repeating it writes
   await h.configure({TradeSubjectIds:['catering'],OptionalSubjectIds:['music'],RequireTradeSubject:false});
   assert.deepEqual(h.writes.map(w=>w.collectionPath),['settings','academicManagementAudit']);
   const setting=h.writes[0];
+  const start = source.indexOf('function sortAcademicState(');
+  const sort = vm.runInNewContext(source.slice(start, source.indexOf('\n}', start) + 2) + '\nsortAcademicState', {clean: v => String(v ?? '').trim()});
+  const { academicTradeRequired } = await import('../functions/lib/academic-curriculum-settings.js');
+  const collections = Object.fromEntries(Object.keys(management.ACADEMIC_MANAGEMENT_COLLECTIONS).map(key => [key, []]));
+  assert.equal(academicTradeRequired(sort({...collections, curriculumSettings:setting.data})), false);
   assert.equal(setting.documentId,'academic-curriculum-main');assert.equal(setting.exists,false);
   assert.equal(setting.data.BranchId,'main');assert.equal(setting.data.RequireTradeSubject,false);
   state.curriculumSettings={...setting.data,__updateTime:'setting-revision'};

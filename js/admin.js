@@ -18249,7 +18249,7 @@ function academicWorkflowPayload(form) {
         throw new Error(`${row.dataset.studentName || 'Each student'} must have at least one Core subject.`);
       }
       const tradeSubjectIds = [...row.querySelectorAll('[data-academic-student-subject-role="Trade"]:checked')].map((input) => input.value);
-      if (!tradeSubjectIds.length && academicManagementData?.curriculumSettings?.RequireTradeSubject !== false) {
+      if (!tradeSubjectIds.length && academicManagementData?.curriculumSettings?.RequireTradeSubject === true) {
         row.querySelector('[data-academic-student-subject-role="Trade"]')?.focus();
         throw new Error(`${row.dataset.studentName || 'Each student'} must have at least one Trade subject.`);
       }
