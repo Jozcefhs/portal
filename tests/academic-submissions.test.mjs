@@ -232,3 +232,16 @@ test('active saved deadlines include prior terms and respect branch, section and
   assert.deepEqual((await load('secondary')).activeDeadlines.map(row => row.Term), ['third']);
   assert.equal((await load('all')).activeDeadlines.length, 2);
 });
+test('Primary deadlines accept the sole branch calendar and keep section-specific choices isolated', async () => {
+  const { submissionCalendarState } = await import('../functions/lib/academic-management.js');
+  const period = { BranchId: 'main', SchoolSection: 'secondary', SessionId: 'shared' };
+  const primary = { BranchId: 'main', SchoolSection: 'primary', SessionId: 'own' };
+  const state = { sessions: [period], terms: [{ ...period, TermId: 'first' }], classes: [period, primary] };
+  const scope = { branchId: 'main', section: 'primary' };
+  const resolved = submissionCalendarState(state, scope);
+  assert.deepEqual(resolved.sessions, [period]);
+  assert.deepEqual(resolved.terms, state.terms);
+  assert.deepEqual(resolved.classes, [primary]);
+  assert.deepEqual(submissionCalendarState({ ...state, sessions: [period,primary] },scope).sessions, [primary]);
+  assert.deepEqual(submissionCalendarState(state,{ ...scope,branchId:'other' }).sessions, []);
+});

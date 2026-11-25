@@ -134,6 +134,12 @@ export async function openSubmissionSettings({ request, context, classes = [], s
   await run(async () => {
     const result = await request('getAcademicSubmissionSettings', { ...context, IncludeChoices: true, IncludeActiveDeadlines: true });
     classes = result.classes || classes; subjects = result.subjects || subjects;
+    if (result.periodRequired) {
+      types = result.recordTypes;
+      showDeadlines(result.activeDeadlines);
+      status.textContent = 'Choose a session and its term to edit deadlines or view payments.';
+      return;
+    }
     current = result.settings; types = result.recordTypes; canManage = result.canManage;
     showDeadlines(result.activeDeadlines); render(); await loadRegister(); status.textContent = canManage ? 'Set a deadline and amount, then enable the feature when ready.' : 'Your submission deadlines and payment register.';
   });

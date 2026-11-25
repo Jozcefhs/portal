@@ -18943,10 +18943,10 @@ function bindAcademicManagement() {
   panelEl.querySelector('.academic-homework-actions')?.append(deadlineButton);
   deadlineButton.onclick = async () => {
     try {
-      if (!academicManagementFilters.sessionId || !academicManagementFilters.termId) throw new Error('Choose a session and term first.');
-      const { openSubmissionSettings } = await import('./academic-submissions.js?v=saved-deadlines');
-      await openSubmissionSettings({ request: academicManagementRequest,
-        context: { SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId, TermId: academicManagementFilters.termId },
+      const context = { SchoolSection: panelEl.querySelector('#academicManagementSection').value,
+        SessionId: panelEl.querySelector('#academicManagementSession').value, TermId: panelEl.querySelector('#academicManagementTerm').value };
+      const { openSubmissionSettings } = await import('./academic-submissions.js?v=primary-period');
+      await openSubmissionSettings({ request: academicManagementRequest, context,
         classes: academicManagementData?.classes || [], subjects: academicManagementData?.subjects || [] });
     } catch (error) { setStatus(document.getElementById('academicManagementStatus'), error.message, 'bad'); }
   };

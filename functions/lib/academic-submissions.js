@@ -59,6 +59,21 @@ export function applicableSubmissionRule(settings, type, input, now = Date.now()
   const rule = matches[0];
   return rule && now > Date.parse(rule.Deadline) ? rule : null;
 }
+export async function listActiveSubmissionDeadlines(env, scope, state, user, io = ioDefault) {
+  const filters = [{ field: 'BranchId', op: '==', value: scope.BranchId }];
+  const sectionAccess = clean(user.schoolSectionAccess || user.SchoolSectionAccess || 'all').toLowerCase();
+  if (sectionAccess !== 'all') filters.push({ field: 'SchoolSection', op: '==', value: scope.SchoolSection });
+  const policies = await io.queryCollectionPages(env, SUBMISSION_COLLECTIONS.settings, { filters,
+    select: [...fields, 'Enabled', 'Rules'] });
+  const label = (key, id, value) => state?.[key]?.find(row => row[id] === value)?.Name || value;
+  return policies.filter(policy => policy.Enabled === true && policy.BranchId === scope.BranchId
+    && (sectionAccess === 'all' || policy.SchoolSection === scope.SchoolSection))
+    .flatMap(policy => (policy.Rules || []).filter(rule => rule.Enabled === true).map(rule => ({
+      ...rule, SchoolSection: policy.SchoolSection, Session: label('sessions', 'SessionId', policy.SessionId),
+      Term: label('terms', 'TermId', policy.TermId), Class: label('classes', 'ClassId', rule.ClassId),
+      Subject: label('subjects', 'SubjectId', rule.SubjectId)
+    }))).sort((a, b) => Date.parse(a.Deadline) - Date.parse(b.Deadline));
+}
 export async function submissionSettings(env, context, user, input, save = false, io = ioDefault) {
   const scope = scopeOf(context), id = await submissionHash(fields.map(key => scope[key]));
   const previous = await io.getDocument(env, SUBMISSION_COLLECTIONS.settings, id);
@@ -70,19 +85,7 @@ export async function submissionSettings(env, context, user, input, save = false
       .sort((a, b) => a.Name.localeCompare(b.Name));
     let activeDeadlines;
     if (input.IncludeActiveDeadlines === true) {
-      const filters = [{ field: 'BranchId', op: '==', value: scope.BranchId }];
-      const sectionAccess = clean(user.schoolSectionAccess || user.SchoolSectionAccess || 'all').toLowerCase();
-      if (sectionAccess !== 'all') filters.push({ field: 'SchoolSection', op: '==', value: scope.SchoolSection });
-      const policies = await io.queryCollectionPages(env, SUBMISSION_COLLECTIONS.settings, { filters,
-        select: [...fields, 'Enabled', 'Rules'] });
-      const label = (key, id, value) => context.state?.[key]?.find(row => row[id] === value)?.Name || value;
-      activeDeadlines = policies.filter(policy => policy.Enabled === true && policy.BranchId === scope.BranchId
-        && (sectionAccess === 'all' || policy.SchoolSection === scope.SchoolSection))
-        .flatMap(policy => (policy.Rules || []).filter(rule => rule.Enabled === true).map(rule => ({
-          ...rule, SchoolSection: policy.SchoolSection, Session: label('sessions', 'SessionId', policy.SessionId),
-          Term: label('terms', 'TermId', policy.TermId), Class: label('classes', 'ClassId', rule.ClassId),
-          Subject: label('subjects', 'SubjectId', rule.SubjectId)
-        }))).sort((a, b) => Date.parse(a.Deadline) - Date.parse(b.Deadline));
+      activeDeadlines = await listActiveSubmissionDeadlines(env, scope, context.state, user, io);
     }
     return { ok: true, ...(activeDeadlines ? { activeDeadlines } : {}), settings: { ...scope, Enabled: false, Rules: [], ...plain(previous), RevisionToken: previous?.__updateTime || '' }, canManage, recordTypes: SUBMISSION_TYPES,
       ...(input.IncludeChoices === true ? { classes: choices('classes', 'ClassId'), subjects: choices('subjects', 'SubjectId') } : {}) };

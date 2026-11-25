@@ -22,7 +22,7 @@ import { loadAcademicResultsReadiness } from './academic-results-readiness.js';
 import { planAcademicResultBatch } from './academic-result-batch.js';
 import { commitAcademicResultBatch } from './academic-result-batch-commit.js';
 import { handleDiary } from './academic-diary.js';
-import { commitAcademicSubmission, submissionSettings, submissionPaymentAction } from './academic-submissions.js';
+import { listActiveSubmissionDeadlines, SUBMISSION_TYPES, commitAcademicSubmission, submissionSettings, submissionPaymentAction } from './academic-submissions.js';
 import { checkClassroomRemovals } from './academic-classroom-removal.js';
 import { appendAcademicPlacementGuards, academicPlacementGuardWrites } from './academic-placement-guards.js';
 import { academicAttendanceId, findExistingAttendance, attendanceCorrectionMatches } from './academic-attendance-identity.js';
@@ -2091,6 +2091,18 @@ export function scopedAcademicRows(rows, scope) {
 
 function scopedAcademicState(state, scope) {
   return Object.fromEntries(Object.entries(state).map(([key, rows]) => [key, key === 'curriculumSettings' ? rows : scopedAcademicRows(rows, scope)]));
+}
+
+// A branch with a single calendar may use those period IDs in both sections.
+export function submissionCalendarState(branchState, scope) {
+  const scoped = scopedAcademicState(branchState, scope);
+  if (scoped.sessions.length || scoped.terms.length) return scoped;
+  const sessions = branchState.sessions.filter(row => row.BranchId === scope.branchId);
+  const sections = new Set(sessions.map(row => effectiveAcademicSection(row, scope)));
+  if (sections.size !== 1) return scoped;
+  const ids = new Set(sessions.map(row => row.SessionId));
+  return { ...scoped, sessions, terms: branchState.terms.filter(row =>
+    row.BranchId === scope.branchId && sections.has(effectiveAcademicSection(row, scope)) && ids.has(row.SessionId)) };
 }
 
 async function loadScopedAcademicState(env, scope, requestedKeys, scoreReadScope = {}) {
@@ -10123,17 +10135,25 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
     return createPortalCbtService(env, user)[input.Operation]({ ...input, Audience: 'applicant' });
   }
   if (['getacademicsubmissionsettings', 'saveacademicsubmissionsettings', 'listacademicsubmissions', 'payacademicsubmission', 'verifyacademicsubmission'].includes(action)) {
-    let context;
-    if (['saveacademicsubmissionsettings', 'payacademicsubmission'].includes(action)) context = await academicOperationalContext(env, user, input, 'canEnterScores', { stateKeys: ['sessions', 'terms'] });
-    else {
-      const permissions = requireCapability(user, 'canEnterScores');
-      const scope = await academicScope(env, user, input, { requireSection: true });
-      const state = await loadScopedAcademicState(env, scope, ['sessions', 'terms',
-        ...(action === 'getacademicsubmissionsettings' && input.IncludeChoices === true ? ['classes', 'subjects'] : [])]);
-      const session = findById(state.sessions, input.SessionId), term = findById(state.terms, input.TermId);
-      if (!session || !term || term.SessionId !== session.SessionId) throw failure('Choose a session and its term.');
-      context = { permissions, scope, state, session, term };
+    const writing = ['saveacademicsubmissionsettings', 'payacademicsubmission'].includes(action);
+    if (writing) requireWritableSubscription(user);
+    const permissions = requireCapability(user, 'canEnterScores');
+    const scope = await academicScope(env, user, input, { requireSection: true });
+    const keys = ['sessions', 'terms',
+      ...(action === 'getacademicsubmissionsettings' && input.IncludeChoices === true ? ['classes', 'subjects'] : [])];
+    const state = submissionCalendarState(await loadAcademicState(env, scope.branchId, keys), scope);
+    const session = findById(state.sessions, input.SessionId), term = findById(state.terms, input.TermId);
+    if ((!session || !term || term.SessionId !== session.SessionId) && action === 'getacademicsubmissionsettings'
+        && input.IncludeActiveDeadlines === true) {
+      return { ok: true, periodRequired: true, recordTypes: SUBMISSION_TYPES,
+        activeDeadlines: await listActiveSubmissionDeadlines(env, { BranchId: scope.branchId, SchoolSection: scope.section }, state, user) };
     }
+    if (!session || !term || term.SessionId !== session.SessionId) throw failure('Choose a session and its term.');
+    if (writing) {
+      assertReference(session, 'Choose an active academic session.');
+      assertReference(term, 'Choose an active academic term.');
+    }
+    const context = { permissions, scope, state, session, term };
     if (action.endsWith('settings')) return submissionSettings(env, context, user, input, action === 'saveacademicsubmissionsettings');
     return submissionPaymentAction(env, context, user, input, action);
   }
