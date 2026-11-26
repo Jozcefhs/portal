@@ -4417,6 +4417,14 @@ export async function reviewAcademicSubjectChange(env, user = {}, input = {}) {
   const permissions = requireCapability(user, decision === 'Cancel' ? 'canConfigureClassStudentSubjects' : 'canApproveSubjectChanges');
   const scope = await academicScope(env, user, input, { requireSection: true });
   const state = await loadScopedAcademicState(env, scope, ACADEMIC_STUDENT_STATE_KEYS);
+  const plan = await planAcademicSubjectReview(env, user, input, decision, permissions, scope, state);
+  await commitAcademicBatch(env, plan.writes, 'The student or request changed during review. Reload before trying again.', { allowLargeAtomicBatch: plan.armTransfer });
+  const response = await bootstrapAcademicManagement(env, user, { ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'students' });
+  response.message = plan.message;
+  return response;
+}
+
+async function planAcademicSubjectReview(env, user, input, decision, permissions, scope, state, sharedEvidence) {
   const existing = findById(state.studentMemberships, input.MembershipId);
   const request = existing?.PendingSubjectChange;
   if (!existing || !request || request.RequestId !== clean(input.RequestId)) throw failure('This subject-change request is no longer pending. Reload the register.', 409, 'ACADEMIC_SUBJECT_CHANGE_NOT_PENDING');
@@ -4456,7 +4464,7 @@ export async function reviewAcademicSubjectChange(env, user = {}, input = {}) {
       applyAcademicStudentCurriculum(state, record, { requireTradeSelection: true });
     }
     if (!armTransfer && academicSubjectSelectionChanged(record, request.After)) throw failure('The classroom curriculum has changed. Reject this request and submit the revised choices.', 409);
-    const evidence = await loadAcademicSubjectChangeEvidence(env, scope, existing);
+    const evidence = sharedEvidence || await loadAcademicSubjectChangeEvidence(env, scope, existing);
     impact = academicSubjectChangeImpact(existing, record, evidence, scope);
     if (armTransfer) {
       armTransferPlan = await academicArmTransferPlan(env, state, existing, record, evidence, scope, user);
@@ -4479,7 +4487,7 @@ export async function reviewAcademicSubjectChange(env, user = {}, input = {}) {
   const superseded = permissions.fullAcademicAccess && decision === 'Approve' && isTransfer
     ? supersededAcademicRequests(academicDuplicateMemberships(state, record), record, movement, scope, user,
       note, 'ICT transfer approval') : { resolutions: new Map(), writes: [] };
-  await commitAcademicBatch(env, appendAcademicPlacementGuards([
+  const writes = appendAcademicPlacementGuards([
     ...resultGuards,
     ...superseded.writes,
     ...(decision === 'Approve' && isTransfer ? academicTransferDuplicateWrites(state,
@@ -4491,10 +4499,75 @@ export async function reviewAcademicSubjectChange(env, user = {}, input = {}) {
     auditWrite(user, `${changeLabel.toUpperCase()} ${resolved.Status.toUpperCase()}`, 'studentmembership', record,
       `${existing.StudentRef}: ${resolved.Status.toLowerCase()} ${changeLabel} requested by ${request.RequestedBy}. Request: ${request.Reason}. Review: ${note}. ${armTransfer && decision === 'Approve' ? 'Saved subjects, marks, results and attendance moved with the student; no student was archived.' : 'Existing marks preserved.'}`,
       `${actorName(user)} ${resolved.Status.toLowerCase()} ${request.RequestedBy}'s ${changeLabel} request for ${existing.StudentRef}. ${decision === 'Approve' ? armTransfer ? 'The student and their saved data are now in the destination arm.' : 'The requested placement and subject choices are now active; existing drafts require recalculation.' : 'The current placement, subjects and scores were not changed.'}`)
-  ], state, scope), 'The student or request changed during review. Reload before trying again.', { allowLargeAtomicBatch: armTransfer });
-  const response = await bootstrapAcademicManagement(env, user, { ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'students' });
-  response.message = `${existing.StudentRef}: ${changeLabel} ${resolved.Status.toLowerCase()}. ${decision === 'Approve' ? armTransfer ? 'Saved subjects, marks, results and attendance moved with the student. The same active membership was retained; no student was archived.' : `Old scores remain under their original classrooms and subjects. ${isTransfer ? 'Complete destination subject choices under Student subjects. ' : ''}Assess the new subjects and recalculate draft results separately.` : 'Current placement, subjects and scores are unchanged.'}`;
-  return response;
+  ], state, scope);
+  const message = `${existing.StudentRef}: ${changeLabel} ${resolved.Status.toLowerCase()}. ${decision === 'Approve' ? armTransfer ? 'Saved subjects, marks, results and attendance moved with the student. The same active membership was retained; no student was archived.' : `Old scores remain under their original classrooms and subjects. ${isTransfer ? 'Complete destination subject choices under Student subjects. ' : ''}Assess the new subjects and recalculate draft results separately.` : 'Current placement, subjects and scores are unchanged.'}`;
+  return { writes, message, armTransfer };
+}
+
+export async function batchApproveAcademicSubjectChanges(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  const permissions = requireCapability(user, 'canApproveSubjectChanges');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const { Items: items } = input;
+  const sessionId = clean(input.SessionId), termId = clean(input.TermId), reason = clean(input.Reason);
+  if (!sessionId || !termId || !Array.isArray(items) || !items.length || items.length > 20
+    || items.some(item => !clean(item?.MembershipId) || !clean(item.RequestId) || !clean(item.RevisionToken))
+    || new Set(items.map(item => lower(item.MembershipId))).size !== items.length
+    || new Set(items.map(item => lower(item.RequestId))).size !== items.length) {
+    throw failure('Select up to 20 distinct subject requests with their saved revisions for this session and term.');
+  }
+  if (reason.length < 5 || reason.length > 1000) throw failure('Enter a review reason of 5–1000 characters.');
+  const members = await getDocuments(env, ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships, items.map(item => item.MembershipId));
+  const state = await loadScopedAcademicState(env, scope,
+    ['sessions', 'terms', 'classes', 'arms', 'subjects', 'departments', 'offerings'],
+    { WorkspaceRead: true, SessionId: sessionId, TermId: termId });
+  state.studentMemberships = scopedAcademicRows(members.filter(row => row && lower(row.BranchId || 'main') === lower(scope.branchId)), scope);
+  const outcomes = [], ready = [], writes = [];
+  for (const item of items) {
+    const member = findById(state.studentMemberships, item.MembershipId);
+    const pending = member?.PendingSubjectChange;
+    const outcome = { RequestId: item.RequestId, Outcome: 'Pending' };
+    outcomes.push(outcome);
+    if (!member || member.SessionId !== sessionId || member.TermId !== termId) {
+      outcome.message = 'This membership is outside the selected period or workspace.';
+    } else if (member.LastSubjectChange?.RequestId === item.RequestId && member.LastSubjectChange.Status === 'Approved') {
+      outcome.Outcome = 'Already approved';
+    } else if (pending?.RequestId !== item.RequestId || member.__updateTime !== item.RevisionToken) {
+      outcome.message = 'The request or student record changed. Refresh and review it again.';
+    } else if (pending.Kind === 'Classroom transfer') {
+      outcome.message = 'Review classroom transfers individually.';
+    } else if (!permissions.fullAcademicAccess && actorUsername(user) === pending.RequestedByUsername) {
+      outcome.message = 'Another authorised administrator must approve your request.';
+    } else {
+      ready.push({ item, member, outcome });
+    }
+  }
+  if (ready.length) {
+    const evidence = await loadAcademicSubjectChangeEvidence(env, scope, {
+      SessionId: sessionId, TermId: termId, StudentRefs: ready.map(entry => entry.member.StudentRef)
+    });
+    const resultGuards = new Set();
+    for (const { item, outcome } of ready) {
+      try {
+        const plan = await planAcademicSubjectReview(env, user, { MembershipId: item.MembershipId, RequestId: item.RequestId,
+          RevisionToken: item.RevisionToken, Reason: reason, SessionId: sessionId, TermId: termId }, 'Approve', permissions, scope, state, evidence);
+        for (const write of plan.writes) {
+          if (write.collectionPath === ACADEMIC_MANAGEMENT_COLLECTIONS.termResults) {
+            if (resultGuards.has(write.documentId)) continue;
+            resultGuards.add(write.documentId);
+          }
+          writes.push(write);
+        }
+        outcome.Outcome = 'Approved';
+      } catch (error) {
+        if (![400, 403, 404, 409].includes(error.status)) throw error;
+        outcome.message = error.message;
+      }
+    }
+    if (writes.length > 500) throw failure('Select fewer requests for this batch.');
+    await commitAcademicBatch(env, writes, 'A selected request or result changed. Refresh and review the pending requests again.');
+  }
+  return { ok: true, subjectReviewOutcomes: outcomes };
 }
 
 export async function manageAcademicStudentMembership(env, user = {}, input = {}, options = {}) {
@@ -7252,11 +7325,26 @@ function academicTermResultIds(value) {
   return uniqueIds(Array.isArray(ids) ? ids : []);
 }
 
-export async function previewAcademicTermResultWithdrawal(env, user = {}, input = {}) {
-  const context = await academicOperationalContext(env, user, input, 'canPublishResults');
+async function academicWithdrawalContext(env, user, input) {
+  const context = await academicOperationalContext(env, user, input, 'canPublishResults', {
+    stateKeys: ['sessions', 'terms'], view: 'results'
+  });
   const ids = academicTermResultIds(input.ResultIds || [input.ResultId]);
-  const results = ids.map((id) => findById(context.state.termResults, id)).filter(Boolean);
-  if (!results.length || results.length !== ids.length) throw failure('One or more selected term results were not found.', 404);
+  if (!ids.length || ids.length > 200) throw failure('Choose between 1 and 200 term results.');
+  const rows = await getDocuments(env, ACADEMIC_MANAGEMENT_COLLECTIONS.termResults, ids);
+  const selected = scopedAcademicRows(rows.filter(row => row && lower(row.BranchId || 'main') === lower(context.scope.branchId)), context.scope);
+  if (selected.length !== ids.length || selected.some(row => row.SessionId !== input.SessionId || row.TermId !== input.TermId
+    || (input.ClassId && row.ClassId !== input.ClassId) || (input.ArmId && row.ArmId !== input.ArmId)
+    || (input.ResultType && (row.ResultType || 'End of Term') !== input.ResultType))) {
+    throw failure('One or more selected results are outside this workspace or period. Refresh the result list.', 409);
+  }
+  context.state.termResults = selected;
+  return context;
+}
+
+export async function previewAcademicTermResultWithdrawal(env, user = {}, input = {}) {
+  const context = await academicWithdrawalContext(env, user, input);
+  const results = context.state.termResults;
   const eligible = results.filter((row) => ['published', 'locked'].includes(lower(row.Status)));
   if (eligible.length !== results.length) throw failure('Only Published or Locked results can be withdrawn.', 409);
   return {
@@ -7264,6 +7352,7 @@ export async function previewAcademicTermResultWithdrawal(env, user = {}, input 
     message: `${eligible.length} published result${eligible.length === 1 ? '' : 's'} will become unavailable to parents immediately. The saved result snapshot and audit history will be retained.`,
     resultWithdrawalPreview: {
       ResultCount: eligible.length,
+      ResultIds: eligible.map(row => row.ResultId),
       StudentRefs: eligible.map((row) => row.StudentRef),
       ParentAccessRemoved: true,
       SnapshotRetained: true,
@@ -7371,7 +7460,8 @@ export async function changeAcademicTermResultStatus(env, user = {}, input = {})
   const target = ACADEMIC_TERM_RESULT_STATUSES.find((value) => lower(value) === lower(input.Status || input.TargetStatus));
   if (!target) throw failure('Choose a valid term-result status.');
   const capability = ['Published', 'Locked', 'Withdrawn'].includes(target) ? 'canPublishResults' : 'canReviewResults';
-  const context = await academicOperationalContext(env, user, input, capability);
+  const context = target === 'Withdrawn' ? await academicWithdrawalContext(env, user, input)
+    : await academicOperationalContext(env, user, input, capability);
   const { scope, state } = context;
   const ids = academicTermResultIds(input.ResultIds || [input.ResultId]);
   if (!ids.length || ids.length > 200) throw failure('Choose between 1 and 200 term results.');
@@ -7446,11 +7536,15 @@ export async function changeAcademicTermResultStatus(env, user = {}, input = {})
     BranchId: scope.branchId, SchoolSection: scope.section
   }, `${results.length} result(s): ${reason || `${results[0].Status} -> ${target}`}`));
   await commitAcademicBatch(env, writes, 'One or more selected term results changed while their status was being updated. Reload and try again.');
-  await notifyAcademicResultLifecycle(env, user, scope, results.map((existing) => ({
+  const batchWithdrawal = target === 'Withdrawn' && results.length > 1;
+  const recipients = batchWithdrawal ? await academicResultBatchRecipients(env, scope, results).catch(() => []) : null;
+  const notices = await notifyAcademicResultLifecycle(env, user, scope, results.map((existing) => ({
     ...existing, Status: target, UpdatedAt: timestamp
-  })), target);
-  const response = await academicOperationalResponse(env, user, input, scope,
-    `${results.length} term result${results.length === 1 ? '' : 's'} moved to ${target}. ${outcomes.filter(row=>row.Outcome==='Pending').length} students remain pending; their records are unchanged.`);
+  })), target, recipients);
+  const message = target === 'Withdrawn'
+    ? `${results.length} result${results.length === 1 ? '' : 's'} withdrawn. Parent access has been removed.${notices?.warnings ? ` Check ${notices.warnings} parent notification(s).` : ''}`
+    : `${results.length} term result${results.length === 1 ? '' : 's'} moved to ${target}. ${outcomes.filter(row=>row.Outcome==='Pending').length} students remain pending; their records are unchanged.`;
+  const response = await academicOperationalResponse(env, user, input, scope, message);
   return {...response,resultWorkflowOutcomes:[...outcomes,...results.map(result=>({ResultId:result.ResultId,StudentRef:result.StudentRef,Outcome:'Updated',message:target}))]};
 }
 
@@ -10255,6 +10349,7 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['bulkallocateacademicstudents', 'bulkallocatestudents'].includes(action)) return bulkAllocateAcademicStudents(env, user, input);
   if (['bulkimportacademicstudentmemberships', 'importacademicstudentmemberships'].includes(action)) return bulkImportAcademicStudentMemberships(env, user, input);
   if (['bulkassignacademicarmstudentsubjects', 'bulkassignarmstudentsubjects'].includes(action)) return bulkAssignAcademicArmStudentSubjects(env, user, input);
+  if (action === 'batchapproveacademicsubjectchanges') return batchApproveAcademicSubjectChanges(env, user, input);
   if (action === 'reviewacademicsubjectchange') return reviewAcademicSubjectChange(env, user, input);
   if (['saveacademictimetablesettings', 'savetimetablesettings'].includes(action)) return saveAcademicTimetableSettings(env, user, input);
   if (['saveacademicschoolcalendar', 'saveschoolcalendar'].includes(action)) return saveAcademicSchoolCalendar(env, user, input);

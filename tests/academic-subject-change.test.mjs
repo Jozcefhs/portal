@@ -112,6 +112,44 @@ test('recorded zero, incomplete, absent and optional scores require approval; un
   assert.equal(management.academicSubjectChangeImpact(membership, after, { studentScores: [{ ...score, SubjectId: 'english' }, { ...score, BranchId: 'other' }, { ...score, TermId: 'previous' }] }).RequiresApproval, false);
 });
 
+test('batch approval preserves scores, applies eligible subject choices once and reports each blocked request', async () => {
+  const h = harness();
+  await h.request();
+  const original = clone(h.member());
+  const add = (id, memberFields = {}, requestFields = {}) => {
+    h.state.studentMemberships.push({...clone(original), RecordId:id, MembershipId:id, StudentRef:id, ...memberFields,
+      PendingSubjectChange:{...clone(original.PendingSubjectChange), RequestId:'request-'+id, ...requestFields}});
+  };
+  add('second'); add('protected'); add('own', {}, {RequestedByUsername:admin.username});
+  add('transfer', {}, {Kind:'Classroom transfer'}); add('stale'); add('period',{TermId:'another'});
+  add('foreign',{BranchId:'other'}); add('primary',{SchoolSection:'primary'});
+  h.state.termResults.push({...period,...scope, StudentRef:'protected',ResultId:'published',RecordId:'published',Status:'Published'});
+  const scores = clone(h.state.studentScores), results = clone(h.state.termResults);
+  const items = h.state.studentMemberships.map(row => ({MembershipId:row.MembershipId,RequestId:row.PendingSubjectChange.RequestId,
+    RevisionToken:row.StudentRef==='stale'?'older':row.__updateTime}));
+  const approve = (options={},actor=admin) => h.context.batchApproveAcademicSubjectChanges({},actor,{
+    ...period,...scope, Items:items, Reason:'Verified subject selection',...options});
+  await assert.rejects(approve({},teacher));
+  await assert.rejects(approve({Reason:' '})); await assert.rejects(approve({Items:[items[0],items[0]]}));
+  const queries = h.queries.length;
+  const reply = await approve();
+  assert.deepEqual(Array.from(reply.subjectReviewOutcomes, row=>row.Outcome),
+    ['Approved','Approved','Pending','Pending','Pending','Pending','Pending','Pending','Pending']);
+  assert.match(reply.subjectReviewOutcomes[2].message,/withdraw|reopen/i);
+  assert.match(reply.subjectReviewOutcomes[3].message,/another authorised/i);
+  assert.match(reply.subjectReviewOutcomes[4].message,/transfer/i);
+  assert.deepEqual(h.member().TradeSubjectIds,['printing']);
+  assert.deepEqual(h.state.studentMemberships[1].OptionalSubjectIds,[]);
+  assert.ok(h.state.studentMemberships.slice(2).every(row=>row.PendingSubjectChange));
+  assert.equal(h.member().LastSubjectChange.ReviewReason,'Verified subject selection');
+  assert.deepEqual(h.state.studentScores,scores); assert.deepEqual(h.state.termResults,results);
+  assert.equal(h.queries.slice(queries).filter(q=>q.collection===management.ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores).length,1);
+  const writeCount = h.writes.length;
+  const replay = await approve({Items:items.slice(0,2)});
+  assert.deepEqual(Array.from(replay.subjectReviewOutcomes,row=>row.Outcome),['Already approved','Already approved']);
+  assert.equal(h.writes.length,writeCount);
+});
+
 function transferHarness(options) {
   const h = harness(options);
   h.state.arms.push({ ...scope, RecordId: 'destination', ArmId: 'destination', ClassId: 'class', Name: 'Genius', DepartmentId: 'arts' });
@@ -791,6 +829,34 @@ function vicePrincipalResultHarness(status = 'Calculated Draft') {
   });
   return h;
 }
+
+test('batch withdrawal previews only selected published reports and preserves their snapshots and audit history', async () => {
+  const h = vicePrincipalResultHarness('Published');
+  const second = {...clone(h.result()),ResultId:'locked',RecordId:'locked',StudentRef:'S2',Status:'Locked',PublicationStatus:'Locked',__updateTime:'r2'};
+  h.state.termResults.push(second,{...clone(second),ResultId:'keep',RecordId:'keep',StudentRef:'S3'});
+  const originals=clone(h.state.termResults);
+  const input={...scope,...period,ResultType:'End of Term',ResultIds:['result','locked'],RevisionTokens:{result:'result-rev',locked:'r2'}};
+  const preview=(extra={},user=vicePrincipal)=>h.context.previewAcademicTermResultWithdrawal({},user,{...input,...extra});
+  const withdraw=(extra={})=>h.context.changeAcademicTermResultStatus({},vicePrincipal,{...input,Status:'Withdrawn',ImpactAcknowledged:true,Reason:'Correct the report',...extra});
+  const plan=(await preview()).resultWithdrawalPreview;
+  assert.deepEqual(Array.from(plan.ResultIds),input.ResultIds); assert.equal(plan.ParentAccessRemoved,true);
+  await assert.rejects(preview({},teacher));
+  for(const invalid of [{ArmId:'other'},{ResultType:'Mid-Term'},{TermId:'other'},{BranchId:'other'}]){
+    await assert.rejects(preview(invalid)); await assert.rejects(withdraw(invalid));
+  }
+  await assert.rejects(withdraw({ImpactAcknowledged:false})); await assert.rejects(withdraw({Reason:' '}));
+  await assert.rejects(withdraw({RevisionTokens:{result:'result-rev',locked:'older'}})); assert.equal(h.writes.length,0);
+  const saved=await withdraw();
+  assert.equal(saved.resultWorkflowOutcomes.length,2);
+  for(let i=0;i<2;i++){
+    const result=h.state.termResults[i]; assert.equal(result.Status,'Withdrawn');
+    assert.equal(result.WithdrawnFromStatus,originals[i].Status); assert.equal(result.WithdrawnReason,'Correct the report');
+    assert.deepEqual(result.Subjects,originals[i].Subjects); assert.equal(result.ResultReference,originals[i].ResultReference);
+  }
+  assert.deepEqual(h.state.termResults[2],originals[2]);
+  assert.equal(h.state.resultEvents.length,2);
+  const count=h.writes.length; await assert.rejects(withdraw()); assert.equal(h.writes.length,count);
+});
 
 test('Vice Principal Academics has approval and controlled-correction rights without ICT self-approval authority', () => {
   for (const user of [vicePrincipal, management.academicWebActor(vicePrincipal)]) {

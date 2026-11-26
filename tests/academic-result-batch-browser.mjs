@@ -30,7 +30,7 @@ try{
       }};
     openBatch(settings);
   },await read('js/academic-result-batch.js'));
-  let dialog=page.getByRole('dialog',{name:'Batch review, approve and publish results'});
+  let dialog=page.getByRole('dialog',{name:'Batch result actions'});
   assert.equal(await page.evaluate(()=>requests.length),0);
   assert.equal(await dialog.locator('[data-apply]').isDisabled(),true);
   assert.match(await dialog.locator('[data-pending]').textContent(),/1 results pending.*1 students have no calculated/);
@@ -72,6 +72,72 @@ try{
   await dialog.getByRole('button',{name:'Select eligible visible students'}).click();await dialog.locator('[data-apply]').click();
   assert.match(await dialog.locator('[data-status]').textContent(),/did not confirm every selected student/);
   assert.equal(await dialog.locator('[data-result]:checked').count(),1);assert.equal(await page.evaluate(()=>saved.length),2);
+  await dialog.getByRole('button',{name:'Close',exact:true}).click();
+  await page.addScriptTag({content:await read('js/app-dialogs.js')});
+  await page.evaluate(()=>{
+    requests.length=0;
+    openBatch({...settings,results:[
+      {ResultId:'one',StudentRef:'P1',Status:'Published',RevisionToken:'v1'},
+      {ResultId:'two',StudentRef:'P2',Status:'Locked',RevisionToken:'v2'},
+      {ResultId:'three',StudentRef:'P3',Status:'Approved',RevisionToken:'v3'}],
+      request:async(action,payload)=>{
+        requests.push({action,payload});
+        if(action==='previewAcademicTermResultWithdrawal')return {resultWithdrawalPreview:{ResultIds:payload.ResultIds},message:'Parent access will be removed.'};
+        return {resultWorkflowOutcomes:payload.ResultIds.map(ResultId=>({ResultId,Outcome:'Updated'}))};
+      }});
+  });
+  dialog=page.getByRole('dialog',{name:'Batch result actions'});
+  await dialog.getByLabel('Action',{exact:true}).selectOption('Withdrawn');
+  await dialog.getByRole('button',{name:'Select eligible visible students'}).click();
+  assert.equal(await dialog.locator('[data-result]:checked').count(),2);
+  assert.equal(await dialog.locator('[data-result="three"]').isDisabled(),true);
+  await dialog.locator('[data-apply]').click();
+  const confirmation=page.getByRole('dialog',{name:'Withdraw 2 published results?'});
+  assert.equal(await confirmation.locator('li').count(),2);
+  await confirmation.getByRole('button',{name:'Cancel',exact:true}).click();
+  assert.deepEqual(await page.evaluate(()=>requests.map(r=>r.action)),['previewAcademicTermResultWithdrawal']);
+  await dialog.locator('[data-apply]').click(); await confirmation.getByLabel('Withdrawal reason').fill('Correction approved');
+  await confirmation.getByRole('button',{name:'Withdraw selected results'}).click(); await dialog.waitFor({state:'detached'});
+  const withdrawal=await page.evaluate(()=>requests.at(-1));
+  assert.equal(withdrawal.action,'changeAcademicTermResultStatus');
+  assert.deepEqual(withdrawal.payload.ResultIds,['one','two']);
+  assert.deepEqual(withdrawal.payload.RevisionTokens,{one:'v1',two:'v2'});
+  assert.equal(withdrawal.payload.Reason,'Correction approved');assert.equal(withdrawal.payload.ImpactAcknowledged,true);
+
+  const adminSource=await read('js/admin.js');
+  const subjectFunctions=adminSource.slice(adminSource.indexOf('function academicSubjectChangeRequests('),adminSource.indexOf('function academicArmSubjectRegister('))
+    +adminSource.slice(adminSource.indexOf('function bindAcademicSubjectBatch('),adminSource.indexOf('function bindAcademicManagement('));
+  await page.addScriptTag({content:subjectFunctions});
+  await page.evaluate(()=>{
+    const filters={section:'secondary',sessionId:'s',termId:'t'};
+    Object.assign(window,{currentUser:{username:'admin'},academicManagementFilters:filters,selectedBranchId:'main',activeSection:'academics',
+      academicManagementView:'students',academicManagementData:{workspaceRecordSelection:{ClassId:'c'}},clean:v=>String(v??'').trim(),
+      academicRecordId:r=>r.MembershipId,escapeHtml:v=>String(v??''),academicLabel:(_rows,id)=>id,
+      academicManagementRequest:async(action,payload)=>{
+        requests.push({action,payload});return {subjectReviewOutcomes:payload.Items.map(i=>({RequestId:i.RequestId,Outcome:'Approved'}))};
+      },loadAcademicManagement:async(options)=>saved.push(options)});
+    requests.length=0;
+    const data={permissions:{canApproveSubjectChanges:true},studentMemberships:['P1','P2','Own','Transfer'].map(id=>({
+      SessionId:'s',TermId:'t',StudentRef:id,MembershipId:id,SchoolSection:'secondary',RevisionToken:'rev-'+id,
+      PendingSubjectChange:{RequestId:'req-'+id,RequestedByUsername:id==='Own'?'admin':'teacher',Kind:id==='Transfer'?'Classroom transfer':'Subject change'}
+    }))};
+    const root=document.getElementById('workspace');root.innerHTML=academicSubjectChangeRequests(data);
+    bindAcademicSubjectBatch(root.querySelector('[data-academic-subject-change-requests]'));
+  });
+  const selectAll=page.getByLabel('Select all eligible subject requests');
+  await selectAll.check();
+  assert.equal(await page.locator('[data-subject-batch-item]:checked').count(),2);
+  const approve=page.getByRole('button',{name:'Approve selected (2)',exact:true});
+  await approve.click();
+  const subjectPrompt=page.getByRole('dialog',{name:'Approve selected subject requests'});
+  await subjectPrompt.getByRole('button',{name:'Cancel',exact:true}).click();
+  assert.equal(await page.evaluate(()=>requests.length),0);
+  await approve.click();await subjectPrompt.getByLabel(/Approval reason/).fill('Reviewed both requests');
+  await subjectPrompt.getByRole('button',{name:'Approve selected requests'}).click();
+  await page.waitForFunction(()=>saved.at(-1)?.message?.includes('2 approved'));
+  const subjectRequest=await page.evaluate(()=>requests[0]);
+  assert.equal(subjectRequest.action,'batchApproveAcademicSubjectChanges');
+  assert.deepEqual(subjectRequest.payload.Items.map(r=>r.RequestId),['req-P1','req-P2']);
   assert.deepEqual(errors,[]);
   console.log('PASS: batch results dialog preserves pending students, scopes report types, sends bounded explicit batches, prevents double submission, keeps failed selections, checks permissions and fits desktop/mobile screens.');
 }finally{await browser.close();}

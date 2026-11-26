@@ -1,14 +1,15 @@
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const stages=['Calculated Draft','Reviewed','Approved','Published','Locked'];
 
-export function openAcademicResultBatch({results,memberships,label,title,request,scope,permissions,isCurrent=()=>true,onSaved=()=>{}}) {
+export function openAcademicResultBatch({results,memberships,label,title,request,scope,permissions,reportType,isCurrent=()=>true,onSaved=()=>{}}) {
   const workflow=window.DynamaxAcademicWorkflow;
   const dialog=document.createElement('dialog');dialog.className='academic-test-review-dialog academic-batch-review-dialog';
-  dialog.setAttribute('aria-label','Batch review, approve and publish results');
+  dialog.setAttribute('aria-label','Batch result actions');
   const actions=[...(permissions.canReviewResults?[['Reviewed','Review drafts'],['Approved','Approve reviewed results']]:[]),
     ...(permissions.canPublishResults?[['Published','Publish approved results']]:[]),
-    ...(permissions.canReviewResults&&permissions.canPublishResults?[['ReviewApprovePublish','Review, approve and publish ready results']]:[])];
-  dialog.innerHTML=`<header><div><small>${esc(title)}</small><h2>Batch review, approve and publish results</h2></div><button type="button" data-close>Close</button></header>
+    ...(permissions.canReviewResults&&permissions.canPublishResults?[['ReviewApprovePublish','Review, approve and publish ready results']]:[]),
+    ...(permissions.canPublishResults?[['Withdrawn','Withdraw published results']]:[])];
+  dialog.innerHTML=`<header><div><small>${esc(title)}</small><h2>Batch result actions</h2></div><button type="button" data-close>Close</button></header>
     <p>Choose the report type, action and students. Complete results can proceed while students with missing assessments remain pending. Publishing makes results available only to parents permitted by the academic policy.</p>
     <div class="academic-batch-controls"><label>Report type<select data-type><option>Mid-Term</option><option>End of Term</option></select></label>
     <label>Action<select data-action aria-label="Action">${actions.map(([value,name])=>`<option value="${value}">${esc(name)}</option>`).join('')}</select></label>
@@ -17,12 +18,13 @@ export function openAcademicResultBatch({results,memberships,label,title,request
     <div class="admin-table-wrap" data-list></div><p data-status role="status" aria-live="polite"></p><button type="button" data-apply>Apply to selected students</button>`;
   const type=dialog.querySelector('[data-type]'),action=dialog.querySelector('[data-action]'),search=dialog.querySelector('[data-search]');
   const apply=dialog.querySelector('[data-apply]'),message=dialog.querySelector('[data-status]');
-  type.value=results.some(row=>row.ResultType==='Mid-Term')?'Mid-Term':'End of Term';
+  type.value=reportType || (results.some(row=>row.ResultType==='Mid-Term')?'Mid-Term':'End of Term');
   const selected=new Set(),outcomes=new Map();let busy=false;
   const reportRows=()=>results.filter(row=>(row.ResultType||'End of Term')===type.value);
   const scoped=()=>reportRows().filter(row=>`${label(row)} ${row.StudentRef}`.toLowerCase().includes(search.value.toLowerCase()));
   let visibleRows=[];
   const eligible=row=>{
+    if(action.value==='Withdrawn')return ['Published','Locked'].includes(row.Status);
     if(row.CalculationPending||row.SubjectChangeRecalculationRequired)return false;
     const index=stages.indexOf(row.Status);
     return action.value==='ReviewApprovePublish'?index>=0&&index<3:index===stages.indexOf(action.value)-1;
@@ -30,12 +32,14 @@ export function openAcademicResultBatch({results,memberships,label,title,request
   function renderList(){
     const rows=reportRows(),missing=memberships.filter(row=>!rows.some(result=>result.StudentRef===row.StudentRef));
     const pending=rows.filter(row=>row.CalculationPending||row.SubjectChangeRecalculationRequired);
-    dialog.querySelector('[data-pending]').textContent=`${pending.length} results pending assessments or recalculation; ${missing.length} students have no calculated ${type.value.toLowerCase()} result. They will not block eligible students. Calculate their complete results when ready.`;
+    dialog.querySelector('[data-pending]').textContent=action.value==='Withdrawn'
+      ? 'Select published or locked results to withdraw. Withdrawal removes parent access and keeps the saved marks and result history.'
+      : `${pending.length} results pending assessments or recalculation; ${missing.length} students have no calculated ${type.value.toLowerCase()} result. They will not block eligible students. Calculate their complete results when ready.`;
     dialog.querySelector('[data-list]').innerHTML=`<table class="admin-table"><thead><tr><th>Select</th><th>Student</th><th>Current status</th><th>Outcome</th></tr></thead><tbody>${visibleRows.map(row=>`<tr>
       <td><input type="checkbox" data-result="${esc(row.ResultId)}" aria-label="Select ${esc(label(row))}"${selected.has(row.ResultId)?' checked':''}${busy||!eligible(row)?' disabled':''}></td>
       <td>${esc(label(row))}<small>${esc(row.StudentRef)}</small></td><td>${workflow.badge(workflow.resultStatus(row),row.CalculationPending?'Pending assessments':row.SubjectChangeRecalculationRequired?'Recalculation required':row.Status)}</td>
       <td>${esc(outcomes.get(row.ResultId)||'')}</td></tr>`).join('')||'<tr><td colspan="4">No calculated results match this selection.</td></tr>'}</tbody></table>`;
-    const verb={Reviewed:'Review',Approved:'Approve',Published:'Publish',ReviewApprovePublish:'Review, approve and publish'}[action.value]||'Process';
+    const verb={Reviewed:'Review',Approved:'Approve',Published:'Publish',ReviewApprovePublish:'Review, approve and publish',Withdrawn:'Preview withdrawal for'}[action.value]||'Process';
     apply.textContent=`${verb} selected (${selected.size})`;apply.disabled=busy||!selected.size;
     dialog.querySelectorAll('[data-type],[data-action],[data-search],[data-close],[data-select],[data-clear],[data-workflow-status],[data-workflow-stage]').forEach(el=>el.disabled=busy);
   }
@@ -55,6 +59,28 @@ export function openAcademicResultBatch({results,memberships,label,title,request
     const chosen=visibleRows.filter(row=>selected.has(row.ResultId)&&eligible(row));
     busy=true;outcomes.clear();render();const counts={Updated:0,Pending:0,'Already complete':0,Other:0};let warnings=0;
     try{
+      if(action.value==='Withdrawn'){
+        if(chosen.length>200)throw new Error('Select up to 200 results for one withdrawal.');
+        const ResultIds=chosen.map(row=>row.ResultId);
+        const payload={...scope,ResultType:type.value,ResultIds};
+        const preview=await request('previewAcademicTermResultWithdrawal',payload);
+        if(!isCurrent())throw new Error('The workspace changed. Reopen the result list.');
+        const previewIds=new Set(preview.resultWithdrawalPreview?.ResultIds || []);
+        if(previewIds.size!==chosen.length || ResultIds.some(id=>!previewIds.has(id)))throw new Error('The preview could not confirm the selected results. Refresh the result list.');
+        const reason=await window.DynamaxDialogs.prompt({title:`Withdraw ${chosen.length} published result${chosen.length===1?'':'s'}?`,
+          message:preview.message+' These results must pass review and approval again before republication.',
+          items:chosen.map(row=>`${label(row)} · ${row.StudentRef} · ${type.value}`),detailsLabel:'Selected results',
+          label:'Withdrawal reason',required:true,maxLength:500,tone:'danger',confirmText:'Withdraw selected results'});
+        if(!reason?.trim())return;
+        if(!isCurrent())throw new Error('The workspace changed. Reopen the result list.');
+        const response=await request('changeAcademicTermResultStatus',{...payload,Status:'Withdrawn',Reason:reason.trim(),ImpactAcknowledged:true,
+          RevisionTokens:Object.fromEntries(chosen.map(row=>[row.ResultId,row.RevisionToken]))});
+        const updated=new Set((response.resultWorkflowOutcomes || []).filter(row=>row.Outcome==='Updated').map(row=>row.ResultId));
+        if(updated.size!==chosen.length || ResultIds.some(id=>!updated.has(id)))throw new Error('The server could not confirm every withdrawal. Refresh the result list.');
+        if(isCurrent())onSaved(response);
+        dialog.close();
+        return;
+      }
       for(let offset=0;offset<chosen.length;offset+=25){
         if(!isCurrent())throw new Error('The workspace changed. Remaining students were not processed.');
         message.textContent=`Checking students ${offset+1}–${Math.min(offset+25,chosen.length)} of ${chosen.length}…`;
@@ -71,7 +97,7 @@ export function openAcademicResultBatch({results,memberships,label,title,request
         warnings+=response.notificationWarnings||0;if(isCurrent())onSaved(response);render();
       }
       message.textContent=`${counts.Updated} advanced; ${counts.Pending} pending; ${counts['Already complete']} already complete; ${counts.Other} need attention.${warnings?` ${warnings} parent notifications need checking; saved publication statuses are shown above.`:''}`;
-    }catch(error){message.textContent=`${counts.Updated} confirmed. ${error.message||'The batch could not be confirmed.'} Unconfirmed selections are retained; retrying does not repeat completed stages.`;}
+    }catch(error){if(action.value==='Withdrawn'){message.textContent=error.message||'Withdrawal could not be confirmed. Refresh the result list.';return;}message.textContent=`${counts.Updated} confirmed. ${error.message||'The batch could not be confirmed.'} Unconfirmed selections are retained; retrying does not repeat completed stages.`;}
     finally{busy=false;render();}
   };
   document.body.appendChild(dialog);dialog.showModal();render();return dialog;

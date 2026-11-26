@@ -940,7 +940,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'bulkCreateAcademicSubjects', 'configureAcademicSeniorChoiceSubjects', 'bulkApplyAcademicSubjects', 'bulkAssignAcademicClassTeachers', 'bulkAssignAcademicSubjectTeacher', 'updateAcademicSubjectTeacherAllocation',
   'saveAcademicTeacherAllocation', 'saveAcademicStudentMembership', 'bulkAllocateAcademicStudents',
   'bulkImportAcademicStudentMemberships',
-  'bulkAssignAcademicArmStudentSubjects', 'reviewAcademicSubjectChange',
+  'bulkAssignAcademicArmStudentSubjects', 'reviewAcademicSubjectChange', 'batchApproveAcademicSubjectChanges',
   'moveAcademicStudentMembership', 'withdrawAcademicStudentMembership', 'reinstateAcademicStudentMembership',
   'archiveAcademicRecord', 'deleteAcademicRecord',
   'syncAcademicCbtScores', 'syncLocalCbtStudentPasswords', 'syncAcademicCbtAnswers', 'resolveAcademicCbtScorePlacement',
@@ -1007,7 +1007,7 @@ const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
   'bulkCreateAcademicSubjects', 'configureAcademicSeniorChoiceSubjects', 'bulkApplyAcademicSubjects',
   'bulkAssignAcademicClassTeachers', 'bulkAssignAcademicSubjectTeacher', 'updateAcademicSubjectTeacherAllocation',
   'saveAcademicTeacherAllocation', 'saveAcademicStudentMembership', 'bulkAllocateAcademicStudents',
-  'bulkImportAcademicStudentMemberships', 'bulkAssignAcademicArmStudentSubjects', 'reviewAcademicSubjectChange',
+  'bulkImportAcademicStudentMemberships', 'bulkAssignAcademicArmStudentSubjects', 'reviewAcademicSubjectChange', 'batchApproveAcademicSubjectChanges',
   'saveAcademicTimetableSettings', 'saveAcademicTimetableConstraint', 'deleteAcademicTimetableConstraint',
   'createAcademicTimetableVersion', 'updateAcademicTimetableVersion', 'deleteAcademicTimetableVersion',
   'copyAcademicTimetableVersion', 'previewAcademicTimetableCopy',
@@ -12165,6 +12165,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'bulkImportAcademicStudentMemberships':
     case 'bulkAssignAcademicArmStudentSubjects':
     case 'reviewAcademicSubjectChange':
+    case 'batchApproveAcademicSubjectChanges':
     case 'saveAcademicTimetableSettings':
     case 'saveAcademicTimetableGenerationRules':
     case 'previewAcademicTimetableGeneration':

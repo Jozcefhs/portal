@@ -15181,7 +15181,13 @@ function academicSubjectChangeRequests(data) {
     && row.SessionId === academicManagementFilters.sessionId && row.TermId === academicManagementFilters.termId);
   if (!requests.length) return '';
   const names = (ids) => (ids || []).map((id) => academicLabel(data.subjects || [], id, id)).join(', ') || 'None';
-  return `<section class="academic-management-editor academic-management-editor-wide" data-academic-subject-change-requests><h3>Subject changes awaiting approval (${requests.length})</h3><p>Current subjects stay in place until approval. Scores are retained under their original subjects and are never copied to another subject. ${data.permissions?.fullAcademicAccess ? 'ICT can apply or cancel these requests directly in the web companion, including their own requests.' : 'Another authorised academic administrator must review the request.'}</p>${requests.map((membership) => {
+  const canBatch = row => data.permissions?.canApproveSubjectChanges === true && row.PendingSubjectChange.Kind !== 'Classroom transfer'
+    && (data.permissions.fullAcademicAccess || username !== clean(row.PendingSubjectChange.RequestedByUsername).toLowerCase());
+  const toolbar = requests.some(canBatch) ? `<div class="academic-batch-controls">
+    <label><input type="checkbox" data-subject-batch-all> Select all eligible subject requests</label>
+    <button type="button" data-subject-batch-approve disabled>Approve selected (0)</button></div>
+    <p data-subject-batch-status role="status"></p>` : '';
+  return `<section class="academic-management-editor academic-management-editor-wide" data-academic-subject-change-requests><h3>Subject changes awaiting approval (${requests.length})</h3><p>Current subjects stay in place until approval. Scores are retained under their original subjects and are never copied to another subject. ${data.permissions?.fullAcademicAccess ? 'ICT can apply or cancel these requests directly in the web companion, including their own requests.' : 'Another authorised academic administrator must review the request.'}</p>${toolbar}${requests.map((membership) => {
     const request = membership.PendingSubjectChange;
     const destination = request.Kind === 'Classroom transfer'
       ? `<p><strong>Classroom transfer:</strong> ${escapeHtml(academicLabel(data.classes || [], membership.ClassId))} / ${escapeHtml(academicLabel(data.arms || [], membership.ArmId))} → ${escapeHtml(academicLabel(data.classes || [], request.After?.ClassId))} / ${escapeHtml(academicLabel(data.arms || [], request.After?.ArmId))}. Current placement stays unchanged until approval. Complete destination subject choices afterwards.</p>` : '';
@@ -15196,6 +15202,7 @@ function academicSubjectChangeRequests(data) {
       <label>Review reason<textarea name="Reason" minlength="5" maxlength="1000" required placeholder="Explain the approval, rejection or cancellation"></textarea></label><button type="submit">Record decision</button>
     </form>` : '<p class="muted">Awaiting an authorised academic administrator’s review.</p>';
     return `<article class="academic-arm-student-subject-card" data-academic-subject-request-card="${escapeHtml(request.RequestId)}"><header><strong>${escapeHtml(academicLabel(data.students || [], membership.StudentRef, membership.StudentRef))}</strong><small>${escapeHtml(membership.StudentRef)}</small></header>
+      ${canBatch(membership) ? `<label><input type="checkbox" data-subject-batch-item="${escapeHtml(request.RequestId)}" data-membership="${escapeHtml(academicRecordId(membership))}" data-revision="${escapeHtml(membership.RevisionToken || '')}" data-pupil="${escapeHtml(membership.StudentRef)}"> Select request for ${escapeHtml(membership.StudentRef)}</label>` : ''}
       ${destination}<p><strong>Current subjects:</strong> ${escapeHtml(names(request.Before?.SubjectIds))}</p><p><strong>Requested subjects:</strong> ${escapeHtml(names(request.After?.SubjectIds))}</p>
       <p><strong>Recorded scores affected:</strong> ${escapeHtml(names(request.Impact?.RecordedSubjectIds))} (${Number(request.Impact?.ScoreRecordCount || 0)} score records; preserved).</p>
       <p><strong>Requested by:</strong> ${escapeHtml(request.RequestedBy)} · ${escapeHtml(request.RequestedAt)}</p><p><strong>Reason:</strong> ${escapeHtml(request.Reason)}</p>
@@ -16840,7 +16847,7 @@ function academicTermResultsWorkspace(data, rows) {
   </form>` : `<div class="academic-view-only-note"><strong>Term results are controlled by academic reviewers.</strong><span>Teachers may add draft remarks only for classrooms where they are the Form Teacher or Assistant.</span></div>`;
   const summary = `<div class="academic-result-summary-grid"><div><small>${learner.Plural}</small><strong>${selectedResults.length}</strong></div><div><small>Draft</small><strong>${statusCounts['Calculated Draft'] || 0}</strong></div><div><small>Approved</small><strong>${statusCounts.Approved || 0}</strong></div><div><small>Published / locked</small><strong>${(statusCounts.Published || 0) + (statusCounts.Locked || 0)}</strong></div></div>`;
   const batchToolbar = `<div class="academic-management-editor academic-management-editor-wide" data-academic-result-batch-toolbar><div class="academic-batch-controls"><label>Classroom<select data-academic-result-batch-classroom>${academicSelectOptions(classrooms,selectedArm?.ArmId,classroomLabel,'Choose classroom')}</select></label><label>Report type<select data-academic-result-workflow-type><option value="">All report types</option><option>Mid-Term</option><option>End of Term</option></select></label></div>
-      <div data-academic-result-workflow-filter></div><p class="muted">Submitted / reviewed means ready for approval. Published includes locked results. Missing assessments remain pending without holding back complete results.</p>${!subjectRequest && (data.permissions?.canReviewResults || data.permissions?.canPublishResults) ? `<button type="button" data-academic-result-batch${selectedArm?'':' disabled'}>Batch review / approve / publish</button>` : ''}</div>`;
+      <div data-academic-result-workflow-filter></div><p class="muted">Submitted / reviewed means ready for approval. Published includes locked results. Missing assessments remain pending without holding back complete results.</p>${!subjectRequest && (data.permissions?.canReviewResults || data.permissions?.canPublishResults) ? `<button type="button" data-academic-result-batch${selectedArm?'':' disabled'}>Batch result actions</button>` : ''}</div>`;
   const register = table('Term Result Workflow', selectedResults, [
     { label: learner.Singular, render: (row) => `<strong class="academic-result-student-name">${escapeHtml(academicLabel(data.students, row.StudentRef, row.StudentRef))}</strong><small>${escapeHtml(row.StudentRef)}</small>` },
     { label: 'Report', render: (row) => `<strong>${escapeHtml(row.ResultType || 'End of Term')}</strong><small>${escapeHtml((row.IncludedAssessmentComponentIds || []).join(', '))}</small>` },
@@ -19001,7 +19008,75 @@ function bindAcademicCbtRejectionReviews(root) {
   }));
 }
 
+function bindAcademicSubjectBatch(root) {
+  const button = root?.querySelector('[data-subject-batch-approve]');
+  if (!button) return;
+  const all = root.querySelector('[data-subject-batch-all]');
+  const boxes = [...root.querySelectorAll('[data-subject-batch-item]')];
+  const status = root.querySelector('[data-subject-batch-status]');
+  let busy = false;
+  function sync() {
+    const count = boxes.filter(box => box.checked).length;
+    button.disabled = busy || !count;
+    button.textContent = `Approve selected (${count})`;
+    all.checked = count === boxes.length;
+    all.indeterminate = count > 0 && count < boxes.length;
+    all.disabled = busy;
+    for (const box of boxes) box.disabled = busy;
+  }
+  all.onchange = () => { for (const box of boxes) box.checked = all.checked; sync(); };
+  for (const box of boxes) box.onchange = sync;
+  button.onclick = async () => {
+    if (busy) return;
+    const chosen = boxes.filter(box => box.checked).map(box => box.dataset);
+    if (!chosen.length) return;
+    const branch = selectedBranchId, user = currentUser?.username, view = academicManagementView;
+    const scope = {SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId, TermId: academicManagementFilters.termId};
+    const current = () => root.isConnected && activeSection === 'academics' && selectedBranchId === branch
+      && currentUser?.username === user && academicManagementView === view && scope.SchoolSection === academicManagementFilters.section
+      && scope.SessionId === academicManagementFilters.sessionId && scope.TermId === academicManagementFilters.termId;
+    const selection = academicManagementData?.workspaceRecordSelection;
+    let approved = 0, already = 0, confirmed = 0, attempted = false;
+    const issues = [];
+    busy = true; sync();
+    try {
+      const reason = clean(await window.DynamaxDialogs.prompt({title:'Approve selected subject requests',
+        message:`Apply these ${chosen.length} subject changes? Your reason will be saved on each approved request.`,
+        items:chosen.map(row => row.pupil), detailsLabel:'Selected pupils', label:'Approval reason (at least 5 characters)',
+        required:true, maxLength:1000, confirmText:'Approve selected requests'}));
+      if (!reason || !current()) return;
+      if (reason.length < 5) { status.textContent = 'Enter at least five characters for the approval reason.'; return; }
+      for (let offset = 0; offset < chosen.length; offset += 20) {
+        if (!current()) return;
+        const chunk = chosen.slice(offset, offset + 20);
+        status.textContent = `Reviewing requests ${offset + 1}–${offset + chunk.length} of ${chosen.length}…`;
+        attempted = true;
+        const response = await academicManagementRequest('batchApproveAcademicSubjectChanges', {...scope, Reason:reason,
+          Items:chunk.map(row => ({MembershipId:row.membership, RequestId:row.subjectBatchItem, RevisionToken:row.revision}))});
+        const outcomes = new Map((response.subjectReviewOutcomes || []).map(row => [row.RequestId,row]));
+        if (outcomes.size !== chunk.length || chunk.some(row => !['Approved','Already approved','Pending'].includes(outcomes.get(row.subjectBatchItem)?.Outcome))) {
+          throw new Error('The server could not confirm every decision. Check the refreshed register.');
+        }
+        for (const row of chunk) {
+          const outcome = outcomes.get(row.subjectBatchItem);
+          if (outcome.Outcome === 'Approved') approved++;
+          else if (outcome.Outcome === 'Already approved') already++;
+          else issues.push(`${row.pupil} — ${outcome.message}`);
+        }
+        confirmed += chunk.length;
+      }
+    } catch (error) { issues.push(error.message || 'The request could not be confirmed.'); }
+    finally { busy = false; sync(); }
+    if (!current() || !attempted) return;
+    const summary = `${approved} approved. ${already} already approved. ${confirmed - approved - already} need review.${confirmed < chosen.length ? ` ${chosen.length - confirmed} unconfirmed.` : ''}`;
+    if (issues.length) await window.DynamaxDialogs.alert({title:'Subject request approvals', message:summary, items:issues, detailsLabel:'Requests to check'});
+    if (current()) await loadAcademicManagement({records:Boolean(selection), classId:selection?.ClassId, armId:selection?.ArmId, message:summary});
+  };
+  sync();
+}
+
 function bindAcademicManagement() {
+  bindAcademicSubjectBatch(panelEl.querySelector('[data-academic-subject-change-requests]'));
   panelEl.querySelector('[data-staff-meetings]')?.addEventListener('click', () => { void openStaffMeetingWorkspace().catch(error => setStatus(document.getElementById('academicManagementStatus'), error.message, 'bad')); });
   panelEl.querySelectorAll('[data-academic-subject-results]').forEach(button => button.addEventListener('click', event =>
     runButtonAction(event.currentTarget, 'Opening results...', () => openAcademicSubjectResults(button.dataset.academicSubjectResults, button.dataset.academicSubjectRequest))));
@@ -20326,9 +20401,9 @@ function bindAcademicManagement() {
       &&scope.TermId===academicManagementFilters.termId&&scope.ArmId===academicResultDraft.armId;
     await runButtonAction(event.currentTarget,'Opening…',async()=>{
       try{
-        const {openAcademicResultBatch}=await import('./academic-result-batch.js?v=20261028-workflow-status-filters');if(!isCurrent())return;
+        const {openAcademicResultBatch}=await import('./academic-result-batch.js?v=20261126-batch-withdrawal');if(!isCurrent())return;
         const rows=academicCurrentRows(academicManagementData),inRoom=row=>row.ClassId===scope.ClassId&&row.ArmId===scope.ArmId;
-        openAcademicResultBatch({results:rows.termResults.filter(inRoom),memberships:rows.studentMemberships.filter(row=>inRoom(row)&&academicIsActive(row)),scope,
+        openAcademicResultBatch({reportType:panelEl.querySelector('[data-academic-result-workflow-type]')?.value,results:rows.termResults.filter(inRoom),memberships:rows.studentMemberships.filter(row=>inRoom(row)&&academicIsActive(row)),scope,
           title:[academicLabel(rows.classes,arm.ClassId),arm.Name,academicLabel(academicManagementData.sessions,scope.SessionId),academicLabel(academicManagementData.terms,scope.TermId)].join(' · '),
           label:row=>academicLabel(academicManagementData.students,row.StudentRef,row.StudentRef),permissions:academicManagementData.permissions||{},
           request:academicManagementRequest,isCurrent,onSaved:data=>{if(isCurrent())renderAcademicManagement(data,data.message);}});
