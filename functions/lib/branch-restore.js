@@ -20,6 +20,9 @@ export function collectionKind(path, { workspaceId, edition }, branch) {
   if (typeof path !== 'string') return '';
   if (branchResetPathAllowed(path, branch, edition)) return 'operational';
   if (edition === 'school' && ['admissionClasses', 'schoolClasses'].some(name => path === `organisationBranches/${branch}/${name}`)) return 'branch';
+  if (edition === 'organization' && (
+    ['quotes','payments','serials'].some(key => path === 'tradeBranches/'+branch+'/'+key) ||
+    ['orders','receipts'].some(key => path === 'cateringBranches/'+branch+'/'+key))) return 'branch';
   const prefix = `hospitalWorkspaces/${workspaceId}/hospital`;
   if (edition === 'hospital' && path.startsWith(prefix) && hospitalRecords.has(path.slice(prefix.length))) return 'hospital';
   return '';

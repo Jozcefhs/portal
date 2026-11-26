@@ -32,7 +32,7 @@ export const FAITH_ONLY_STAFF_ROLES = Object.freeze([
 
 export const ORGANIZATION_ONLY_STAFF_ROLES = Object.freeze([
   'Executive Director', 'Organisation Administrator', 'Operations Manager',
-  'Records Officer'
+  'Records Officer', 'Sales Personnel'
 ]);
 
 export const SHARED_STAFF_ROLES = Object.freeze([

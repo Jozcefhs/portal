@@ -291,6 +291,12 @@ async function scopedInventory(env, section, user, { storeCatalogue = false, req
   return rows;
 }
 
+export async function salesCounterCatalogue(env, section, user) {
+  const rows = await scopedInventory(env,section,user,{storeCatalogue:true});
+  return rows.filter(item=>item.Active !== false && lower(item.Active)!=='no' && Number(item.Quantity)>0 && Number(item.Price ?? item.SalePrice)>0)
+    .map(item=>({InventoryDocumentId:item.__id,ItemName:item.ItemName,Price:Number(item.Price ?? item.SalePrice),Unit:item.Unit || 'piece',TradeMode:item.TradeMode || 'standard',CoilMetres:item.CoilMetres || 0}));
+}
+
 function findInventoryItem(rows, section, reference) {
   const wanted = lower(reference);
   if (section === 'organizationStore') {
@@ -319,6 +325,7 @@ async function authoritativeCart(env, section, body, user, inventoryRows = null)
     if (item.VendorSaleRevoked === true || clean(item.Active || 'YES').toUpperCase() === 'NO') {
       throw error(`${clean(item.ItemName) || requested.Reference} is not available for sale.`, 409);
     }
+    if (item.TradeMode === 'serial') throw error('Sell this item through the trade counter to record its serial number.');
     const available = inventoryQuantityNumber(item.Quantity);
     if (requested.Quantity > available) {
       throw error(`${clean(item.ItemName) || requested.Reference} has only ${available} available.`, 409);
@@ -536,6 +543,7 @@ export async function listOrganizationCommerceSales(env, section, user) {
 export async function listPublicOrganizationStoreItems(env, branchId = 'main', edition = 'faith') {
   const rows = await scopedInventory(env, 'organizationStore', { branchId, edition }, { storeCatalogue: true });
   return rows
+    .filter(row => row.TradeMode !== 'serial')
     .filter((row) => row.VendorSaleRevoked !== true && clean(row.Active || 'YES').toUpperCase() !== 'NO')
     .map((row) => ({
       ItemCode: clean(row.ItemCode || row.__id),

@@ -80,7 +80,7 @@ export const STAFF_ROLE_OPTIONS = Object.freeze([
   'Compensation & Benefits Officer', 'Payroll Officer',
   'Health & Safety Officer', 'Line Manager',
   'Executive Director', 'Organisation Administrator', 'Operations Manager',
-  'Procurement Officer', 'Storekeeper', 'Records Officer'
+  'Procurement Officer', 'Storekeeper', 'Records Officer', 'Sales Personnel'
 ]);
 
 const LEGACY_ROLE_DEFAULTS = Object.freeze({
@@ -200,6 +200,7 @@ export function roleAccessScope(user = {}) {
 }
 
 export function withRequiredRoleModules(role, modules = [], edition = 'school', featureFlags = null) {
+  if (role === 'Sales Personnel') return edition === 'organization' ? normalizeModuleList(['organizationStore','restaurant'],edition,featureFlags) : [];
   if (role === 'Vendor User') {
     const vendorModules = normalizeModuleList(['vendorSettlements', ...(edition === 'school' ? ['tuckShop'] : ['organizationStore', 'restaurant'])], edition, featureFlags);
     return vendorModules.includes('vendorSettlements') ? vendorModules : [];
@@ -241,6 +242,7 @@ export function configuredModulesForUser(document, user = {}, role = clean(user.
 }
 
 export function explicitModulesForUser(document, user = {}, edition = 'school', featureFlags = null) {
+  if (clean(user.assignedRole || user.AssignedRole || user.role || user.Role) === 'Sales Personnel') return [];
   const role = clean(user.assignedRole || user.AssignedRole || user.role || user.Role);
   const scope = roleAccessScope(user);
   const local = roleMapForScope(document, scope);

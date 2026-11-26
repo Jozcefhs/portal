@@ -22,7 +22,7 @@ for (const edition of editions) {
       const actual = allowedSectionsFor(user, flags, { edition });
       const defaults = defaultModulesForRole(role, { edition, featureFlags: flags, department: user.department });
       for (const key of defaults) assert.ok(actual.includes(key), `${role}: lost ${key}`);
-      assert.ok(actual.includes('incomeAnalytics'));
+      assert.equal(actual.includes('incomeAnalytics'), role !== 'Sales Personnel');
       assert.equal(new Set(actual).size, actual.length);
       assert.equal(JSON.stringify(user), before, 'inherited modules must not be persisted as individual extras');
     }

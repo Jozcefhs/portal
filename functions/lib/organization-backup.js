@@ -260,12 +260,23 @@ export async function organizationBackupDescriptors(env) {
       descriptors.push({ key: path, path, type: 'organisation' });
     }));
   }
+  if (identity.edition === 'organization') {
+    for (const branch of branches) {
+      const id = branch.Id || branch.id || 'main';
+      for (const path of commerceBranchPaths(id)) descriptors.push({key:path,path,type:'organisation'});
+    }
+  }
   const unique = new Map();
   descriptors.forEach((descriptor) => {
     const path = safePath(descriptor.path);
     if (path && !unique.has(path)) unique.set(path, { ...descriptor, key: path, path });
   });
   return [...unique.values()].sort((a, b) => a.path.localeCompare(b.path));
+}
+
+function commerceBranchPaths(branch) {
+  return ['tradeBranches/'+branch+'/quotes','tradeBranches/'+branch+'/payments','tradeBranches/'+branch+'/serials',
+    'cateringBranches/'+branch+'/orders','cateringBranches/'+branch+'/receipts'];
 }
 
 export async function exportOrganizationBackupPage(env, options = {}) {
@@ -390,6 +401,7 @@ function restoreCollectionPathAllowed(path, discoveredPaths, edition) {
   const legacyAttendanceCollections = new Set(
     Object.keys(STAFF_ATTENDANCE_COLLECTIONS).map((key) => legacyStaffAttendanceCollectionPath(key, 'main').split('/')[2])
   );
+  if (edition === 'organization' && parts.length === 3 && commerceBranchPaths(parts[1]).includes(path)) return true;
   const isAttendancePath = parts.length === 3
     && /^[a-z0-9._-]+$/i.test(parts[1])
     && (

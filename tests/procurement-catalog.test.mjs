@@ -242,7 +242,9 @@ test('shared backup discovery includes Procurement stock, workflow, audit and co
     };
     vm.runInNewContext(body, context);
     const descriptors = await context.organizationBackupDescriptors({});
-    assert.deepEqual(Array.from(descriptors, ({ path }) => path).sort(), [...collections].sort());
+    const operational = edition === 'organization' ? ['tradeBranches/main/quotes','tradeBranches/main/serials',
+      'tradeBranches/main/payments','cateringBranches/main/orders','cateringBranches/main/receipts'] : [];
+    assert.deepEqual(Array.from(descriptors, ({ path }) => path).sort(), [...collections,...operational].sort());
     for (const collection of collections) {
       const row = { __id: `${edition}--main--test`, ScopeKey: `${edition}--main`, Quantity: 10, __updateTime: 'transport' };
       assert.deepEqual(sanitizeBackupDocument(collection, row), { __id: row.__id, ScopeKey: row.ScopeKey, Quantity: 10 });

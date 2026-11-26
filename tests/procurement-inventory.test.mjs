@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
+import { tradeItemSetup } from '../functions/lib/trade-counter.js';
 import * as guards from '../functions/lib/procurement-inventory-guard.js';
 import { handleProductImport } from '../functions/lib/vendor-product-import.js';
 
@@ -32,7 +33,7 @@ function fixture() {
   api.batchUpsertDocuments = api.batchCommitDocuments;
   api.upsertDocument = (env, collectionPath, documentId, data) => api.batchCommitDocuments(env, [{ collectionPath, documentId, data }]);
   async function load(file, extra = {}, slice = null) {
-    const context = { ...api, ...guards, crypto: globalThis.crypto, Response, URL, TextEncoder, console,
+    const context = { ...api, ...guards, tradeItemSetup, crypto: globalThis.crypto, Response, URL, TextEncoder, console,
       loadProcurementInventoryControl: (env, scope) => guards.loadProcurementInventoryControl(env, scope, api.getDocument),
       schoolSectionFor: row => clean(row.SchoolSection || 'Secondary').toLowerCase(), clean,
       ...extra

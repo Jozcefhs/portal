@@ -402,7 +402,7 @@ const staffRoleOptions = [
   'Compensation & Benefits Officer', 'Payroll Officer',
   'Health & Safety Officer', 'Line Manager', 'Executive Director',
   'Organisation Administrator', 'Operations Manager', 'Procurement Officer', 'Storekeeper',
-  'Records Officer'
+  'Records Officer', 'Sales Personnel'
 ];
 
 const schoolOnlyStaffRoles = new Set([
@@ -419,7 +419,7 @@ const faithOnlyStaffRoles = new Set([
 
 const organizationOnlyStaffRoles = new Set([
   'Executive Director', 'Organisation Administrator', 'Operations Manager',
-  'Records Officer'
+  'Records Officer', 'Sales Personnel'
 ]);
 
 const nonSchoolOnlyStaffRoles = new Set([
@@ -2730,13 +2730,13 @@ async function loadDashboard(options = {}) {
     if (mode === 'shell') await refreshStaffSiteProfile();
     const allowed = data.allowedSections || currentUser.allowedSections || [];
     const workspaceSections = [
-      ...(['External Auditor', 'Vendor User'].includes(dashboardUser.role) ? [] : ['overview']),
+      ...(['External Auditor', 'Vendor User', 'Sales Personnel'].includes(dashboardUser.role) ? [] : ['overview']),
       ...(schoolInsightsAvailable(allowed, data.user || currentUser || {}) ? ['schoolInsights'] : []),
       ...allowed
     ];
     if (!activeSection || !workspaceSections.includes(activeSection)) {
       activeSection = workspaceSections.includes(requestedSection) ? requestedSection
-        : dashboardUser.role === 'Vendor User' ? 'vendorSettlements'
+        : dashboardUser.role === 'Sales Personnel' ? allowed[0] : dashboardUser.role === 'Vendor User' ? 'vendorSettlements'
         : dashboardUser.role === 'External Auditor' && workspaceSections.includes('externalAudit') ? 'externalAudit' : 'overview';
     }
     renderTabs(allowed);
@@ -2765,7 +2765,7 @@ async function loadDashboard(options = {}) {
         allowedSections: allowed,
         summary: {}, charts: {}, departments: {}, summaryDeferred: true
       });
-      activeSection = currentUser?.role === 'Vendor User' ? 'vendorSettlements' : currentUser?.role === 'External Auditor' && allowed.includes('externalAudit') ? 'externalAudit' : 'overview';
+      activeSection = currentUser?.role === 'Sales Personnel' ? allowed[0] : currentUser?.role === 'Vendor User' ? 'vendorSettlements' : currentUser?.role === 'External Auditor' && allowed.includes('externalAudit') ? 'externalAudit' : 'overview';
       renderTabs(allowed);
       renderWorkspace(activeSection);
       renderSection(activeSection);
@@ -3506,7 +3506,7 @@ function renderModuleSummary(active, liveData = null) {
 
 function renderTabs(allowed) {
   const allowedSet = new Set(allowed || []);
-  const externalAuditor = ['External Auditor', 'Vendor User'].includes(currentUser?.role);
+  const externalAuditor = ['External Auditor', 'Vendor User', 'Sales Personnel'].includes(currentUser?.role);
   const restrictedSet = new Set(
     dashboardData?.restrictedSections || currentUser?.restrictedSections || []
   );
@@ -5387,6 +5387,7 @@ function bindProcurementDepartmentShortcut(section) {
 
 function renderStaffStore(section, store) {
   const organisationStore = section === 'organizationStore';
+  const tradeEnabled = organisationStore && resolveDashboardEdition(currentUser || {}) === 'organization';
   const label = organisationStore ? 'Organisation Store' : (section === 'bookstore' ? 'Bookstore' : 'Uniform Store');
   const storeAudience = organisationStore ? 'customers and storekeepers' : 'parents and storekeepers';
   const categories = store.categories || [];
@@ -5395,13 +5396,15 @@ function renderStaffStore(section, store) {
   panelEl.innerHTML = `
     <div class="workflow-intro"><div><p class="eyebrow">${organisationStore ? 'Retail operations' : 'School store'}</p><h2>${label}</h2><p class="muted">List items and prices, monitor paid orders, and record collection.</p></div></div>
     ${organisationStore ? renderOrganizationCommerceWorkspace(section, store) : ''}
+    ${tradeEnabled ? '<section class="config-card" id="tradeCounter"></section>' : ''}
     <section class="config-card" id="staffStoreItemWorkspace">
       <header class="config-card-heading"><div><small>Inventory setup</small><h3>Add or update an item</h3><p>Define how this product appears to ${storeAudience}.</p></div>${!organisationStore ? '<button type="button" data-batch-upload-items>Batch upload items</button>' : ''}</header>
     <form id="staffStoreItemForm" class="workflow-form workflow-form-grid config-form"><input type="hidden" name="ItemId">
       <label>Item code<input name="ItemCode" required></label><label>Item name<input name="ItemName" required></label>
       <label>Category<input name="Category" list="storeCategoryOptions" autocomplete="off" required><datalist id="storeCategoryOptions">${activeCategories.map((row) => `<option value="${escapeHtml(row.Name)}"></option>`).join('')}</datalist></label><label>Variant / size<input name="Size"></label>
       ${organisationStore ? '' : '<label>Gender<select name="Gender"><option>All</option><option>Male</option><option>Female</option></select></label><label>Class<input name="ClassName" value="All"></label>'}
-      <label>Price<input name="Price" type="number" min="0" step="0.01" data-finance-input required></label><label>Stock quantity<input name="Quantity" type="number" min="0" step="1" required></label>
+      ${tradeEnabled ? '<label>Stock mode<select name="TradeMode"><option value="standard">Pieces</option><option value="cable">Cable · stock and price per metre</option><option value="serial">Pieces with serial warranty</option></select></label><label>Metres per coil (cable)<input name="CoilMetres" type="number" step="any" min="0" value="100"></label><label>Warranty days (serial items)<input name="WarrantyDays" type="number" min="1" value="365"></label>' : ''}
+      <label>Price<input name="Price" type="number" min="0" step="0.01" data-finance-input required></label><label>Stock quantity<input name="Quantity" type="number" min="0" step="${tradeEnabled ? 'any' : '1'}" required></label>
       <div class="config-actionbar"><label class="check-row"><input name="Active" type="checkbox" checked> ${organisationStore ? 'Available for sale' : 'Available to parents'}</label><p class="status" data-store-status></p><span class="inline-action-group"><button type="button" data-cancel-store-edit hidden>Cancel edit</button><button type="submit">Save item</button></span></div>
     </form>
     </section>
@@ -5440,11 +5443,25 @@ function renderStaffStore(section, store) {
     }).join('') : '<p class="muted">No paid orders yet.</p>'}</div></section>`;
   mountWorkspaceTabs(section, [
     { key: 'sales', label: organisationStore ? 'Point of sale' : 'Sales', icon: '\u{1F6D2}', nodes: document.getElementById('organizationCommercePOS') },
+    ...(tradeEnabled ? [{key:'trade',label:'Trade counter',nodes:document.getElementById('tradeCounter')}] : []),
     ...(organisationStore ? [{ key: 'transfers', label: 'Transfer verification', icon: '\u{1F50E}', nodes: document.getElementById('organizationStoreDirectTransferVerification') }] : []),
     { key: 'items', label: 'Items', icon: '\u25A6', count: (store.items || []).length, nodes: [document.getElementById('staffStoreItemWorkspace'), workspaceTableNodes(`${label} Items`)] },
     { key: 'categories', label: 'Categories', icon: '\u{1F5C2}', count: categories.length, nodes: document.getElementById('staffStoreCategoryWorkspace') },
     { key: 'orders', label: 'Orders & collection', icon: '\u2713', count: (store.orders || []).length, nodes: document.getElementById('staffStoreOrdersWorkspace') }
   ]);
+  if (tradeEnabled) {
+    const panel = document.getElementById('tradeCounter');
+    import('./trade-counter.js').then(({mountTradeCounter,tradeCounterForm}) => {
+      panel.innerHTML = tradeCounterForm;
+      mountTradeCounter(panel,store.items || [],async payload => {
+        const response = await staffFetch('/api/staff-stores',{method:'POST',credentials:'same-origin',
+          headers:{'Content-Type':'application/json'},body:JSON.stringify({section,action:'tradeCounter',...payload})});
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw Error(result.message || 'Trade counter unavailable.');
+        return result;
+      },escapeHtml,money);
+    }).catch(error=>{panel.textContent=error.message;});
+  }
   if (organisationStore) loadDirectTransferVerification(['organization-store'], 'organizationStoreDirectTransferVerification');
   bindGrowingHistory(section, '/api/staff-stores', [['orders', 'Orders'], ...(organisationStore ? [['sales', 'Sales']] : [])]);
   if (organisationStore) bindOrganizationCommerceWorkspace(section, store);
@@ -5492,7 +5509,12 @@ function renderStaffStore(section, store) {
     itemForm.elements.Category.value = clean(row.Category);
     itemForm.elements.Size.value = clean(row.Size);
     setFinancialInputValue(itemForm.elements.Price, commerceNumber(row.Price));
-    itemForm.elements.Quantity.value = commerceItemStock(row);
+    itemForm.elements.Quantity.value = tradeEnabled ? Number(row.Quantity || 0) : commerceItemStock(row);
+    if (tradeEnabled) {
+      itemForm.elements.TradeMode.value = row.TradeMode || 'standard';
+      itemForm.elements.CoilMetres.value = row.CoilMetres || 100;
+      itemForm.elements.WarrantyDays.value = row.WarrantyDays || 365;
+    }
     itemForm.elements.Active.checked = clean(row.Active || 'YES').toUpperCase() !== 'NO';
     procurementInventoryFields(itemForm, row, store.procurementControlled === true);
     if (itemForm.elements.Gender) itemForm.elements.Gender.value = clean(row.Gender || 'All');
@@ -6454,6 +6476,7 @@ function renderDepartmentOperations(section, data) {
   panelEl.innerHTML = `
     <div class="workflow-intro"><div><p class="eyebrow">Department operations</p><h2>${label}</h2><p class="muted">${descriptions[section]}</p></div><button type="button" class="workflow-icon-action" id="refreshDepartmentOperations" aria-label="Refresh ${label}">Refresh</button></div>
     ${section === 'restaurant' ? renderOrganizationCommerceWorkspace(section, data) : ''}
+    ${section === 'restaurant' && resolveDashboardEdition(currentUser || {}) === 'organization' ? '<section class="config-card" id="cateringBookings"></section>' : ''}
     ${section === 'tuckShop' ? `<nav class="department-workspace-links" aria-label="Tuck shop workspaces">
       <button type="button" class="active" data-department-jump="tuckShopPOS"><span aria-hidden="true">&#128722;</span> Point of sale</button>
       <button type="button" data-department-jump="departmentInventoryWorkspace"><span aria-hidden="true">&#128230;</span> Inventory</button>
@@ -6558,6 +6581,13 @@ function renderDepartmentOperations(section, data) {
   departmentTabs.push({ key: 'inventory', label: 'Inventory', icon: '\u{1F4E6}', count: inventory.length, nodes: [document.getElementById('departmentInventoryWorkspace'), workspaceTableNodes(`${label} Inventory`), workspaceTableNodes('Low Stock')] });
   departmentTabs.push({ key: 'stock', label: 'Stock in / out', icon: '\u21C5', count: (data.movements || []).length, nodes: [document.getElementById('departmentStockWorkspace'), workspaceTableNodes('Stock Movements — loaded page')] });
   if (section === 'tuckShop') departmentTabs.push({ key: 'history', label: 'Purchase history', icon: '\u{1F5C2}', count: purchases.length, nodes: document.getElementById('departmentPurchaseHistory') });
+  const cateringPanel = document.getElementById('cateringBookings');
+  if (cateringPanel) {
+    departmentTabs.splice(1,0,{key:'bookings',label:'Orders and events',nodes:cateringPanel});
+    import('./catering-orders.js').then(({mountCateringOrders})=>{
+      if (cateringPanel.isConnected) mountCateringOrders(cateringPanel,inventory,payload=>requestDepartmentAction(section,'cateringOrder',payload,'',{render:false}),escapeHtml,money);
+    }).catch(error=>{cateringPanel.textContent=error.message;});
+  }
   mountWorkspaceTabs(section, departmentTabs);
   bindGrowingHistory(section, '/api/staff-departments', [['movements', 'Stock movements'],
     ...(section === 'clinic' ? [['records', 'Clinic records']] : []),
@@ -21358,6 +21388,22 @@ function renderSection(active) {
   window.DynamaxVendors?.unmount();
   window.DynamaxVendorPOS?.unmount();
   window.DynamaxProcurement?.unmount();
+  if (currentUser?.role === 'Sales Personnel') {
+    summaryEl.replaceChildren();
+    const host = document.createElement('section');
+    host.className = 'config-card';
+    panelEl.replaceChildren(host);
+    if (!(currentUser.allowedSections || []).includes(active)) return;
+    import('./sales-counter.js').then(({mountSalesCounter})=>{
+      if (host.isConnected) return mountSalesCounter(host,active,async payload=>{
+        const response = await staffFetch('/api/staff-sales-counter',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,section:active})});
+        const result = await response.json();
+        if (!response.ok) throw Error(result.message || 'Sales counter unavailable.');
+        return result;
+      },escapeHtml,money,printOrganizationCommerceReceipt);
+    }).catch(error=>{host.textContent=error.message;});
+    return;
+  }
   const historyReady = historyDateWorkspace.show(active);
   if (active === 'formPurchases') bindAdmissionFormPurchaseQr();
   if (active === 'donations') bindChurchGivingQr();
@@ -24306,7 +24352,7 @@ function renderRoleAccessEditor(role = staffRoleAccessSelectedRole, roles = staf
   const allowed = new Set(policy.modules || []);
   const universalStaffModules = new Set(['financeRequests', 'payroll']);
   document.querySelectorAll('[name="RoleModuleOption"]').forEach((input) => {
-    const fixed = ['External Auditor', 'Vendor User'].includes(staffRoleAccessSelectedRole);
+    const fixed = ['External Auditor', 'Vendor User', 'Sales Personnel'].includes(staffRoleAccessSelectedRole);
     const procurement = staffRoleAccessSelectedRole === 'Procurement Officer' && input.value === 'procurement';
     input.checked = universalStaffModules.has(input.value) ? (policy.fullAccessModules || []).includes(input.value) : allowed.has(input.value) || (!fixed && procurement);
     input.disabled = fixed || procurement;
@@ -24322,12 +24368,13 @@ function renderRoleAccessEditor(role = staffRoleAccessSelectedRole, roles = staf
       ? 'This role is fixed to the read-only External Audit workspace. Other modules cannot be granted.'
       : staffRoleAccessSelectedRole === 'Vendor User'
       ? 'This role is limited to linked vendor products and settlements. Other modules cannot be granted.'
+      : staffRoleAccessSelectedRole === 'Sales Personnel' ? 'This role can sell and issue paid self-service purchases in its assigned branches.'
       : policy.source === 'default'
       ? 'Using the safe system starting policy until you save this role.'
       : policy.locallyConfigured
         ? `Saved specifically for ${policy.source === 'global' ? 'all branches' : `branch ${policy.source}`}.`
         : 'Inheriting the organisation-wide role policy.';
-    if (!['External Auditor', 'Vendor User'].includes(staffRoleAccessSelectedRole)) source.textContent += ' Checked modules grant full module permissions in the assigned branches. Personal requisitions and payslips remain available without a management grant.';
+    if (!['External Auditor', 'Vendor User', 'Sales Personnel'].includes(staffRoleAccessSelectedRole)) source.textContent += ' Checked modules grant full module permissions in the assigned branches. Personal requisitions and payslips remain available without a management grant.';
     if (staffRoleAccessSelectedRole === 'Procurement Officer') source.textContent += ' Procurement is always included when enabled in the organisation plan.';
     if (staffRoleAccessSelectedRole === 'Recruitment Officer') source.textContent += ' Recruitment Officer is an HR role. For purchasing and supplies, choose Procurement Officer.';
   }
@@ -24368,7 +24415,7 @@ function syncExternalAuditUserForm(form) {
   const finance = form.querySelector('[data-staff-finance-group]');
   if (finance) finance.hidden = external;
   const tabs = form.querySelector('[data-staff-tabs-group]');
-  if (tabs) tabs.hidden = external || form.elements.Role?.value === 'Vendor User';
+  if (tabs) tabs.hidden = external || ['Vendor User','Sales Personnel'].includes(form.elements.Role?.value);
   ['AuditDateFrom', 'AuditDateTo', 'AuditExpiresAt'].forEach((name) => {
     if (form.elements[name]) form.elements[name].required = external;
   });

@@ -400,6 +400,8 @@ async function sendMarketList(env, section, body, user) {
   await auditMessage(env, 'Supplier Market List', section, user, { RecipientEmail: supplierEmail, RecipientName: supplierName, Subject: subject, ItemCount: items.length, Items: items });
 }
 
+import { cateringOrders } from '../lib/catering-orders.js';
+
 export async function onRequestPost(context) {
   let idempotency = null;
   try {
@@ -412,6 +414,10 @@ export async function onRequestPost(context) {
       const err = new Error('This staff account is not allowed to manage that department.'); err.status = 403; throw err;
     }
     const action = lower(body.action || 'list');
+    if (action === 'cateringorder' && section === 'restaurant') {
+      const result = await cateringOrders(env,user,body);
+      return Response.json({ok:true,...result},{headers:{'Cache-Control':'no-store'}});
+    }
     if (action === 'list' && body.historyKind) {
       const page = await departmentHistory(env, section, user, clean(body.historyKind), body.cursor ?? null);
       return Response.json({ ok: true, rows: publicRows(page.rows), nextCursor: page.nextCursor }, { headers: { 'Cache-Control': 'no-store' } });

@@ -8219,6 +8219,7 @@ const DEFAULT_CHART_OF_ACCOUNTS = [
   ['1600', 'Accumulated Depreciation', 'Asset', 'Fixed Assets', 'Credit'],
   ['2000', 'Accounts Payable', 'Liability', 'Payables', 'Credit'],
   ['2100', 'Taxes and Statutory Deductions', 'Liability', 'Statutory', 'Credit'],
+  ['2110', 'Customer Deposits', 'Liability', 'Customer Deposits', 'Credit'],
   ['2200', 'Student Wallet Liability', 'Liability', 'Student Wallets', 'Credit'],
   ['2300', 'Salaries Payable', 'Liability', 'Payroll', 'Credit'],
   ['2310', 'Student Overpayment Liability', 'Liability', 'Student Overpayments', 'Credit'],

@@ -79,13 +79,14 @@ export function assertProcurementInventoryMovement(item = {}, type, options = {}
 export function procurementMovementBalance(item = {}, type, amount, options = {}) {
   const current = Number(item.Quantity || 0), incoming = clean(type).toUpperCase() === 'IN';
   if (!controlledItem(item, options)) return incoming ? current + Number(amount) : current - Number(amount);
-  const scaled = Number(amount) * 1000, previous = current * 1000;
+  const scale = item.TradeMode === 'cable' ? 1000000 : 1000;
+  const scaled = Number(amount) * scale, previous = current * scale;
   // Tolerate floating-point representation noise, not additional precision.
   if (!Number.isSafeInteger(Math.round(scaled)) || !Number.isSafeInteger(Math.round(previous))
     || Math.abs(scaled - Math.round(scaled)) > 0.000001 || Math.abs(previous - Math.round(previous)) > 0.000001) {
-    throw failure('Procurement stock and usage quantities must have at most three decimal places.');
+    throw failure(item.TradeMode === 'cable' ? 'Cable quantities must have at most six decimal places.' : 'Procurement stock and usage quantities must have at most three decimal places.');
   }
-  return (Math.round(previous) + (incoming ? Math.round(scaled) : -Math.round(scaled))) / 1000;
+  return (Math.round(previous) + (incoming ? Math.round(scaled) : -Math.round(scaled))) / scale;
 }
 
 export function assertProcurementInventoryDeletion(item = {}, options = {}) {

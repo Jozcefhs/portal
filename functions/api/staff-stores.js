@@ -19,6 +19,7 @@ import {
   normalizeCommercePaymentMethod,
   recordManualOrganizationCommerceSale
 } from '../lib/organization-commerce.js';
+import { tradeCounter, tradeItemSetup } from '../lib/trade-counter.js';
 import QRCode from 'qrcode';
 import { assertProcurementInventoryEdit, loadProcurementInventoryControl } from '../lib/procurement-inventory-guard.js';
 import { listOrganizationCommerceSalesPage } from '../lib/organization-commerce.js';
@@ -69,6 +70,11 @@ export async function onRequestPost(context) {
     }
     const storeType = storeForSection(section);
     const action = lower(body.action || 'list');
+    if (action === 'tradecounter') {
+      if (section !== 'organizationStore') throw Object.assign(new Error('Choose Inventory & Sales.'), { status:403 });
+      const result = await tradeCounter(env,user,body);
+      return Response.json({ok:true,...result},{headers:{'Cache-Control':'no-store'}});
+    }
     body.HistoryDateRange ||= {};
     if (body.HistoryDateRange.fromDate || body.HistoryDateRange.toDate) historyDateRange(body.HistoryDateRange);
     if (action === 'list' && body.historyKind) {
@@ -142,6 +148,11 @@ export async function onRequestPost(context) {
         SchoolSection: itemSection,
         UpdatedAt: new Date().toISOString(), UpdatedBy: user.displayName || user.username
       };
+      if (section === 'organizationStore' && user.edition === 'organization') {
+        Object.assign(payload,tradeItemSetup(body,existing));
+        if (existing?.TradeMode && existing.TradeMode !== 'standard' && lower(itemCode) !== lower(existing.ItemCode))
+          throw Object.assign(new Error('Keep the item code linked to existing trade documents.'),{status:409});
+      }
       delete payload.__id;
       delete payload.__name;
       delete payload.__updateTime;
@@ -165,6 +176,7 @@ export async function onRequestPost(context) {
       return Response.json({ ok: true, message: existing ? 'Store item updated.' : 'Store item saved.', item: { ...payload, __id: documentId } });
     }
     if (action === 'recordsale') {
+      body.CheckoutSource = 'Staff Point of Sale';
       if (section !== 'organizationStore') {
         const err = new Error('Walk-in commerce payments are available only in the Organisation Store workspace.');
         err.status = 403;

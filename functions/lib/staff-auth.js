@@ -368,7 +368,7 @@ export function sectionAccessFor(user = {}, organization = {}, roleAccess = null
   });
   // The personal grant opens a review-only vendor workspace when Role Access
   // has not separately granted vendor operations. Feature/subscription gates remain.
-  const principalApproval = !['External Auditor', 'Vendor User'].includes(clean(user.assignedRole || user.AssignedRole || user.role || user.Role))
+  const principalApproval = !['External Auditor', 'Vendor User', 'Sales Personnel'].includes(clean(user.assignedRole || user.AssignedRole || user.role || user.Role))
     && user.approvalEnabled === true;
   const vendorSettlementApprovalOnly = principalApproval
     && !allowedSections.includes('vendorSettlements');
@@ -775,6 +775,9 @@ export async function requireStaffSession(env, request) {
   }
   // Face endpoint independently checks purchase-only purpose and active vendor
   // linkage. No Records Desk, enrollment or general student access is granted.
+  if (user.role === 'Sales Personnel' && !['/api/staff-sales-counter','/api/admin','/api/staff-session','/api/staff-passkey','/api/staff-mfa'].includes(new URL(request.url).pathname)) {
+    throw Object.assign(new Error('Sales personnel can open only their sales counter and sign-in settings.'),{status:403});
+  }
   if (user.role === 'Vendor User' && !['/api/staff-vendor-settlements', '/api/staff-face-lookup', '/api/admin', '/api/staff-session',
     '/api/staff-passkey', '/api/staff-mfa', '/api/staff-approval-profile'].includes(new URL(request.url).pathname)) {
     const error = new Error('Vendor accounts may access only their own sales, settlements and sign-in settings.'); error.status = 403; throw error;

@@ -68,6 +68,11 @@ test('ordinary staff receive payroll and finance requests, while External Audito
     const flags = featureFlagsForEdition(edition);
     for (const role of rolesForEdition(edition)) {
       const defaults = defaultModulesForRole(role, { edition, featureFlags: flags });
+      if (role === 'Sales Personnel') {
+        assert.deepEqual(defaults,['organizationStore','restaurant']);
+        assert.deepEqual(allowedSectionsFor({role,TabAccess:['staffUsers']},flags,{edition}),defaults);
+        continue;
+      }
       if (role === 'Vendor User') {
         const vendorModules = normalizeModuleList(['vendorSettlements', ...(edition === 'school' ? ['tuckShop'] : ['organizationStore', 'restaurant'])], edition, flags);
         assert.deepEqual(defaults, vendorModules);
