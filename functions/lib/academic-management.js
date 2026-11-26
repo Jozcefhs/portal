@@ -3579,6 +3579,37 @@ export async function bulkAssignAcademicClassTeachers(env, user = {}, input = {}
   return response;
 }
 
+// The named teacher editor submits the assignments it displayed along with the new selection.
+function planSubjectTeacherSelection(state, teacherUsername, subjectId, sessionId, termId, classroomIds, snapshots) {
+  const saved = state.teacherAllocations.filter((row) => statusActive(row)
+    && lower(row.AllocationRole) === 'subject teacher' && lower(row.TeacherUsername) === teacherUsername
+    && row.SubjectId === subjectId && row.SessionId === sessionId && row.TermId === termId);
+  if (!saved.length && !classroomIds.length) return { covered: new Set(), removals: [] };
+  const revisions = new Map(snapshots.map((row) => [clean(row?.AllocationId), row?.RevisionToken]));
+  if (saved.length !== snapshots.length || saved.some((row) => !revisions.has(recordId(row)))) {
+    throw failure('The saved teacher assignments changed. Reload them before saving.', 409, 'ACADEMIC_WRITE_CONFLICT');
+  }
+  const selected = new Set(classroomIds);
+  const activeClasses = new Set((state.classes || []).filter(statusActive).map((row) => row.ClassId));
+  const available = (state.arms || []).filter((row) => statusActive(row)
+    && activeClasses.has(row.ClassId) && activeValue(row.IsClassroom, false));
+  const covered = new Set();
+  const removals = [];
+  for (const row of saved) {
+    writePrecondition(row, revisions.get(recordId(row)));
+    // An older allocation can cover every arm of a class with one record.
+    const arms = row.ArmId ? available.filter((arm) => arm.ArmId === row.ArmId)
+      : available.filter((arm) => arm.ClassId === row.ClassId);
+    // A partial edit keeps assignments in rooms the editor could not display.
+    if (selected.size && arms.every((arm) => selected.has(arm.ArmId))) {
+      for (const arm of arms) covered.add(arm.ArmId);
+    } else {
+      removals.push(row);
+    }
+  }
+  return { covered, removals };
+}
+
 export async function bulkAssignAcademicSubjectTeacher(env, user = {}, input = {}) {
   requireWritableSubscription(user);
   requireCapability(user, 'canManageAllocations');
@@ -3594,7 +3625,12 @@ export async function bulkAssignAcademicSubjectTeacher(env, user = {}, input = {
       ? 'Choose the session, term and at least one timetable-only subject.'
       : 'Choose the session, term, teacher and subject.');
   }
-  if (!classroomIds.length) {
+  const reconcile = !assignToFormTeachers && Object.hasOwn(input, 'SavedSubjectAssignments');
+  if (reconcile && (!Array.isArray(input.SavedSubjectAssignments) || !Array.isArray(input.ClassroomIds)
+    || input.ClassroomIds.some((id) => typeof id !== 'string' || !clean(id)))) {
+    throw failure('Reload the saved classrooms and submit the checkbox selection again.');
+  }
+  if (!reconcile && !classroomIds.length) {
     throw failure('Choose at least one classroom.');
   }
   if (!assignToFormTeachers && subjectIds.length !== 1) {
@@ -3628,8 +3664,9 @@ export async function bulkAssignAcademicSubjectTeacher(env, user = {}, input = {
     }
   }
   const [state, people] = await Promise.all([
-    loadScopedAcademicState(env, scope, ACADEMIC_SUBJECT_TEACHER_STATE_KEYS),
-    loadPeople(env, user, scope, { students: false })
+    loadScopedAcademicState(env, scope, classroomIds.length ? ACADEMIC_SUBJECT_TEACHER_STATE_KEYS : ['subjects', 'teacherAllocations'],
+      { WorkspaceRead: true, SessionId: sessionId, TermId: termId }),
+    classroomIds.length ? loadPeople(env, user, scope, { students: false }) : { staff: [], students: [] }
   ]);
   const projected = { ...state, teacherAllocations: [...state.teacherAllocations] };
   const classrooms = classroomIds.map((id) => assertReference(findById(state.arms, id), 'One selected classroom is not active.'));
@@ -3642,7 +3679,21 @@ export async function bulkAssignAcademicSubjectTeacher(env, user = {}, input = {
       throw failure('Only timetable-only subjects can be assigned through the class-teacher option.', 409, 'ACADEMIC_TIMETABLE_ONLY_REQUIRED');
     }
   });
-  const writes = [];
+  const { covered, removals } = reconcile
+    ? planSubjectTeacherSelection(state, teacherUsername, subjectIds[0], sessionId, termId, classroomIds, input.SavedSubjectAssignments)
+    : { covered: new Set(), removals: [] };
+  const timestamp = nowIso();
+  const actor = actorName(user);
+  const writes = removals.map((row) => ({
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations,
+    documentId: recordId(row), updateTime: row.__updateTime,
+    data: { ...withoutMetadata(row), Status: 'Archived', ArchivedAt: timestamp, ArchivedBy: actor,
+      UpdatedAt: timestamp, UpdatedBy: actor }
+  }));
+  if (removals.length) {
+    const removed = new Set(removals);
+    projected.teacherAllocations = projected.teacherAllocations.filter((row) => !removed.has(row));
+  }
   let created = 0;
   let restored = 0;
   let skipped = 0;
@@ -3654,6 +3705,10 @@ export async function bulkAssignAcademicSubjectTeacher(env, user = {}, input = {
     const schoolClass = assertReference(findById(state.classes, classroom.ClassId), 'The class for one selected classroom is not active.');
     if (lower(schoolClass.SchoolSection) !== scope.section || lower(classroom.SchoolSection) !== scope.section) {
       throw failure('Every selected classroom must belong to the selected school section.', 409, 'ACADEMIC_SECTION_MISMATCH');
+    }
+    if (covered.has(classroom.ArmId)) {
+      skipped += 1;
+      continue;
     }
     const formTeacher = assignToFormTeachers
       ? academicFormTeacherForClassroom(state.teacherAllocations, classroom, sessionId, termId) : null;
@@ -3701,13 +3756,13 @@ export async function bulkAssignAcademicSubjectTeacher(env, user = {}, input = {
       }
     }
   }
-  if (created || restored) {
+  if (writes.length) {
     writes.push(auditWrite(user, 'BULK ASSIGN', 'teacherallocation', {
       BranchId: scope.branchId, SchoolSection: scope.section, SessionId: sessionId, TermId: termId,
       TeacherUsername: assignToFormTeachers && assignedClassTeacherUsernames.size === 1
         ? [...assignedClassTeacherUsernames][0] : (assignToFormTeachers ? '' : teacherUsername),
       SubjectId: subjects.length === 1 ? subjects[0].SubjectId : '', AllocationId: `bulk-${Date.now()}`
-    }, `${created} subject-teacher allocation(s) created; ${restored} restored; ${skipped} already active${assignToFormTeachers ? ` across ${classrooms.length} classroom(s) and ${assignedClassTeacherUsernames.size} class teacher(s): ${subjects.map((subject) => subject.Name).join(', ')}` : ''}.`));
+    }, `${created} subject-teacher allocation(s) created; ${restored} restored; ${skipped} already active${removals.length ? `; archived: ${removals.map(recordId).join(', ')}` : ''}${assignToFormTeachers ? ` across ${classrooms.length} classroom(s) and ${assignedClassTeacherUsernames.size} class teacher(s): ${subjects.map((subject) => subject.Name).join(', ')}` : ''}.`));
   }
   await commitAcademicBatch(env, writes, 'A selected class, arm or teacher allocation changed while the batch was being saved. Reload and try again.');
   const response = await bootstrapAcademicManagement(env, user, {
@@ -3717,6 +3772,12 @@ export async function bulkAssignAcademicSubjectTeacher(env, user = {}, input = {
     ? `${created + restored} subject-teacher assignment${created + restored === 1 ? '' : 's'} saved online${skipped ? `; ${skipped} already existed` : ''}.${assignToFormTeachers ? ' Each uses the selected classroom’s current form teacher.' : ' Repeat for another subject if needed.'}`
     : 'Every selected subject-teacher assignment already exists.';
   response.bulkResult = { Requested: classroomIds.length * subjectIds.length, Created: created, Restored: restored, Skipped: skipped };
+  if (reconcile) {
+    response.bulkResult.Archived = removals.length;
+    response.message = classroomIds.length
+      ? `Subject assignment saved for ${classroomIds.length} classroom${classroomIds.length === 1 ? '' : 's'} in this period.`
+      : (removals.length ? 'Subject removed from this teacher for the selected session and term.' : 'This teacher has no classrooms assigned for this subject and period.');
+  }
   return response;
 }
 

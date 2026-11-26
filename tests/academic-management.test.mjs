@@ -394,7 +394,7 @@ test('selecting a class checks its saved subjects for the period without copying
   assert.deepEqual(checked(form, 'SubjectIds'), ['english']);
 });
 
-test('selecting a subject teacher restores saved subjects and classrooms for the exact period', () => {
+test('selecting a subject teacher restores saved subjects and classrooms for the exact period', async () => {
   const helpersSource = adminSource.slice(
     adminSource.indexOf('function academicSavedSubjectTeacherAllocations'),
     adminSource.indexOf('function bindAcademicSubjectTeacherSelection')
@@ -409,6 +409,7 @@ test('selecting a subject teacher restores saved subjects and classrooms for the
     { ArmId: 'c', ClassId: 'grade-8', IsClassroom: true, Status: 'Active' }
   ];
   const allocation = (teacher, subject, arm, term = 'term-1', status = 'Active') => ({
+    AllocationId: [teacher, subject, arm].join('-'), RevisionToken: 'v1',
     TeacherUsername: teacher, SubjectId: subject, ArmId: arm,
     ClassId: arm === 'c' ? 'grade-8' : 'grade-7', SessionId: 'session-1', TermId: term,
     AllocationRole: 'Subject Teacher', Status: status
@@ -461,10 +462,12 @@ test('selecting a subject teacher restores saved subjects and classrooms for the
   };
   const inputs = classrooms.map((row) => ({ name: 'ClassroomIds', value: row.ArmId, checked: false }));
   const help = { textContent: '' };
+  const submit = {};
   const form = {
     elements: { namedItem: (name) => controls[name] },
     inputs,
-    querySelector: (selector) => selector === '[data-academic-teacher-subject-help]' ? help : null,
+    querySelector: (selector) => selector === '[data-academic-teacher-subject-help]' ? help
+      : selector === 'button[type="submit"]' ? submit : null,
     addEventListener: (_name, listener) => { form.onChange = listener; }
   };
   const checked = (target, name) => target.inputs.filter((input) => input.name === name && input.checked).map((input) => input.value);
@@ -476,10 +479,15 @@ test('selecting a subject teacher restores saved subjects and classrooms for the
     const value = row.SubjectId || row.TermId;
     return `<option value="${value}"${value === selected ? ' selected' : ''}>${label(row)}</option>`;
   }).join('')}`;
-  const bind = new Function('clean', 'academicIsActive', 'academicSavedSubjectTeacherAllocations',
+  const requests = [];
+  const loadPeriod = async (_action, payload) => {
+    requests.push(payload.TermId);
+    return { teacherAllocations: data.teacherAllocations.filter(row => row.TermId === payload.TermId) };
+  };
+  const bind = new Function('academicManagementRequest', 'clean', 'academicIsActive', 'academicSavedSubjectTeacherAllocations',
     'academicSavedSubjectTeacherClassroomIds', 'academicSelectOptions', 'setAcademicCheckedValues', 'academicCheckedValues',
     `${bindSource}; return bindAcademicSubjectTeacherSelection;`)(
-    cleanValue, isActive, helpers.academicSavedSubjectTeacherAllocations,
+    loadPeriod, cleanValue, isActive, helpers.academicSavedSubjectTeacherAllocations,
     helpers.academicSavedSubjectTeacherClassroomIds, options, setChecked, checked
   );
   bind(form, data);
@@ -487,6 +495,9 @@ test('selecting a subject teacher restores saved subjects and classrooms for the
   controls.TeacherUsername.onChange();
   assert.equal(controls.SubjectId.value, 'english');
   assert.match(controls.SubjectId.markup, /English Studies \(saved\)/);
+  assert.deepEqual(form._savedSubjectAssignments, [
+    { AllocationId: 'ada-english-a', RevisionToken: 'v1' }, { AllocationId: 'ADA-english-b', RevisionToken: 'v1' }
+  ]);
   assert.deepEqual(checked(form, 'ClassroomIds'), ['a', 'b']);
   controls.SubjectId.value = 'math';
   controls.SubjectId.onChange();
@@ -519,6 +530,43 @@ test('selecting a subject teacher restores saved subjects and classrooms for the
   assert.equal(controls.TermId.value, 'term-1');
   assert.deepEqual(checked(form, 'ClassroomIds'), ['a', 'b']);
   assert.match(help.textContent, /saved subject/);
+  bind(form, { ...data, workspaceSetup: true, scope: { SchoolSection: 'secondary' },
+    selection: { SessionId: 'session-1', TermId: 'term-1' },
+    teacherAllocations: data.teacherAllocations.filter(row => row.TermId === 'term-1') });
+  controls.TermId.value = 'term-2';
+  const loading = controls.TermId.onChange();
+  assert.equal(submit.disabled, true);
+  assert.equal(form._savedSubjectAssignments, null);
+  await loading;
+  assert.equal(submit.disabled, false);
+  assert.deepEqual(checked(form, 'ClassroomIds'), ['c']);
+  inputs.forEach(input => { input.checked = false; });
+  form.onChange({ target: inputs[2] });
+  assert.deepEqual(form._savedSubjectAssignments.map(row => row.AllocationId), ['ada-english-c']);
+  controls.TermId.value = 'term-1';
+  await controls.TermId.onChange();
+  controls.TermId.value = 'term-2';
+  await controls.TermId.onChange();
+  assert.deepEqual(checked(form, 'ClassroomIds'), []);
+  assert.deepEqual(requests, ['term-2']);
+
+  const formPayloadSource = adminSource.slice(adminSource.indexOf('function academicWorkflowPayload('),
+    adminSource.indexOf('function populateAcademicMovementForm'));
+  const validator = adminSource.slice(adminSource.indexOf('function validateAcademicCheckboxFields('),
+    adminSource.indexOf('function academicStudentSubjectProfile'));
+  const payloadFor = new Function('FormData', 'academicCheckedValues',
+    `${validator}
+${formPayloadSource}; return academicWorkflowPayload;`)(class {
+      entries() { return Object.entries(controls).map(([name, control]) => [name, control.value]); }
+    }, checked);
+  form.dataset = { academicWorkflow: 'bulkAssignAcademicSubjectTeacher' };
+  form.hasAttribute = name => name === 'data-academic-subject-teacher-selection';
+  form.querySelectorAll = () => [{ dataset: { academicCheckboxName: 'ClassroomIds', academicCheckboxRequired: 'false' } }];
+  const payload = payloadFor(form);
+  assert.equal(payload.TeacherUsername, 'ada');
+  assert.equal(payload.TermId, 'term-2');
+  assert.deepEqual(payload.ClassroomIds, []);
+  assert.deepEqual(payload.SavedSubjectAssignments, [{ AllocationId: 'ada-english-c', RevisionToken: 'v1' }]);
 });
 
 test('AM-003 legacy shared academic records remain in Secondary and never leak into Primary', () => {
@@ -1320,11 +1368,13 @@ test('class-teacher timetable-only picker exposes unique multi-class and all-cla
     [{ ClassId: 'g7', Name: 'Grade 7' }, { ClassId: 'g8', Name: 'Grade 8' }],
     [{ ClassId: 'g7', ArmId: 'a', Name: 'Brilliance' }, { ClassId: 'g7', ArmId: 'b', Name: 'Classic' },
       { ClassId: 'g8', ArmId: 'c', Name: 'Distinction' }],
-    { prefix: 'form-teacher-subject', label: 'Classrooms for these timetable-only subjects' }
+    { prefix: 'form-teacher-subject', required: true, label: 'Classrooms for these timetable-only subjects' }
   );
   assert.equal((html.match(/<input type="checkbox" id="form-teacher-subject-arm-[^"]+" name="ClassroomIds"/g) || []).length, 3);
   assert.equal((html.match(/data-academic-checkbox-group-toggle/g) || []).length, 2);
   assert.match(html, /id="form-teacher-subject-arm-3"/);
+  assert.match(html, /data-academic-checkbox-required="true"/);
+  assert.match(renderField([], []), /data-academic-checkbox-required="false"/);
   assert.match(html, /Classrooms for these timetable-only subjects/);
   assert.match(adminSource, /Select all classrooms with class teachers/);
   assert.match(adminSource, /inputs\.forEach\(\(input\) => \{ input\.checked = checkAll; \}\)/);

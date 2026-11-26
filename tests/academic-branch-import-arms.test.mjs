@@ -83,6 +83,79 @@ function harness() {
   };
 }
 
+function teacherFixture() {
+  const h = harness();
+  const collection = management.ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations;
+  h.seed('academicSubjects', { ...scope, SubjectId: 'eng', RecordId: 'eng', Name: 'English', Status: 'Active' });
+  h.seed('academicArms', { ...h.rows('academicArms')[0], ArmId: 'gold', RecordId: 'gold', Name: 'Gold' });
+  h.context.loadPeople = async () => ({ staff: [{ Username: 'teacher', Role: 'Teacher', Active: 'Yes' }], students: [] });
+  const seedAllocation = (id, overrides = {}) => h.seed(collection, { ...scope, ...period, RecordId: id,
+    AllocationId: id, TeacherUsername: 'TEACHER', SubjectId: 'eng', ClassId: 'class', ArmId: 'arm',
+    AllocationRole: 'Subject Teacher', Status: 'Active', __updateTime: 'v1', ...overrides });
+  const save = (classrooms, ids, extra = {}) => h.context.bulkAssignAcademicSubjectTeacher({}, actor, {
+    ...scope, ...period, TeacherUsername: 'Teacher', SubjectId: 'eng', ClassroomIds: classrooms,
+    SavedSubjectAssignments: ids.map(AllocationId => ({ AllocationId, RevisionToken: 'v1' })), ...extra
+  });
+  return { ...h, collection, save, seedAllocation };
+}
+
+test('saving an empty classroom selection archives only the named teacher and subject in the selected period and branch section', async () => {
+  const h = teacherFixture();
+  h.seedAllocation('diamond');
+  h.seedAllocation('gold', { ArmId: 'gold' });
+  for (const [id, patch] of Object.entries({ teacher: { TeacherUsername: 'other' }, term: { TermId: 'later' },
+    subject: { SubjectId: 'math' }, session: { SessionId: 'next' }, branch: { BranchId: 'elsewhere' },
+    section: { SchoolSection: 'secondary' }, role: { AllocationRole: 'Form Teacher' } })) h.seedAllocation(id, patch);
+  const before = clone(h.rows(h.collection).slice(2));
+  h.context.loadPeople = () => assert.fail('clearing assignments should not fetch staff or pupils');
+  const result = await h.save([], ['diamond', 'gold']);
+  assert.equal(result.bulkResult.Archived, 2);
+  assert.deepEqual(h.rows(h.collection).slice(0, 2).map(row => row.Status), ['Archived', 'Archived']);
+  assert.deepEqual(h.rows(h.collection).slice(2), before);
+  assert.deepEqual(h.writes.map(w => w.collectionPath), [h.collection, h.collection, management.ACADEMIC_MANAGEMENT_COLLECTIONS.audit]);
+  assert.equal(h.writes[0].updateTime, 'v1');
+  assert.equal((await h.save([], ['diamond', 'gold'])).bulkResult.Archived, 0);
+  assert.equal((await h.save([], [])).bulkResult.Archived, 0);
+  assert.equal(h.writes.length, 3);
+});
+
+test('partial subject selection preserves checked legacy arms and splits an all-arms allocation only when necessary', async () => {
+  const h = teacherFixture();
+  h.seedAllocation('class-wide', { ArmId: '' });
+  h.seed(management.ACADEMIC_MANAGEMENT_COLLECTIONS.offerings, { ...scope, ...period, RecordId: 'offered', ClassId: 'class', SubjectId: 'eng', Status: 'Active' });
+  await h.save(['arm', 'gold'], ['class-wide']);
+  assert.equal(h.writes.length, 0);
+  const result = await h.save(['gold'], ['class-wide']);
+  assert.equal(result.bulkResult.Created, 1);
+  assert.equal(result.bulkResult.Archived, 1);
+  const gold = h.rows(h.collection).find(row => row.Status === 'Active');
+  assert.equal(gold.ArmId, 'gold');
+  assert.equal(h.rows(h.collection).length, 2);
+  h.seedAllocation('noncanonical-arm');
+  const keep = await h.save(['arm'], ['noncanonical-arm', gold.RecordId], {
+    SavedSubjectAssignments: [{ AllocationId: 'noncanonical-arm', RevisionToken: 'v1' },
+      { AllocationId: gold.RecordId, RevisionToken: gold.__updateTime }]
+  });
+  assert.equal(keep.bulkResult.Created, 0);
+  assert.equal(keep.bulkResult.Archived, 1);
+  assert.deepEqual(h.rows(h.collection).filter(row => row.Status === 'Active').map(row => row.RecordId), ['noncanonical-arm']);
+});
+
+test('stale snapshots, malformed selections and append-only clients cannot clear a subject by accident', async () => {
+  const h = teacherFixture();
+  h.seedAllocation('old');
+  await assert.rejects(h.save([], []), { code: 'ACADEMIC_WRITE_CONFLICT' });
+  await assert.rejects(h.save([], [], { SavedSubjectAssignments: [{ AllocationId: 'old', RevisionToken: 'stale' }] }),
+    { code: 'ACADEMIC_WRITE_CONFLICT' });
+  await assert.rejects(h.save(undefined, ['old']), /checkbox selection/);
+  await assert.rejects(h.save([' '], ['old']), /checkbox selection/);
+  await assert.rejects(h.context.bulkAssignAcademicSubjectTeacher({}, actor, {
+    ...scope, ...period, SubjectId: 'eng', TeacherUsername: 'teacher', ClassroomIds: []
+  }), /at least one classroom/);
+  await assert.rejects(h.save([], ['old'], { AssignToFormTeachers: true }), /at least one classroom/);
+  assert.equal(h.writes.length, 0);
+});
+
 test('CSV import isolates the same admission reference by branch and section, preserves foreign records and is retry-safe', async () => {
   const h = harness();
   h.seed('schoolBranches/garden-primary/sections/secondary/students', { ...h.foreign, BranchId: branch });
