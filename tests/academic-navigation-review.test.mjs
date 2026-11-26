@@ -33,7 +33,7 @@ function backendFixture() {
   };
   const context=vm.createContext({...management,...studentRoster,...scorebook,safeScopeId,scopedCollectionPath,normalizeClassKey,academicTeacherScoreClassrooms,TextEncoder,TextDecoder,
     getSchoolStructure:async()=>({ActiveBranchId:'main',Branches:[{Id:'main'}],Sections:['primary','secondary']}),enforceActorBranch:(_actor,branch)=>branch,
-    queryCollection:read,queryCollectionPages:read,listBranchCollection:read,listSchoolCollection:read,getDocument:async()=>({}),
+    listCollection: read, queryCollection:read,queryCollectionPages:read,listBranchCollection:read,listSchoolCollection:read,getDocument:async()=>({}),
     batchCommitDocuments:async(_env,changes)=>writes.push(changes)});
   vm.runInContext(backend.replace(/^import[\s\S]*?;\r?\n/gm,'').replace(/^export /gm,''),context);
   return {context,calls,writes,records};

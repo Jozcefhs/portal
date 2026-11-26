@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { storeLocationFields, storeLocationLabel } from '../functions/lib/store-location.js';
 import { salesCounter } from '../functions/lib/sales-counter.js';
 import { rolesForEdition, withRequiredRoleModules, explicitModulesForUser } from '../functions/lib/role-module-access.js';
 import { sectionAccessFor } from '../functions/lib/staff-auth.js';
@@ -46,4 +47,38 @@ test('ordinary counter sale uses server pricing and strips management or payment
   const payload={RequestId:crypto.randomUUID(),Method:'Cash',Items:[{InventoryDocumentId:'wire',Quantity:1}],CheckoutSource:'Public Store',PaymentStatus:'Paid'};
   assert.match((await f.act('sell',payload)).sale.SaleNo,/^POS-/);
   await assert.rejects(f.act('sell',{...payload,Method:'Credit'}));
+});
+
+test('optional locations can be entered, moved, independently cleared or omitted by an older client', () => {
+  const item = { ...storeLocationFields({ StoreArea: ' Cable aisle ', ShelfBin: ' Rack 3 ' }) };
+  assert.equal(storeLocationLabel(item), 'Cable aisle / Rack 3');
+  Object.assign(item, storeLocationFields({ Price: 75 }));
+  assert.equal(storeLocationLabel(item), 'Cable aisle / Rack 3');
+  Object.assign(item, storeLocationFields({ StoreArea: '', ShelfBin: 'Shelf 4' }));
+  assert.equal(storeLocationLabel(item), 'Shelf 4');
+  assert.equal(storeLocationLabel({}), '');
+  assert.throws(() => storeLocationFields({ StoreArea: 'x'.repeat(81) }), { status: 400 });
+});
+
+test('QR lookup shows current branch locations even after sell-out and never copies them onto the sale', async () => {
+  const references = ['wire', 'wire', 'retired', 'elsewhere', 'other-edition'];
+  const order = { ...paid, Items: references.map(id => ({ ItemName: 'Wire', InventoryDocumentId: id })) };
+  const original = structuredClone(order);
+  const f = fixture(order);
+  let reads = 0;
+  f.io.getDocuments = async (_, path, ids) => {
+    reads++;
+    assert.equal(path, 'storeItems');
+    assert.deepEqual(ids, [...new Set(references)]);
+    return [ { __id: 'wire', BranchId: 'main', StoreType: 'Organisation Store', ShelfBin: 'B4', Quantity: 0 }, null,
+      { __id: 'elsewhere', BranchId: 'west', StoreType: 'Organisation Store', ShelfBin: 'Hidden' },
+      { __id: 'other-edition', BranchId: 'main', StoreType: 'Organisation Store', OrganisationEdition: 'faith', ShelfBin: 'Hidden' }];
+  };
+  const result = await f.act('lookup');
+  assert.deepEqual(result.sale.Items.map(line => line.StoreLocation), ['B4', 'B4', '', '', '']);
+  assert.deepEqual(order, original);
+  assert.equal(f.writes.length, 0);
+  await f.act('issue');
+  await f.act('lookup');
+  assert.equal(reads, 1);
 });

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
+import { storeLocationFields } from '../functions/lib/store-location.js';
 import { tradeItemSetup } from '../functions/lib/trade-counter.js';
 import * as guards from '../functions/lib/procurement-inventory-guard.js';
 import { handleProductImport } from '../functions/lib/vendor-product-import.js';
@@ -33,7 +34,7 @@ function fixture() {
   api.batchUpsertDocuments = api.batchCommitDocuments;
   api.upsertDocument = (env, collectionPath, documentId, data) => api.batchCommitDocuments(env, [{ collectionPath, documentId, data }]);
   async function load(file, extra = {}, slice = null) {
-    const context = { ...api, ...guards, tradeItemSetup, crypto: globalThis.crypto, Response, URL, TextEncoder, console,
+    const context = { ...api, ...guards, tradeItemSetup, storeLocationFields, crypto: globalThis.crypto, Response, URL, TextEncoder, console,
       loadProcurementInventoryControl: (env, scope) => guards.loadProcurementInventoryControl(env, scope, api.getDocument),
       schoolSectionFor: row => clean(row.SchoolSection || 'Secondary').toLowerCase(), clean,
       ...extra
@@ -250,6 +251,15 @@ for (const [edition, section, storeType] of [['school', 'bookstore', 'Bookstore'
     assert.equal((await call({ Quantity: 10, ItemCode: 'DIFFERENT' })).status, 409);
     assert.equal((await call({ Quantity: 10 })).status, 200);
     assert.equal(f.read('storeItems', 'scoped').Quantity, 10);
+    if (edition === 'organization') {
+      assert.equal((await call({ StoreArea: 'Warehouse A', ShelfBin: 'B4' })).status, 200);
+      assert.equal((await call({ Price: 125 })).status, 200);
+      assert.equal(f.read('storeItems', 'scoped').ShelfBin, 'B4');
+      assert.equal((await call({ ShelfBin: '' })).status, 200);
+      assert.equal(f.read('storeItems', 'scoped').StoreArea, 'Warehouse A');
+      assert.equal(f.read('storeItems', 'scoped').ShelfBin, '');
+      assert.equal(f.read('storeItems', 'scoped').Quantity, 10);
+    }
     assert.equal(f.read('storeItems', 'scoped').ProcurementItemId, 'CENTRAL-1');
     assert.equal((await f.api.listCollection({}, 'storeItems')).length, 1);
     f.docs.set('storeItems/scoped', { ...f.read('storeItems', 'scoped'), Quantity: 0.5 });

@@ -1,8 +1,9 @@
-import { getDocument, queryCollection, batchCommitDocuments } from './firestore.js';
+import { storeLocationLabel } from './store-location.js';
+import { getDocument, getDocuments, queryCollection, batchCommitDocuments } from './firestore.js';
 import { salesCounterCatalogue, recordManualOrganizationCommerceSale } from './organization-commerce.js';
 import { tradeCounter } from './trade-counter.js';
 
-const db={getDocument,queryCollection,batchCommitDocuments,salesCounterCatalogue,recordManualOrganizationCommerceSale,tradeCounter};
+const db={getDocument,getDocuments,queryCollection,batchCommitDocuments,salesCounterCatalogue,recordManualOrganizationCommerceSale,tradeCounter};
 function fail(message,status=400) {throw Object.assign(new Error(message),{status});}
 const text=value=>String(value??'').trim();
 function receipt(row) {
@@ -39,7 +40,20 @@ export async function salesCounter(env,user,body,io=db) {
   if(action!=='sell') {
     if(section!=='organizationStore') fail('Choose the retail counter for a QR purchase.',403);
     const row=await findPurchase(env,branch,text(body.Reference),io);
-    if(action==='lookup' || row.IssuedAt) return {sale:receipt(row),alreadyIssued:!!row.IssuedAt};
+    if (action === 'lookup' || row.IssuedAt) {
+      const sale = receipt(row);
+      if (!row.IssuedAt) {
+        const ids = [...new Set((row.Items || []).map(line => line.InventoryDocumentId).filter(Boolean))];
+        if (ids.length) {
+          const items = await io.getDocuments(env, 'storeItems', ids);
+          const locations = new Map(items.filter(item => item && (item.BranchId || 'main') === branch &&
+            item.StoreType === 'Organisation Store' && !(item.OrganisationEdition && item.OrganisationEdition !== user.edition))
+            .map(item => [item.__id, storeLocationLabel(item)]));
+          sale.Items.forEach((line, index) => { line.StoreLocation = locations.get(row.Items[index].InventoryDocumentId) || ''; });
+        }
+      }
+      return { sale, alreadyIssued: !!row.IssuedAt };
+    }
     if(body.SaleNo!==row.SaleNo || !row.__updateTime) fail('Look up this receipt again before issuing items.',409);
     const issue={IssuedAt:new Date().toISOString(),IssuedBy:user.username};
     await io.batchCommitDocuments(env,[{collectionPath:'organizationCommerceSales',documentId:row.__id,literalDocumentId:true,

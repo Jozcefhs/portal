@@ -1,3 +1,4 @@
+import { storeLocationLabel } from './store-location.js';
 import { listBranchCollection } from './branch-reads.js';
 import { loadWorkspaceHistoryPage } from './workspace-history.js';
 import {
@@ -294,7 +295,7 @@ async function scopedInventory(env, section, user, { storeCatalogue = false, req
 export async function salesCounterCatalogue(env, section, user) {
   const rows = await scopedInventory(env,section,user,{storeCatalogue:true});
   return rows.filter(item=>item.Active !== false && lower(item.Active)!=='no' && Number(item.Quantity)>0 && Number(item.Price ?? item.SalePrice)>0)
-    .map(item=>({InventoryDocumentId:item.__id,ItemName:item.ItemName,Price:Number(item.Price ?? item.SalePrice),Unit:item.Unit || 'piece',TradeMode:item.TradeMode || 'standard',CoilMetres:item.CoilMetres || 0}));
+    .map(item=>({InventoryDocumentId:item.__id,ItemName:item.ItemName,StoreLocation:section === 'organizationStore' ? storeLocationLabel(item) : '',Price:Number(item.Price ?? item.SalePrice),Unit:item.Unit || 'piece',TradeMode:item.TradeMode || 'standard',CoilMetres:item.CoilMetres || 0}));
 }
 
 function findInventoryItem(rows, section, reference) {

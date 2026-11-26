@@ -5059,9 +5059,9 @@ function renderOrganizationCommerceWorkspace(section, data = {}) {
               const reference = commerceItemReference(section, item);
               const inCart = cart.has(reference);
               const searchText = [item.ItemName, item.ItemCode, item.Barcode, item.SKU, reference,
-                item.Category, item.Size, item.Unit].map(clean).join(' ').toLowerCase();
+                item.Category, item.Size, item.Unit, item.StoreArea, item.ShelfBin].map(clean).join(' ').toLowerCase();
               return `<article class="commerce-product" data-commerce-search-text="${escapeHtml(searchText)}">
-                <div><strong>${escapeHtml(item.ItemName || reference)}</strong><span class="commerce-owner">${escapeHtml(clean(item.VendorId) ? `Vendor: ${item.VendorName || 'Independent vendor'}` : `${organisationLabel} owned`)}</span><span>${escapeHtml([item.Category, item.Size || item.Unit].filter(Boolean).join(' · '))}</span><small>${money(commerceItemPrice(item))} &middot; ${commerceItemStock(item)} available</small></div>
+                <div><strong>${escapeHtml(item.ItemName || reference)}</strong><span class="commerce-owner">${escapeHtml(clean(item.VendorId) ? `Vendor: ${item.VendorName || 'Independent vendor'}` : `${organisationLabel} owned`)}</span><span>${escapeHtml([item.Category, item.Size || item.Unit, item.StoreArea, item.ShelfBin].filter(Boolean).join(' · '))}</span><small>${money(commerceItemPrice(item))} &middot; ${commerceItemStock(item)} available</small></div>
                 <div class="commerce-product-action">
                   <select data-commerce-product-quantity="${index}" aria-label="Quantity for ${escapeHtml(item.ItemName || reference)}">${commerceQuantityOptions(commerceItemStock(item), 1)}</select>
                   <button type="button" class="compact-icon-action commerce-add-button ${inCart ? 'is-added' : ''}" data-commerce-add="${escapeHtml(reference)}" data-commerce-quantity-index="${index}" aria-label="${inCart ? 'Added to cart' : `Add ${escapeHtml(item.ItemName || reference)} to cart`}" title="${inCart ? 'Added to cart' : 'Add to cart'}">${inCart ? '&#10003;' : '&#128722;'}</button>
@@ -5403,6 +5403,7 @@ function renderStaffStore(section, store) {
       <label>Item code<input name="ItemCode" required></label><label>Item name<input name="ItemName" required></label>
       <label>Category<input name="Category" list="storeCategoryOptions" autocomplete="off" required><datalist id="storeCategoryOptions">${activeCategories.map((row) => `<option value="${escapeHtml(row.Name)}"></option>`).join('')}</datalist></label><label>Variant / size<input name="Size"></label>
       ${organisationStore ? '' : '<label>Gender<select name="Gender"><option>All</option><option>Male</option><option>Female</option></select></label><label>Class<input name="ClassName" value="All"></label>'}
+      ${tradeEnabled ? '<label>Store area (optional)<input name="StoreArea" maxlength="80" placeholder="e.g. Cable aisle"></label><label>Shelf or bin (optional)<input name="ShelfBin" maxlength="80" placeholder="e.g. Rack B, shelf 3"></label>' : ''}
       ${tradeEnabled ? '<label>Stock mode<select name="TradeMode"><option value="standard">Pieces</option><option value="cable">Cable · stock and price per metre</option><option value="serial">Pieces with serial warranty</option></select></label><label>Metres per coil (cable)<input name="CoilMetres" type="number" step="any" min="0" value="100"></label><label>Warranty days (serial items)<input name="WarrantyDays" type="number" min="1" value="365"></label>' : ''}
       <label>Price<input name="Price" type="number" min="0" step="0.01" data-finance-input required></label><label>Stock quantity<input name="Quantity" type="number" min="0" step="${tradeEnabled ? 'any' : '1'}" required></label>
       <div class="config-actionbar"><label class="check-row"><input name="Active" type="checkbox" checked> ${organisationStore ? 'Available for sale' : 'Available to parents'}</label><p class="status" data-store-status></p><span class="inline-action-group"><button type="button" data-cancel-store-edit hidden>Cancel edit</button><button type="submit">Save item</button></span></div>
@@ -5417,6 +5418,7 @@ function renderStaffStore(section, store) {
     </details>
     ${table(`${label} Items`, store.items || [], [
       { label: 'Code', value: (row) => pick(row, ['ItemCode', '__id']) }, { label: 'Item', value: (row) => pick(row, ['ItemName']) },
+      ...(tradeEnabled ? [{ label: 'Location', value: row => [row.StoreArea, row.ShelfBin].filter(Boolean).join(' / ') }] : []),
       { label: 'Category / Size', value: (row) => [pick(row, ['Category']), pick(row, ['Size'])].filter(Boolean).join(' / ') },
       { label: 'Price', value: (row) => money(pick(row, ['Price'])) }, { label: 'Stock', value: (row) => pick(row, ['Quantity']) },
       { label: 'Actions', render: (row) => `<button type="button" class="compact-icon-action compact-edit-action" data-edit-store-item="${escapeHtml(row.__id)}" aria-label="Edit ${escapeHtml(row.ItemName || row.ItemCode || 'store item')}" title="Edit item"><span aria-hidden="true">&#9998;</span></button>` }
@@ -5511,6 +5513,8 @@ function renderStaffStore(section, store) {
     setFinancialInputValue(itemForm.elements.Price, commerceNumber(row.Price));
     itemForm.elements.Quantity.value = tradeEnabled ? Number(row.Quantity || 0) : commerceItemStock(row);
     if (tradeEnabled) {
+      itemForm.elements.StoreArea.value = clean(row.StoreArea);
+      itemForm.elements.ShelfBin.value = clean(row.ShelfBin);
       itemForm.elements.TradeMode.value = row.TradeMode || 'standard';
       itemForm.elements.CoilMetres.value = row.CoilMetres || 100;
       itemForm.elements.WarrantyDays.value = row.WarrantyDays || 365;

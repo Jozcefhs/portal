@@ -9,7 +9,10 @@ import {
   studentLoginCredentialId,
   verifyStudentPasswordHash
 } from '../functions/lib/student-login-credentials.js';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 const portalRoot = new URL('../', import.meta.url);
+const desktopRoot = process.env.DYNAMAX_DESKTOP_ROOT || fileURLToPath(new URL('../../suite/', import.meta.url));
 
 test('student passwords use scoped PBKDF2 verifiers and never share the parent credential collection', async () => {
   const credential = await hashStudentPassword('StudentPass1!');
@@ -40,12 +43,12 @@ test('desktop CBT pulls encrypted online logins into the reusable local registry
   let sources;
   try {
     sources = await Promise.all([
-      readFile(new URL('../suite/modules/local_cbt.py', portalRoot), 'utf8'),
-      readFile(new URL('../suite/modules/academic_management.py', portalRoot), 'utf8'),
-      readFile(new URL('../suite/modules/students.py', portalRoot), 'utf8')
+      readFile(resolve(desktopRoot, 'modules/local_cbt.py'), 'utf8'),
+      readFile(resolve(desktopRoot, 'modules/academic_management.py'), 'utf8'),
+      readFile(resolve(desktopRoot, 'modules/students.py'), 'utf8')
     ]);
   } catch (error) {
-    if (error?.code === 'ENOENT') {
+    if (!process.env.DYNAMAX_DESKTOP_ROOT && error?.code === 'ENOENT') {
       context.skip('Desktop companion repository is not present in this checkout.');
       return;
     }

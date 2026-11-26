@@ -19,6 +19,7 @@ import {
   normalizeCommercePaymentMethod,
   recordManualOrganizationCommerceSale
 } from '../lib/organization-commerce.js';
+import { storeLocationFields } from '../lib/store-location.js';
 import { tradeCounter, tradeItemSetup } from '../lib/trade-counter.js';
 import QRCode from 'qrcode';
 import { assertProcurementInventoryEdit, loadProcurementInventoryControl } from '../lib/procurement-inventory-guard.js';
@@ -149,7 +150,7 @@ export async function onRequestPost(context) {
         UpdatedAt: new Date().toISOString(), UpdatedBy: user.displayName || user.username
       };
       if (section === 'organizationStore' && user.edition === 'organization') {
-        Object.assign(payload,tradeItemSetup(body,existing));
+        Object.assign(payload, tradeItemSetup(body, existing), storeLocationFields(body));
         if (existing?.TradeMode && existing.TradeMode !== 'standard' && lower(itemCode) !== lower(existing.ItemCode))
           throw Object.assign(new Error('Keep the item code linked to existing trade documents.'),{status:409});
       }

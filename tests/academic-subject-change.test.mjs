@@ -960,7 +960,7 @@ test('web review queue escapes stored text, respects reviewer roles and stays in
   assert.match(adminSource, /nodes: nodes\(form\('\[data-academic-arm-subject-register\]'\), form\('\[data-academic-arm-subject-info\]'\), form\('\[data-academic-subject-change-requests\]'\)\)/);
 });
 
-async function workflowUiHarness({ missingRole, action = 'bulkAssignAcademicArmStudentSubjects', response = {}, requestError, fullAcademicAccess = false, pending = false } = {}) {
+async function workflowUiHarness({ requireTrade = true, missingRole, action = 'bulkAssignAcademicArmStudentSubjects', response = {}, requestError, fullAcademicAccess = false, pending = false } = {}) {
   const adminSource = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
   const alerts = [], statuses = [], requests = [];
   let submit, focuses = 0, scrolls = 0;
@@ -980,7 +980,7 @@ async function workflowUiHarness({ missingRole, action = 'bulkAssignAcademicArmS
   const context = vm.createContext({
     document, window: { DynamaxDialogs: { alert: async options => { alerts.push(options); document.activeElement = {}; } } },
     panelEl: { querySelectorAll: () => [form] },
-    academicManagementData: { permissions: { fullAcademicAccess }, studentMemberships: [{ ...membership, ...(pending ? { PendingSubjectChange: { RequestId: 'pending' } } : {}) }] },
+    academicManagementData: { curriculumSettings: { RequireTradeSubject: requireTrade }, permissions: { fullAcademicAccess }, studentMemberships: [{ ...membership, ...(pending ? { PendingSubjectChange: { RequestId: 'pending' } } : {}) }] },
     academicFind: rows => rows[0], academicStudentSubjectProfile: () => ({ unavailableSubjectIds: [] }),
     runButtonAction: async (_button, _text, task) => task(),
     setStatus: (_node, message, tone) => statuses.push({ message, tone }),
@@ -1046,6 +1046,14 @@ test('missing Core or Trade selections show a popup, retain the inline error and
     assert.equal(h.focuses(), 2);
     assert.equal(h.scrolls(), 1);
   }
+});
+
+test('optional Trade accepts a student with no Trade subject', async () => {
+  const h = await workflowUiHarness({ missingRole: 'Trade', requireTrade: false });
+  await h.submit();
+  assert.equal(h.alerts.length, 0);
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.requests[0].payload.Assignments[0].TradeSubjectIds.length, 0);
 });
 
 test('subject submission shows server errors and pending approval notices without changing unrelated workflows', async () => {

@@ -10,11 +10,11 @@ const [adminApiSource, adminSource] = await Promise.all([
 test('Students workspace returns the complete selected branch and section register', () => {
   assert.match(
     adminApiSource,
-    /students: publicRows\(sortRecent\(visibleStudents,[\s\S]{0,100}visibleStudents\.length\)/
+    /students: publicRows\(sortRecent\(registerStudents,[\s\S]{0,100}visibleStudents\.length\)/
   );
   assert.doesNotMatch(
     adminApiSource,
-    /students: publicRows\(sortRecent\(visibleStudents,[\s\S]{0,100},\s*80\)/
+    /students: publicRows\(sortRecent\(registerStudents,[\s\S]{0,100},\s*80\)/
   );
 });
 

@@ -256,7 +256,7 @@ test('academic tutorial retry requires a new click before opening and never bloc
     applyProfile: () => { profileApplied = true; }, loadAcademicPolicy: async () => {},
     preloadAcademicPolicyTutorial: () => { preloaded = true; return new Promise(() => {}); }, setStatus: () => {}
   });
-  vm.runInContext(between(setupSource, 'async function loadProfile(', "setupLoginForm.addEventListener('submit'"), settings);
+  vm.runInContext(between(setupSource, 'async function loadProfile(', "const staffSessionButton ="), settings);
   const loaded = await settings.loadProfile('password');
   assert.equal(loaded.SchoolName, 'Example');
   assert.equal(profileApplied, true);

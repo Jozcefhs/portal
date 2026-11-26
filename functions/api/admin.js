@@ -346,10 +346,11 @@ export async function onRequestPost(context) {
     const lowRestaurant = visibleRestaurantInventory.filter((row) => toNumber(row.ReorderLevel) > 0 && toNumber(row.Quantity) <= toNumber(row.ReorderLevel));
     const lowTuckShop = visibleTuckShopInventory.filter((row) => toNumber(row.ReorderLevel) > 0 && toNumber(row.Quantity) <= toNumber(row.ReorderLevel));
 
+    const registerStudents = user.edition === 'school' && !schoolInsights && shouldLoad('students')
+      ? await studentRegisterCatalogueLabels(env, visibleStudents) : visibleStudents;
     const allDepartments = {
       admissions: publicRows(sortRecent(visibleApplications, ['SubmittedAt', 'UpdatedAt', 'Timestamp']), 80),
-      students: publicRows(sortRecent(user.edition === 'school' && shouldLoad('students')
-        ? await studentRegisterCatalogueLabels(env, visibleStudents) : visibleStudents,
+      students: publicRows(sortRecent(registerStudents,
         ['UpdatedAt', 'EnrolledAt', 'CreatedAt']), visibleStudents.length),
       formPurchases: publicRows(sortRecent(visibleFormSales, ['PaymentDate', 'UpdatedAt', 'CreatedAt']), 80),
       accounts: {

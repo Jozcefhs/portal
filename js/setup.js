@@ -1237,6 +1237,8 @@ const passwordUnlockButton = setupLoginForm.querySelector('button[type="submit"]
 async function unlockSettings(password, { automatic = false } = {}) {
   if (unlockingSettings || settingsUnlocked) return;
   if (requireSetupPassword && !password) return;
+  const button = password ? passwordUnlockButton : staffSessionButton;
+  if (!automatic && !window.DynamaxActionFeedback.begin(button, 'Unlocking settings...')) return;
   unlockingSettings = true;
   staffSessionButton.disabled = passwordUnlockButton.disabled = true;
   try {
@@ -1256,6 +1258,7 @@ async function unlockSettings(password, { automatic = false } = {}) {
     unlockedPassword = '';
     if (!automatic) setLoginStatus(password ? error.message : 'Sign in as a Super Administrator in the staff portal, then continue here.', 'bad');
   } finally {
+    if (!automatic) window.DynamaxActionFeedback.end(button);
     unlockingSettings = false;
     staffSessionButton.disabled = passwordUnlockButton.disabled = false;
   }

@@ -10,7 +10,7 @@ test('pending online gifts expose a printable secure payment QR action', () => {
   assert.match(adminJs, /status === 'pending' && clean\(pick\(row, \['PaymentLink'\]\)\)/);
   assert.match(adminJs, /data-donation-qr=/);
   assert.match(adminJs, /churchDonationRequest\('paymentqr'/);
-  assert.match(adminJs, /function showChurchGivingQr\(data = \{\}\)/);
+  assert.match(adminJs, /const qrWindow = viewer \|\| window\.open\(/);
   assert.match(adminJs, /Scan this code with a phone camera/);
 });
 

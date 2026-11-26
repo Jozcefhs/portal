@@ -57,7 +57,7 @@ function fixture() {
     loadAcademicResultsReadiness:async(_env,_state,scope)=>({Scope:scope,Blockers:[],Warnings:[],Counts:{Students:0}}),
     getSchoolStructure: async () => ({ ActiveBranchId: 'main', Branches: [{ Id: 'main' }], Sections: ['primary', 'secondary'] }),
     enforceActorBranch: (_actor, branch) => branch,
-    queryCollection: read, queryCollectionPages: read, listBranchCollection: read, listSchoolCollection: read,
+    listCollection: read, queryCollection: read, queryCollectionPages: read, listBranchCollection: read, listSchoolCollection: read,
     getDocument: async (_env, collection, id) => { if (collection === 'settings' && id === 'academic-curriculum-main') return null; throw new Error('Opening the register must not load assessment policy'); },
     batchCommitDocuments: async (_env, changes) => { writes.push(changes); }
   });

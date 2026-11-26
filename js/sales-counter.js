@@ -18,13 +18,14 @@ export async function mountSalesCounter(host,section,request,escape,money,print)
     fields.serials.value='';
     host.querySelector('[data-serial-label]').hidden=item?.TradeMode!=='serial';
   };
+  const locationText = item => item.StoreLocation ? ' · ' + escape(item.StoreLocation) : '';
   const loadStock=async()=>{
     stock=(await request({action:'catalogue'})).items;
-    fields.item.innerHTML='<option value="">Choose item</option>'+stock.map(i=>'<option value="'+escape(i.InventoryDocumentId)+'">'+escape(i.ItemName)+' · '+money(i.Price)+(i.TradeMode==='cable'?' / metre':'')+'</option>').join('');
+    fields.item.innerHTML='<option value="">Choose item</option>'+stock.map(i=>'<option value="'+escape(i.InventoryDocumentId)+'">'+escape(i.ItemName)+' · '+money(i.Price)+(i.TradeMode==='cable'?' / metre':'')+locationText(i)+'</option>').join('');
     updateUnits();
   };
   const drawCart=()=>{host.querySelector('[data-cart]').innerHTML=cart.map((l,i)=>'<li>'+escape(l.ItemName)+' × '+escape(l.Quantity)+' '+escape(l.Unit)+' <button type="button" data-remove="'+i+'">Remove</button></li>').join('');};
-  const info=s=>'<p>'+escape(s.CustomerName)+' · '+escape(s.SaleNo)+' · '+money(s.Amount)+'</p><ul>'+s.Items.map(i=>'<li>'+escape(i.ItemName)+' × '+escape(i.SaleQuantity ?? i.Quantity)+' '+escape(i.SaleUnit || i.Unit || '')+'</li>').join('')+'</ul>';
+  const info=s=>'<p>'+escape(s.CustomerName)+' · '+escape(s.SaleNo)+' · '+money(s.Amount)+'</p><ul>'+s.Items.map(i=>'<li>'+escape(i.ItemName)+' × '+escape(i.SaleQuantity ?? i.Quantity)+' '+escape(i.SaleUnit || i.Unit || '')+locationText(i)+'</li>').join('')+'</ul>';
   const showPurchase=()=>{host.querySelector('[data-order]').innerHTML=info(purchase)+(purchase.IssuedAt?'<p>Already issued by '+escape(purchase.IssuedBy)+' · '+escape(purchase.IssuedAt)+'</p>':'<button type="button" data-issue>Confirm items handed over</button>');};
   async function run(task) {
     if(host.dataset.busy) return;
