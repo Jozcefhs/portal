@@ -87,6 +87,7 @@ import {
 import {
   ACADEMIC_TERM_RESULT_STATUSES,
   academicTermResultTransition,
+  academicResultMembership,
   calculateAcademicMidTermResultDrafts,
   calculateAcademicTermResultDrafts
 } from './academic-term-results.js';
@@ -4255,6 +4256,7 @@ export async function bulkAssignAcademicArmStudentSubjects(env, user = {}, input
     }, scope, existing);
     record.SchoolStage = schoolStage;
     applyAcademicStudentCurriculum(projected, record, { requireTradeSelection: true });
+    if (academicSubjectSelectionChanged(existing, record)) delete record.MidTermSubjectSelection;
     if (!membershipMateriallyChanged(existing, record)) {
       skipped.push(existing.StudentRef);
       continue;
@@ -4335,9 +4337,16 @@ export async function bulkAssignAcademicArmStudentSubjects(env, user = {}, input
   return response;
 }
 
-function academicSubjectChangeResultGuards(impact, evidence) {
-  if (impact.Results.some((result) => lower(result.Status) !== 'calculated draft')) throw failure('Reopen or withdraw the existing result through the controlled result workflow and return it to Calculated Draft before applying this change.', 409, 'ACADEMIC_RESULT_IMMUTABLE');
-  return evidence.termResults.filter((row) => impact.Results.some((item) => item.ResultId === row.ResultId)).map((result) => {
+function endTermSubjectApproval(input) {
+  if (!input.ApprovalScope || input.ApprovalScope === 'Whole term') return false;
+  if (input.ApprovalScope === 'End of Term only') return true;
+  throw failure('Choose a valid subject approval scope.');
+}
+
+function academicSubjectChangeResultGuards(impact, evidence, endTermOnly = false) {
+  const affected = impact.Results.filter(result => !endTermOnly || lower(result.ResultType) !== 'mid-term');
+  if (affected.some((result) => lower(result.Status) !== 'calculated draft')) throw failure(endTermOnly ? 'Return the affected End of Term result to Calculated Draft before approving this change.' : 'Reopen or withdraw the existing result through the controlled result workflow and return it to Calculated Draft before applying this change.', 409, 'ACADEMIC_RESULT_IMMUTABLE');
+  return evidence.termResults.filter((row) => affected.some((item) => item.ResultId === row.ResultId)).map((result) => {
     if (!result.__updateTime) throw failure('Reload the existing results before applying this change.', 409, 'ACADEMIC_WRITE_CONFLICT');
     return { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.termResults, documentId: result.ResultId,
       updateTime: result.__updateTime, updateMask: ['SubjectChangeRecalculationRequired'], data: { SubjectChangeRecalculationRequired: true } };
@@ -4430,6 +4439,8 @@ async function planAcademicSubjectReview(env, user, input, decision, permissions
   if (!existing || !request || request.RequestId !== clean(input.RequestId)) throw failure('This subject-change request is no longer pending. Reload the register.', 409, 'ACADEMIC_SUBJECT_CHANGE_NOT_PENDING');
   if (!clean(input.RevisionToken) || input.RevisionToken !== existing.__updateTime) throw failure('The student or their scores changed. Reload and review the latest request.', 409, 'ACADEMIC_WRITE_CONFLICT');
   const isTransfer = request.Kind === 'Classroom transfer';
+  const endTermOnly = endTermSubjectApproval(input);
+  if (endTermOnly && (isTransfer || decision !== 'Approve')) throw failure('End of Term only is available when approving subject additions or removals.');
   const changeLabel = isTransfer ? 'classroom transfer' : 'subject change';
   if (decision === 'Cancel') {
     if (!permissions.fullAcademicAccess && (actorUsername(user) !== request.RequestedByUsername || !academicCanConfigureClassStudentSubjects(user, state.teacherAllocations, existing, permissions))) {
@@ -4469,10 +4480,14 @@ async function planAcademicSubjectReview(env, user, input, decision, permissions
     if (armTransfer) {
       armTransferPlan = await academicArmTransferPlan(env, state, existing, record, evidence, scope, user);
       resultGuards.push(...armTransferPlan.writes);
-    } else resultGuards.push(...academicSubjectChangeResultGuards(impact, evidence));
+    } else {
+      resultGuards.push(...academicSubjectChangeResultGuards(impact, evidence, endTermOnly));
+      if (endTermOnly) record.MidTermSubjectSelection = subjectSelection(academicResultMembership(existing, 'Mid-Term'));
+      else delete record.MidTermSubjectSelection;
+    }
   }
   delete record.PendingSubjectChange;
-  const resolved = { ...request, Status: decision === 'Approve' ? 'Approved' : decision === 'Reject' ? 'Rejected' : 'Cancelled',
+  const resolved = { ...request, ...(decision === 'Approve' && !isTransfer ? { ApprovalScope: endTermOnly ? 'End of Term only' : 'Whole term' } : {}), Status: decision === 'Approve' ? 'Approved' : decision === 'Reject' ? 'Rejected' : 'Cancelled',
     ...(armTransfer && decision === 'Approve' ? { OriginalRequestedAfter: request.After,
       After: { ...request.After, ...subjectSelection(record), DepartmentId: record.DepartmentId }, ResetSubjectSelections: false } : {}),
     ...(permissions.fullAcademicAccess ? { ApprovalMode: 'Direct ICT web' } : {}),
@@ -4497,10 +4512,10 @@ async function planAcademicSubjectReview(env, user, input, decision, permissions
     movementWrite(user, { ...movement, Status: resolved.Status, SubjectChangeRequest: resolved,
       ...(armTransferPlan ? { ArmDataTransfer: armTransferPlan.summary } : {}) }),
     auditWrite(user, `${changeLabel.toUpperCase()} ${resolved.Status.toUpperCase()}`, 'studentmembership', record,
-      `${existing.StudentRef}: ${resolved.Status.toLowerCase()} ${changeLabel} requested by ${request.RequestedBy}. Request: ${request.Reason}. Review: ${note}. ${armTransfer && decision === 'Approve' ? 'Saved subjects, marks, results and attendance moved with the student; no student was archived.' : 'Existing marks preserved.'}`,
-      `${actorName(user)} ${resolved.Status.toLowerCase()} ${request.RequestedBy}'s ${changeLabel} request for ${existing.StudentRef}. ${decision === 'Approve' ? armTransfer ? 'The student and their saved data are now in the destination arm.' : 'The requested placement and subject choices are now active; existing drafts require recalculation.' : 'The current placement, subjects and scores were not changed.'}`)
+      `${existing.StudentRef}: ${resolved.Status.toLowerCase()} ${changeLabel} requested by ${request.RequestedBy}. Request: ${request.Reason}. Review: ${note}. ${endTermOnly ? 'Scope: End of Term only. ' : ''}${armTransfer && decision === 'Approve' ? 'Saved subjects, marks, results and attendance moved with the student; no student was archived.' : 'Existing marks preserved.'}`,
+      `${actorName(user)} ${resolved.Status.toLowerCase()} ${request.RequestedBy}'s ${changeLabel} request for ${existing.StudentRef}. ${decision === 'Approve' ? armTransfer ? 'The student and their saved data are now in the destination arm.' : endTermOnly ? 'The new subjects apply to End of Term only.' : 'The requested placement and subject choices are now active; existing drafts require recalculation.' : 'The current placement, subjects and scores were not changed.'}`)
   ], state, scope);
-  const message = `${existing.StudentRef}: ${changeLabel} ${resolved.Status.toLowerCase()}. ${decision === 'Approve' ? armTransfer ? 'Saved subjects, marks, results and attendance moved with the student. The same active membership was retained; no student was archived.' : `Old scores remain under their original classrooms and subjects. ${isTransfer ? 'Complete destination subject choices under Student subjects. ' : ''}Assess the new subjects and recalculate draft results separately.` : 'Current placement, subjects and scores are unchanged.'}`;
+  const message = `${existing.StudentRef}: ${changeLabel} ${resolved.Status.toLowerCase()}. ${decision === 'Approve' ? armTransfer ? 'Saved subjects, marks, results and attendance moved with the student. The same active membership was retained; no student was archived.' : endTermOnly ? 'The new subjects apply to End of Term only. Published Mid-Term reports remain available under the same parent access rules.' : `Old scores remain under their original classrooms and subjects. ${isTransfer ? 'Complete destination subject choices under Student subjects. ' : ''}Assess the new subjects and recalculate draft results separately.` : 'Current placement, subjects and scores are unchanged.'}`;
   return { writes, message, armTransfer };
 }
 
@@ -4508,6 +4523,7 @@ export async function batchApproveAcademicSubjectChanges(env, user = {}, input =
   requireWritableSubscription(user);
   const permissions = requireCapability(user, 'canApproveSubjectChanges');
   const scope = await academicScope(env, user, input, { requireSection: true });
+  const endTermOnly = endTermSubjectApproval(input);
   const { Items: items } = input;
   const sessionId = clean(input.SessionId), termId = clean(input.TermId), reason = clean(input.Reason);
   if (!sessionId || !termId || !Array.isArray(items) || !items.length || items.length > 20
@@ -4532,6 +4548,7 @@ export async function batchApproveAcademicSubjectChanges(env, user = {}, input =
       outcome.message = 'This membership is outside the selected period or workspace.';
     } else if (member.LastSubjectChange?.RequestId === item.RequestId && member.LastSubjectChange.Status === 'Approved') {
       outcome.Outcome = 'Already approved';
+      outcome.ApprovalScope = member.LastSubjectChange.ApprovalScope || 'Whole term';
     } else if (pending?.RequestId !== item.RequestId || member.__updateTime !== item.RevisionToken) {
       outcome.message = 'The request or student record changed. Refresh and review it again.';
     } else if (pending.Kind === 'Classroom transfer') {
@@ -4550,7 +4567,8 @@ export async function batchApproveAcademicSubjectChanges(env, user = {}, input =
     for (const { item, outcome } of ready) {
       try {
         const plan = await planAcademicSubjectReview(env, user, { MembershipId: item.MembershipId, RequestId: item.RequestId,
-          RevisionToken: item.RevisionToken, Reason: reason, SessionId: sessionId, TermId: termId }, 'Approve', permissions, scope, state, evidence);
+          RevisionToken: item.RevisionToken, Reason: reason, SessionId: sessionId, TermId: termId,
+          ApprovalScope: endTermOnly ? 'End of Term only' : 'Whole term' }, 'Approve', permissions, scope, state, evidence);
         for (const write of plan.writes) {
           if (write.collectionPath === ACADEMIC_MANAGEMENT_COLLECTIONS.termResults) {
             if (resultGuards.has(write.documentId)) continue;
@@ -4637,6 +4655,7 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
   let armTransferEvidence;
   const classroomChanged = record.ClassId !== existing.ClassId || record.ArmId !== existing.ArmId;
   if (academicSubjectSelectionChanged(existing, record) || classroomChanged) {
+    if (!armTransfer) delete record.MidTermSubjectSelection;
     const evidence = await loadAcademicSubjectChangeEvidence(env, scope, existing);
     if (armTransfer) armTransferEvidence = evidence;
     const impact = academicSubjectChangeImpact(existing, record, evidence, scope);
@@ -7245,7 +7264,7 @@ async function calculateAcademicResultsForType(env, user = {}, input = {}, resul
     const existing = findById(existingResults, draft.ResultId);
     const result = {
       ...(existing || {}), ...draft,
-      SubjectSelectionSnapshot: subjectSelection(memberships.find((row) => lower(row.StudentRef) === lower(draft.StudentRef))),
+      SubjectSelectionSnapshot: subjectSelection(academicResultMembership(memberships.find((row) => lower(row.StudentRef) === lower(draft.StudentRef)), resultType)),
       SubjectChangeRecalculationRequired: false,
       CalculationPending: false, CalculationPendingIssues: [],
       RecordId: draft.ResultId,
@@ -7480,7 +7499,7 @@ export async function changeAcademicTermResultStatus(env, user = {}, input = {})
       const membership = state.studentMemberships.find((row) => row.SessionId === result.SessionId && row.TermId === result.TermId
         && lower(row.StudentRef) === lower(result.StudentRef));
       const stale = result.CalculationPending || result.SubjectChangeRecalculationRequired || (membership && result.SubjectSelectionSnapshot
-        && (academicSubjectSelectionChanged(membership, result.SubjectSelectionSnapshot)
+        && (academicSubjectSelectionChanged(academicResultMembership(membership, result.ResultType), result.SubjectSelectionSnapshot)
           || membership.ClassId !== result.ClassId || membership.ArmId !== result.ArmId));
       const error = stale
         ? failure(result.CalculationPending ? `${result.StudentRef}'s result is pending incomplete assessments. Complete the missing tests and recalculate; other complete students may proceed.` : `${result.StudentRef}'s subjects changed after this result was calculated. Recalculate the draft before reviewing or publishing it.`, 409, 'ACADEMIC_SUBJECT_RESULT_STALE')

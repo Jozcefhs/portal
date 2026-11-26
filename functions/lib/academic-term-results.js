@@ -347,6 +347,13 @@ export function calculateAcademicTermResultDrafts(input = {}) {
   return { Ready: true, Issues: [], Results: results, Partial:pendingResults.length > 0, PendingResults:pendingResults };
 }
 
+export function academicResultMembership(membership, resultType) {
+  const saved = membership?.MidTermSubjectSelection;
+  if (!saved || lower(resultType) !== 'mid-term') return membership;
+  return { ...membership, SubjectIds: saved.SubjectIds, CoreSubjectIds: saved.CoreSubjectIds,
+    TradeSubjectIds: saved.TradeSubjectIds, OptionalSubjectIds: saved.OptionalSubjectIds };
+}
+
 export function calculateAcademicMidTermResultDrafts(input = {}) {
   const policy = normalizeAcademicPolicy(input.Policy || {});
   const selectedIds = uniqueIds(input.ComponentIds || policy.MidTerm.ComponentIds || []);
@@ -357,7 +364,8 @@ export function calculateAcademicMidTermResultDrafts(input = {}) {
   const notTaughtIds = uniqueIds(input.NotTaughtSubjectIds || []);
   const notTaught = new Set(notTaughtIds.map(lower));
   const reason = clean(input.NotTaughtReason);
-  const memberships = (input.Memberships || []).filter(activeMembership).filter(row => contextMatches(row, input));
+  const memberships = (input.Memberships || []).filter(activeMembership).filter(row => contextMatches(row, input))
+    .map(row => academicResultMembership(row, 'Mid-Term'));
   const assigned = new Set(memberships.flatMap(row => uniqueIds(row.SubjectIds).map(lower)));
   const catalogue = new Map((input.Subjects || []).flatMap(row => ['SubjectId', 'RecordId', '__id', 'Id']
     .filter(field => clean(row[field])).map(field => [lower(row[field]), row])));

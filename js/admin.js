@@ -15185,6 +15185,7 @@ function academicSubjectChangeRequests(data) {
     && (data.permissions.fullAcademicAccess || username !== clean(row.PendingSubjectChange.RequestedByUsername).toLowerCase());
   const toolbar = requests.some(canBatch) ? `<div class="academic-batch-controls">
     <label><input type="checkbox" data-subject-batch-all> Select all eligible subject requests</label>
+    <label><input type="checkbox" data-subject-batch-end-term> Apply to End of Term only</label>
     <button type="button" data-subject-batch-approve disabled>Approve selected (0)</button></div>
     <p data-subject-batch-status role="status"></p>` : '';
   return `<section class="academic-management-editor academic-management-editor-wide" data-academic-subject-change-requests><h3>Subject changes awaiting approval (${requests.length})</h3><p>Current subjects stay in place until approval. Scores are retained under their original subjects and are never copied to another subject. ${data.permissions?.fullAcademicAccess ? 'ICT can apply or cancel these requests directly in the web companion, including their own requests.' : 'Another authorised academic administrator must review the request.'}</p>${toolbar}${requests.map((membership) => {
@@ -15198,7 +15199,7 @@ function academicSubjectChangeRequests(data) {
       ? `<button type="button" class="secondary" data-academic-subject-results="${escapeHtml(academicRecordId(membership))}" data-academic-subject-request="${escapeHtml(request.RequestId)}">Open affected results</button>` : '';
     const form = canReview || own ? `<form class="academic-management-editor" data-academic-workflow="reviewAcademicSubjectChange">
       <input type="hidden" name="SchoolSection" value="${escapeHtml(membership.SchoolSection)}"><input type="hidden" name="MembershipId" value="${escapeHtml(academicRecordId(membership))}"><input type="hidden" name="RequestId" value="${escapeHtml(request.RequestId)}"><input type="hidden" name="RevisionToken" value="${escapeHtml(membership.RevisionToken || '')}">
-      <label>Decision<select name="Decision" required><option value="">Choose a decision</option>${canReview ? '<option value="Approve">Approve request</option><option value="Reject">Reject request</option>' : ''}${own || data.permissions?.fullAcademicAccess ? '<option value="Cancel">Cancel request</option>' : ''}</select></label>
+      <label>Decision<select name="Decision" required><option value="">Choose a decision</option>${canReview ? '<option value="Approve">Approve request</option>' + (destination ? '' : '<option value="ApproveEndTerm">Apply to End of Term only</option>') + '<option value="Reject">Reject request</option>' : ''}${own || data.permissions?.fullAcademicAccess ? '<option value="Cancel">Cancel request</option>' : ''}</select></label>
       <label>Review reason<textarea name="Reason" minlength="5" maxlength="1000" required placeholder="Explain the approval, rejection or cancellation"></textarea></label><button type="submit">Record decision</button>
     </form>` : '<p class="muted">Awaiting an authorised academic administrator’s review.</p>';
     return `<article class="academic-arm-student-subject-card" data-academic-subject-request-card="${escapeHtml(request.RequestId)}"><header><strong>${escapeHtml(academicLabel(data.students || [], membership.StudentRef, membership.StudentRef))}</strong><small>${escapeHtml(membership.StudentRef)}</small></header>
@@ -15206,7 +15207,7 @@ function academicSubjectChangeRequests(data) {
       ${destination}<p><strong>Current subjects:</strong> ${escapeHtml(names(request.Before?.SubjectIds))}</p><p><strong>Requested subjects:</strong> ${escapeHtml(names(request.After?.SubjectIds))}</p>
       <p><strong>Recorded scores affected:</strong> ${escapeHtml(names(request.Impact?.RecordedSubjectIds))} (${Number(request.Impact?.ScoreRecordCount || 0)} score records; preserved).</p>
       <p><strong>Requested by:</strong> ${escapeHtml(request.RequestedBy)} · ${escapeHtml(request.RequestedAt)}</p><p><strong>Reason:</strong> ${escapeHtml(request.Reason)}</p>
-      ${affectedResults ? `<div class="academic-arm-subject-warning"><strong>Affected results for ${escapeHtml(academicLabel(data.students || [], membership.StudentRef, membership.StudentRef))}</strong><ul>${affectedResults}</ul><p>Statuses shown when this request was made. Open the results to check their current status. Reopen Reviewed or Approved results as Calculated Draft. Published or Locked results must first be withdrawn, then reopened. Recalculate after approving the subject change and completing assessments.</p>${resultLink}</div>` : ''}${form}</article>`;
+      ${affectedResults ? `<div class="academic-arm-subject-warning"><strong>Affected results for ${escapeHtml(academicLabel(data.students || [], membership.StudentRef, membership.StudentRef))}</strong><ul>${affectedResults}</ul><p>Statuses shown when this request was made. ${destination ? '' : 'Choose Apply to End of Term only to keep the Mid-Term report and its parent access. Only the End of Term status matters for that option. '}For each result you are changing, reopen Reviewed or Approved results as Calculated Draft. Published or Locked results must first be withdrawn, then reopened. Recalculate after approving the subject change and completing assessments.</p>${resultLink}</div>` : ''}${form}</article>`;
   }).join('')}</section>`;
 }
 
@@ -18390,6 +18391,10 @@ function academicWorkflowPayload(form) {
       FormTeacherRevisionToken: clean(teacher.RevisionToken)
     }));
   }
+  if (form.dataset.academicWorkflow === 'reviewAcademicSubjectChange' && payload.Decision === 'ApproveEndTerm') {
+    payload.Decision = 'Approve';
+    payload.ApprovalScope = 'End of Term only';
+  }
   if (form.dataset.academicWorkflow === 'configureAcademicSeniorChoiceSubjects') {
     const tradeSubjects = new Set(payload.TradeSubjectIds || []);
     if ((payload.OptionalSubjectIds || []).some((subjectId) => tradeSubjects.has(subjectId))) {
@@ -19014,6 +19019,7 @@ function bindAcademicSubjectBatch(root) {
   const all = root.querySelector('[data-subject-batch-all]');
   const boxes = [...root.querySelectorAll('[data-subject-batch-item]')];
   const status = root.querySelector('[data-subject-batch-status]');
+  const endTerm = root.querySelector('[data-subject-batch-end-term]');
   let busy = false;
   function sync() {
     const count = boxes.filter(box => box.checked).length;
@@ -19022,6 +19028,7 @@ function bindAcademicSubjectBatch(root) {
     all.checked = count === boxes.length;
     all.indeterminate = count > 0 && count < boxes.length;
     all.disabled = busy;
+    endTerm.disabled = busy;
     for (const box of boxes) box.disabled = busy;
   }
   all.onchange = () => { for (const box of boxes) box.checked = all.checked; sync(); };
@@ -19035,13 +19042,14 @@ function bindAcademicSubjectBatch(root) {
     const current = () => root.isConnected && activeSection === 'academics' && selectedBranchId === branch
       && currentUser?.username === user && academicManagementView === view && scope.SchoolSection === academicManagementFilters.section
       && scope.SessionId === academicManagementFilters.sessionId && scope.TermId === academicManagementFilters.termId;
+    const approvalScope = endTerm.checked ? 'End of Term only' : 'Whole term';
     const selection = academicManagementData?.workspaceRecordSelection;
     let approved = 0, already = 0, confirmed = 0, attempted = false;
     const issues = [];
     busy = true; sync();
     try {
       const reason = clean(await window.DynamaxDialogs.prompt({title:'Approve selected subject requests',
-        message:`Apply these ${chosen.length} subject changes? Your reason will be saved on each approved request.`,
+        message:`Apply these ${chosen.length} subject changes? Scope: ${approvalScope}. Your reason will be saved on each approved request.`,
         items:chosen.map(row => row.pupil), detailsLabel:'Selected pupils', label:'Approval reason (at least 5 characters)',
         required:true, maxLength:1000, confirmText:'Approve selected requests'}));
       if (!reason || !current()) return;
@@ -19051,7 +19059,7 @@ function bindAcademicSubjectBatch(root) {
         const chunk = chosen.slice(offset, offset + 20);
         status.textContent = `Reviewing requests ${offset + 1}–${offset + chunk.length} of ${chosen.length}…`;
         attempted = true;
-        const response = await academicManagementRequest('batchApproveAcademicSubjectChanges', {...scope, Reason:reason,
+        const response = await academicManagementRequest('batchApproveAcademicSubjectChanges', {...scope, ApprovalScope:approvalScope, Reason:reason,
           Items:chunk.map(row => ({MembershipId:row.membership, RequestId:row.subjectBatchItem, RevisionToken:row.revision}))});
         const outcomes = new Map((response.subjectReviewOutcomes || []).map(row => [row.RequestId,row]));
         if (outcomes.size !== chunk.length || chunk.some(row => !['Approved','Already approved','Pending'].includes(outcomes.get(row.subjectBatchItem)?.Outcome))) {
@@ -19060,7 +19068,10 @@ function bindAcademicSubjectBatch(root) {
         for (const row of chunk) {
           const outcome = outcomes.get(row.subjectBatchItem);
           if (outcome.Outcome === 'Approved') approved++;
-          else if (outcome.Outcome === 'Already approved') already++;
+          else if (outcome.Outcome === 'Already approved') {
+            already++;
+            if (outcome.ApprovalScope && outcome.ApprovalScope !== approvalScope) issues.push(`${row.pupil} was previously approved for ${outcome.ApprovalScope}.`);
+          }
           else issues.push(`${row.pupil} — ${outcome.message}`);
         }
         confirmed += chunk.length;

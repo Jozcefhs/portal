@@ -52,6 +52,23 @@ test('readiness is isolated to the chosen branch, section, class, session, term 
   assert.equal(result.Scope.ClassName,'Grade 10'); assert.equal(result.Scope.Term,'First Term');
 });
 
+test('Mid-Term calculation and readiness use the retained subjects while full-term checks the new choices',()=>{
+  const f=fixture();
+  f.save('Published');
+  const member=f.state.studentMemberships[0];
+  member.MidTermSubjectSelection={SubjectIds:['math'],CoreSubjectIds:[],TradeSubjectIds:[],OptionalSubjectIds:[]};
+  member.SubjectIds=['trade'];
+  const input={...f.scope,ArmId:'a1',Policy:f.policy,Subjects:f.state.subjects,Memberships:[member],
+    ScoreSheets:f.state.scoreSheets,StudentScores:f.state.studentScores};
+  const mid=calculateAcademicMidTermResultDrafts(input);
+  assert.equal(mid.Ready,true);
+  assert.deepEqual(mid.Results[0].Subjects.map(row=>row.SubjectId),['math']);
+  assert.deepEqual(f.report().Blockers,[]);
+  f.scope.ResultType='End of Term';
+  assert.ok(f.report().Blockers.length);
+  assert.equal(calculateAcademicTermResultDrafts({...input,ResultType:'End of Term'}).Ready,false);
+});
+
 test('archived broken memberships and stale curriculum flags are warnings, never current blockers',()=>{
   const f=fixture(); f.state.studentMemberships[0].CurriculumStatus='Pending curriculum';
   f.state.studentMemberships.push(f.row({RecordId:'archived',StudentRef:'TEST/1',Status:'Archived',ArmId:'deleted',SubjectIds:['deleted']}));

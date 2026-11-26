@@ -3,7 +3,7 @@ import {queryCollectionPages} from './firestore.js';
 import {scopedCollectionPath} from './school-scope.js';
 import {academicPolicyIssues, academicPolicyScopeChain} from './academic-policy.js';
 import {loadAcademicPolicyView} from './academic-policy-store.js';
-import {calculateAcademicMidTermResultDrafts, calculateAcademicTermResultDrafts} from './academic-term-results.js';
+import {academicResultMembership, calculateAcademicMidTermResultDrafts, calculateAcademicTermResultDrafts} from './academic-term-results.js';
 
 const clean = value => String(value ?? '').trim();
 const lower = value => clean(value).toLowerCase();
@@ -31,7 +31,7 @@ export function buildAcademicResultsReadiness(state, scope, policyView = {}, stu
   const session = (state.sessions || []).find(row => row.SessionId === scope.SessionId);
   const term = (state.terms || []).find(row => row.TermId === scope.TermId && row.SessionId === scope.SessionId);
   const memberships = (state.studentMemberships || []).filter(row => inClass(row, scope));
-  const current = memberships.filter(active);
+  const current = memberships.filter(active).map(row => academicResultMembership(row, resultType));
   const arms = new Map((state.arms || []).map(row => [row.ArmId, row]));
   const subjects = new Map((state.subjects || []).flatMap(row => ['SubjectId','RecordId','__id','Id']
     .filter(field => clean(row[field])).map(field => [lower(row[field]), row])));

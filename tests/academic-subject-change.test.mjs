@@ -6,6 +6,7 @@ import { readFile } from 'node:fs/promises';
 import { webcrypto } from 'node:crypto';
 import * as management from '../functions/lib/academic-management.js';
 import * as results from '../functions/lib/academic-term-results.js';
+import {evaluateAcademicResultAccess, publicAcademicResult} from '../functions/lib/academic-result-access.js';
 import * as studentStatus from '../functions/lib/student-academic-status.js';
 import * as armTransfer from '../functions/lib/academic-arm-transfer.js';
 import { checkClassroomRemovals } from '../functions/lib/academic-classroom-removal.js';
@@ -148,6 +149,68 @@ test('batch approval preserves scores, applies eligible subject choices once and
   const replay = await approve({Items:items.slice(0,2)});
   assert.deepEqual(Array.from(replay.subjectReviewOutcomes,row=>row.Outcome),['Already approved','Already approved']);
   assert.equal(h.writes.length,writeCount);
+});
+
+test('individual and batch end-of-term approval preserve published Mid-Term reports and parent access', async () => {
+  const approval = {ApprovalScope:'End of Term only'};
+  for (const batch of [false, true]) {
+    const mid = {...period, ...scope, StudentRef:'S1', ResultType:'Mid-Term', ResultId:'mid', Status:batch ? 'Locked' : 'Published',
+      ResultReference:'mid-reference', PublicationStatus:'Published', PublishedAt:'2026-10-12', Subjects:[{SubjectId:'music', Total:71}]};
+    const draft = {...mid, ResultId:'full', ResultType:'End of Term', Status:'Calculated Draft'};
+    const h = harness({termResults:[mid,draft]});
+    const policy = defaultAcademicPolicy();
+    policy.ResultAccess.VisibilityMode = 'current-term';
+    policy.ResultAccess.FinancialClearance.Mode = 'none';
+    const parentView = () => {
+      const result = h.state.termResults[0];
+      const access = evaluateAcademicResultAccess({result, policy, hasActivePolicy:true, currentPeriod:period});
+      assert.equal(access.Allowed, true);
+      return publicAcademicResult(result, access, policy);
+    };
+    const report = parentView();
+    await h.request();
+    const before = clone(h.member().PendingSubjectChange.Before);
+    const items = [{MembershipId:'member', RequestId:h.member().PendingSubjectChange.RequestId, RevisionToken:h.member().__updateTime}];
+    const approveBatch = () => h.context.batchApproveAcademicSubjectChanges({}, admin, {...period, ...scope, ...approval, Reason:'Verified End of Term subjects', Items:items});
+    if (batch) {
+      assert.equal((await approveBatch()).subjectReviewOutcomes[0].Outcome, 'Approved');
+      const writes = h.writes.length;
+      assert.equal((await approveBatch()).subjectReviewOutcomes[0].ApprovalScope, approval.ApprovalScope);
+      assert.equal(h.writes.length, writes);
+    } else {
+      await assert.rejects(h.review('Approve'), {code:'ACADEMIC_RESULT_IMMUTABLE'});
+      await assert.rejects(h.review('Approve',admin,{ApprovalScope:'anything'}), /valid subject approval scope/);
+      await h.review('Approve',admin,approval);
+    }
+    assert.deepEqual(h.state.termResults[0], mid);
+    assert.deepEqual(parentView(), report);
+    assert.deepEqual(h.state.studentScores, [score]);
+    assert.equal(h.state.termResults[1].SubjectChangeRecalculationRequired, true);
+    assert.deepEqual(h.member().MidTermSubjectSelection, before);
+    assert.deepEqual(h.member().SubjectIds, ['english','printing']);
+    assert.equal(h.member().LastSubjectChange.ApprovalScope, approval.ApprovalScope);
+    assert.equal(h.state.studentMovements.at(-1).SubjectChangeRequest.ApprovalScope, approval.ApprovalScope);
+    await h.request({Assignments:[{MembershipId:'member', RevisionToken:h.member().__updateTime,
+      CoreSubjectIds:['english'], TradeSubjectIds:['printing'], OptionalSubjectIds:['music']}]});
+    await h.review('Approve',admin,approval);
+    assert.deepEqual(h.member().MidTermSubjectSelection, before, 'repeated changes retain the original Mid-Term choices');
+    assert.deepEqual(h.state.termResults[0], mid);
+  }
+});
+
+test('end-only approvals still protect full-term results, including records with no type, and exclude transfers', async () => {
+  for (const ResultType of [undefined, 'End of Term']) {
+    const h = harness({termResults:[{...period,...scope,StudentRef:'S1',ResultId:'full',ResultType,Status:'Approved'}]});
+    await h.request();
+    const before = clone(h.state);
+    await assert.rejects(h.review('Approve',admin,{ApprovalScope:'End of Term only'}), {code:'ACADEMIC_RESULT_IMMUTABLE'});
+    assert.deepEqual(h.state,before);
+  }
+  const h = transferHarness();
+  await h.transfer();
+  const before = clone(h.state);
+  await assert.rejects(h.review('Approve',h.approver,{ApprovalScope:'End of Term only'}), /subject additions or removals/);
+  assert.deepEqual(h.state,before);
 });
 
 function transferHarness(options) {

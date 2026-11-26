@@ -106,13 +106,14 @@ try{
 
   const adminSource=await read('js/admin.js');
   const subjectFunctions=adminSource.slice(adminSource.indexOf('function academicSubjectChangeRequests('),adminSource.indexOf('function academicArmSubjectRegister('))
+    +adminSource.slice(adminSource.indexOf('function academicWorkflowPayload('),adminSource.indexOf('function populateAcademicMovementForm('))
     +adminSource.slice(adminSource.indexOf('function bindAcademicSubjectBatch('),adminSource.indexOf('function bindAcademicManagement('));
   await page.addScriptTag({content:subjectFunctions});
   await page.evaluate(()=>{
     const filters={section:'secondary',sessionId:'s',termId:'t'};
     Object.assign(window,{currentUser:{username:'admin'},academicManagementFilters:filters,selectedBranchId:'main',activeSection:'academics',
       academicManagementView:'students',academicManagementData:{workspaceRecordSelection:{ClassId:'c'}},clean:v=>String(v??'').trim(),
-      academicRecordId:r=>r.MembershipId,escapeHtml:v=>String(v??''),academicLabel:(_rows,id)=>id,
+      academicRecordId:r=>r.MembershipId,escapeHtml:v=>String(v??''),academicLabel:(_rows,id)=>id,validateAcademicCheckboxFields:()=>{},
       academicManagementRequest:async(action,payload)=>{
         requests.push({action,payload});return {subjectReviewOutcomes:payload.Items.map(i=>({RequestId:i.RequestId,Outcome:'Approved'}))};
       },loadAcademicManagement:async(options)=>saved.push(options)});
@@ -124,6 +125,15 @@ try{
     const root=document.getElementById('workspace');root.innerHTML=academicSubjectChangeRequests(data);
     bindAcademicSubjectBatch(root.querySelector('[data-academic-subject-change-requests]'));
   });
+  const firstForm=page.locator('[data-academic-subject-request-card="req-P1"] form');
+  await firstForm.getByLabel('Decision').selectOption({label:'Apply to End of Term only'});
+  const decision=await firstForm.evaluate(form=>academicWorkflowPayload(form));
+  assert.equal(decision.Decision,'Approve');
+  assert.equal(decision.ApprovalScope,'End of Term only');
+  assert.equal(await page.locator('[data-academic-subject-request-card="req-Transfer"] option[value="ApproveEndTerm"]').count(),0);
+  const scopeOption=page.locator('[data-subject-batch-end-term]');
+  assert.equal(await scopeOption.isChecked(),false);
+  await scopeOption.check();
   const selectAll=page.getByLabel('Select all eligible subject requests');
   await selectAll.check();
   assert.equal(await page.locator('[data-subject-batch-item]:checked').count(),2);
@@ -137,6 +147,7 @@ try{
   await page.waitForFunction(()=>saved.at(-1)?.message?.includes('2 approved'));
   const subjectRequest=await page.evaluate(()=>requests[0]);
   assert.equal(subjectRequest.action,'batchApproveAcademicSubjectChanges');
+  assert.equal(subjectRequest.payload.ApprovalScope,'End of Term only');
   assert.deepEqual(subjectRequest.payload.Items.map(r=>r.RequestId),['req-P1','req-P2']);
   assert.deepEqual(errors,[]);
   console.log('PASS: batch results dialog preserves pending students, scopes report types, sends bounded explicit batches, prevents double submission, keeps failed selections, checks permissions and fits desktop/mobile screens.');

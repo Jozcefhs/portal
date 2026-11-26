@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import vm from './helpers/module-policy-vm.mjs';
 import {readFile} from 'node:fs/promises';
 import {defaultAcademicPolicy} from '../functions/lib/academic-policy.js';
-import {calculateAcademicTermResultDrafts,calculateAcademicMidTermResultDrafts,ACADEMIC_TERM_RESULT_STATUSES,academicTermResultTransition} from '../functions/lib/academic-term-results.js';
+import {academicResultMembership,calculateAcademicTermResultDrafts,calculateAcademicMidTermResultDrafts,ACADEMIC_TERM_RESULT_STATUSES,academicTermResultTransition} from '../functions/lib/academic-term-results.js';
 import {academicPolicyIssues} from '../functions/lib/academic-policy.js';
 import {academicScoreMembershipGuards} from '../functions/lib/academic-management.js';
 import {activeAcademicStudentRoster} from '../functions/lib/academic-student-status-roster.js';
@@ -28,7 +28,7 @@ function fixture(){
     academicResultBatchRecipients:async()=>[],
     failure:(message,status=409,code,extra={})=>Object.assign(new Error(message),{status,code,...extra}),statusActive:r=>r.Status==='Active',
     academicTermResultContext:async()=>context,academicOperationalContext:async()=>context,
-    calculateAcademicTermResultDrafts,calculateAcademicMidTermResultDrafts,ACADEMIC_TERM_RESULT_STATUSES,academicTermResultTransition,academicPolicyIssues,academicScoreMembershipGuards,
+    academicResultMembership,calculateAcademicTermResultDrafts,calculateAcademicMidTermResultDrafts,ACADEMIC_TERM_RESULT_STATUSES,academicTermResultTransition,academicPolicyIssues,academicScoreMembershipGuards,
     notifyAcademicResultLifecycle:async()=>{},
     academicTermResultId:(...args)=>`result-${args[5]}`,academicResultReference:async id=>id,
     findById:(rows,id)=>rows.find(row=>row.ResultId===id),nowIso:()=> '2026-10-26T12:00:00Z',actorName:()=> 'Reviewer',actorUsername:()=> 'reviewer',
