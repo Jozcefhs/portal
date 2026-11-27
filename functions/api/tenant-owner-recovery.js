@@ -4,7 +4,7 @@ import { readJsonBody } from '../lib/request-security.js';
 import { assertFreshTenantControlRequest, tenantControlSecretHash, verifyTenantControlRequest } from '../lib/tenant-control-plane.js';
 import { assertTenantProjectAssignment } from '../lib/tenant-project-pool.js';
 import { activeTenantControlRecord } from '../lib/tenant-email-provider.js';
-import { sendConfiguredEmail } from '../lib/email-service.js';
+import { escapeEmailHtml, sendConfiguredEmail } from '../lib/email-service.js';
 
 const reply = (body, status = 200) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
 const denied = () => Object.assign(new Error('Owner recovery unavailable.'), { status: 403 });
@@ -41,9 +41,12 @@ export async function registeredOwnerRecovery(env, details, signature) {
   const code = Array.from(crypto.getRandomValues(new Uint8Array(24)), byte => byte.toString(16).padStart(2, '0')).join('');
   const sender = env.DYNAMAX_SENDER_EMAIL || env.BREVO_SENDER_EMAIL;
   if (!sender || !env.BREVO_API_KEY) throw new Error('Owner recovery delivery unavailable.');
+  const introduction = 'A password reset was requested for the original administrator of ' + details.portalHost + '.';
+  const instructions = 'Enter the code only on that portal within 15 minutes. If you did not request this reset, ignore this email.';
   await sendConfiguredEmail(env, { toEmail: email, subject: 'Verify ownership for administrator recovery',
-    textContent: 'A password reset was requested for the original administrator of ' + details.portalHost +
-      '.\n\nYour one-time code is:\n' + code + '\n\nEnter it only on that portal within 15 minutes. If you did not request this reset, ignore this email.',
+    textContent: introduction + '\n\nYour one-time code is:\n' + code + '\n\n' + instructions,
+    htmlContent: '<p>' + escapeEmailHtml(introduction) + '</p><p>Your one-time code is:</p><p><strong>' +
+      escapeEmailHtml(code) + '</strong></p><p>' + instructions + '</p>',
     providerOverride: 'brevo', senderOverride: { email: sender, name: env.DYNAMAX_SENDER_NAME || 'Dynamax' } });
   return { binding, codeHash: await tenantControlSecretHash(code) };
 }
