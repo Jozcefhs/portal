@@ -22,6 +22,7 @@ const PLATFORM_SUBSCRIPTION_PROXY_PATHS = new Set([
   '/api/tenant-project-pool',
   '/api/tenant-paystack-connection',
   '/api/tenant-custom-domain',
+  '/api/tenant-owner-recovery',
   '/api/tenant-email-provider',
   '/api/google-email-callback',
   '/api/subscription-policy',

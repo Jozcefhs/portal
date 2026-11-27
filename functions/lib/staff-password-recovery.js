@@ -1,10 +1,11 @@
 import { batchCommitLiteralDocuments, getDocument } from './firestore.js';
-import { findStaffLoginRecord, hashStaffPassword } from './staff-auth.js';
+import { findStaffLoginRecord, findStaffUserRecord, hashStaffPassword } from './staff-auth.js';
 import { requiredDeploymentIdentity } from './deployment-identity.js';
 import { externalAuditAccessExpired } from './external-audit.js';
 import { escapeEmailHtml } from './email-service.js';
 import { deliverPasswordRecovery } from './password-recovery-delivery.js';
 import { credentialStateId } from './staff-credential-state.js';
+import { matchesFirstAdministrator, contactOwnerRegistry } from './owner-recovery-client.js';
 
 const clean = value => String(value ?? '').trim();
 const TOKEN_COLLECTION = 'staffPasswordRecovery';
@@ -49,7 +50,7 @@ function invalidCode() {
 // timing. The saved LOGIN email is used without an administrator verification
 // requirement: the one-time code proves inbox access. Display-only HR contacts
 // and request-supplied emails are never used.
-export async function requestStaffPasswordRecovery(env, username) {
+export async function requestStaffPasswordRecovery(env, username, throughOwner = false) {
   const identity = requiredDeploymentIdentity(env);
   const login = clean(username).toLowerCase();
   if (!login || login.length > 160) return;
@@ -66,16 +67,32 @@ export async function requestStaffPasswordRecovery(env, username) {
     if ([409, 412].includes(Number(error.status)) || error.code === 'FIRESTORE_WRITE_CONFLICT') return;
     throw error;
   }
-  const row = await findStaffLoginRecord(env, login);
+  let first, row;
+  if (throughOwner) {
+    first = await getDocument(env, 'settings', 'firstAdministrator');
+    if (!first?.Username || !first.ActivationId) return;
+    row = await findStaffUserRecord(env, first.Username, { allowListFallback: false });
+    if (!matchesFirstAdministrator(row, first)) return;
+  } else {
+    row = await findStaffLoginRecord(env, login);
+  }
   if (!active(row, identity.edition) || clean(row.LoginUsername || row.Username).toLowerCase() !== login) return;
+  const challenge = { StaffId: row.__id, Username: row.Username, Fingerprint: await fingerprint(row),
+    WorkspaceId: identity.workspaceId, Edition: identity.edition, UsedAt: '',
+    CreatedAt: new Date(now).toISOString(), ExpiresAt: new Date(now + 15 * 60_000).toISOString() };
+  if (throughOwner) {
+    const owner = await contactOwnerRegistry(env, identity, first, 'issue-owner-recovery');
+    if (!/^[a-f0-9]{64}$/.test(owner.codeHash)) throw new Error('Owner code could not be issued.');
+    await batchCommitLiteralDocuments(env, [{ collectionPath: TOKEN_COLLECTION, documentId: owner.codeHash, exists: false,
+      data: { ...challenge, Purpose: 'registered-owner', OwnerBinding: owner.binding, ActivationId: first.ActivationId } }]);
+    return;
+  }
   const email = normalizeRecoveryEmail(row.RecoveryEmail);
   if (!email || !row.__id) return;
   const code = Array.from(crypto.getRandomValues(new Uint8Array(24)), byte => byte.toString(16).padStart(2, '0')).join('');
   const id = await digest(code);
   await batchCommitLiteralDocuments(env, [{ collectionPath: TOKEN_COLLECTION, documentId: id, exists: false,
-    data: { StaffId: row.__id, Username: row.Username, Fingerprint: await fingerprint(row),
-      WorkspaceId: identity.workspaceId, Edition: identity.edition, UsedAt: '', DeliveryStatus: 'Pending',
-      CreatedAt: new Date(now).toISOString(), ExpiresAt: new Date(now + 15 * 60_000).toISOString() } }]);
+    data: { ...challenge, DeliveryStatus: 'Pending' } }]);
   await deliverPasswordRecovery(env, TOKEN_COLLECTION, id, {
     toEmail: email, toName: clean(row.DisplayName || row.Username), branchId: clean(row.BranchId),
     subject: 'Staff password recovery code',
@@ -97,8 +114,21 @@ export async function resetStaffPassword(env, code, password) {
       || recovery.WorkspaceId !== identity.workspaceId || recovery.Edition !== identity.edition) throw invalidCode();
   const row = await getDocument(env, 'staffUsers', recovery.StaffId);
   if (!active(row, identity.edition) || await fingerprint(row) !== recovery.Fingerprint) throw invalidCode();
+  let ownerEmail;
+  if (recovery.Purpose === 'registered-owner') {
+    if (password.length < 12) throw Object.assign(new Error('Use at least 12 characters for owner recovery.'), { status: 400 });
+    const first = await getDocument(env, 'settings', 'firstAdministrator');
+    if (!matchesFirstAdministrator(row, first) || first.ActivationId !== recovery.ActivationId) throw invalidCode();
+    const owner = await contactOwnerRegistry(env, identity, first, 'check-owner-recovery');
+    ownerEmail = normalizeRecoveryEmail(owner.email);
+    if (owner.binding !== recovery.OwnerBinding || !ownerEmail || !(Date.parse(recovery.ExpiresAt) > Date.now())) throw invalidCode();
+  }
   const fields = { ...await hashStaffPassword(password), MustChangePassword: false, PasswordSetupRequired: false,
     PasswordChangedAt: new Date().toISOString(), PasswordRecoveryEpoch: crypto.randomUUID() };
+  if (ownerEmail) {
+    fields.RecoveryEmail = ownerEmail;
+    fields.RecoveryEmailChangedAt = fields.PasswordChangedAt;
+  }
   const auditId = `PASSWORD-RECOVERY-${crypto.randomUUID()}`;
   try {
     await batchCommitLiteralDocuments(env, [
@@ -108,7 +138,7 @@ export async function resetStaffPassword(env, code, password) {
       { collectionPath: 'staffCredentialRevocations', documentId: await credentialStateId(row.Username),
         data: { Epoch: fields.PasswordRecoveryEpoch, ChangedAt: fields.PasswordChangedAt } },
       { collectionPath: 'staffSecurityAudit', documentId: auditId, exists: false,
-        data: { AuditId: auditId, Timestamp: fields.PasswordChangedAt, Action: 'STAFF PASSWORD RECOVERED',
+        data: { AuditId: auditId, Timestamp: fields.PasswordChangedAt, Action: ownerEmail ? 'FIRST ADMINISTRATOR RECOVERED BY REGISTERED OWNER' : 'STAFF PASSWORD RECOVERED',
           Username: row.Username, ActorUsername: row.Username, Actor: clean(row.DisplayName || row.Username),
           Role: row.Role, BranchId: clean(row.BranchId) || 'main', SourcePlatform: 'Web',
           Details: 'One-time recovery email code verified. Password replaced and prior web sessions invalidated. Roles, permissions and MFA unchanged.' } }

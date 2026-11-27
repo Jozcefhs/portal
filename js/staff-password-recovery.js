@@ -1,5 +1,6 @@
 const status = document.getElementById('recoveryStatus');
 let busy = false;
+if (window.location.hash === '#owner-recovery') document.getElementById('owner-recovery').open = true;
 
 function result(message, ok) {
   status.textContent = message;
@@ -19,7 +20,7 @@ async function submit(form, action) {
   busy = true;
   const buttons = [...document.querySelectorAll('.recovery-shell button')];
   buttons.forEach(button => { button.disabled = true; });
-  status.textContent = action === 'request' ? 'Requesting a recovery code…' : 'Resetting your password…';
+  status.textContent = action === 'reset' ? 'Resetting your password…' : 'Requesting a recovery code…';
   try {
     const response = await fetch('/api/staff-password-recovery', {
       method: 'POST', credentials: 'omit', cache: 'no-store',
@@ -37,7 +38,7 @@ async function submit(form, action) {
   }
 }
 
-for (const [id, action] of [['requestRecoveryForm', 'request'], ['resetPasswordForm', 'reset']]) {
+for (const [id, action] of [['requestRecoveryForm', 'request'], ['ownerRecoveryForm', 'request-owner'], ['resetPasswordForm', 'reset']]) {
   document.getElementById(id).addEventListener('submit', event => {
     event.preventDefault();
     submit(event.currentTarget, action);

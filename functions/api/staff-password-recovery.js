@@ -17,17 +17,19 @@ export async function onRequestPost(context) {
     requireFirestoreEnv(env);
     const body = await readJsonBody(request, { maxBytes: 4096 });
     const action = String(body.action || 'request');
-    if (!['request', 'reset'].includes(action)) return reply({ ok: false, message: 'Unsupported recovery action.' }, 400);
-    const allowance = await consumeRequestAllowance(env, request, { scope: `staff-password-recovery-${action}`, maximum: action === 'request' ? 8 : 20, windowSeconds: 900 });
+    if (!['request', 'request-owner', 'reset'].includes(action)) return reply({ ok: false, message: 'Unsupported recovery action.' }, 400);
+    const allowance = await consumeRequestAllowance(env, request, { scope: `staff-password-recovery-${action}`, maximum: action === 'reset' ? 20 : 8, windowSeconds: 900 });
     if (!allowance.allowed) return reply({ ok: false, message: 'Too many recovery attempts. Please wait 15 minutes before trying again.' }, 429);
-    if (action === 'request') {
+    if (action !== 'reset') {
       const username = typeof body.username === 'string' ? body.username.trim() : '';
       if (!username || username.length > 160) return reply({ ok: false, message: 'Enter your staff login username.' }, 400);
-      context.waitUntil(requestStaffPasswordRecovery(env, username).catch(() => {
+      context.waitUntil(requestStaffPasswordRecovery(env, username, action === 'request-owner').catch(() => {
         // Never log codes, passwords, email addresses or provider response bodies.
         console.error(JSON.stringify({ event: 'staff_password_recovery_delivery_failed' }));
       }));
-      return reply({ ok: true, message: RECOVERY_REQUEST_MESSAGE });
+      return reply({ ok: true, message: action === 'request-owner'
+        ? 'If the login matches the original administrator and has no recovery email, check the registered owner’s inbox for a code. It expires in 15 minutes.'
+        : RECOVERY_REQUEST_MESSAGE });
     }
     await resetStaffPassword(env, body.code, body.password);
     return reply({ ok: true, message: 'Password reset. Sign in with your new password. Your normal two-factor checks still apply.' });
