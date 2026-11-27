@@ -8,6 +8,7 @@ import { requiredDeploymentIdentity } from '../functions/lib/deployment-identity
 import { externalAuditAccessExpired } from '../functions/lib/external-audit.js';
 import { normalizeRecoveryEmail } from '../functions/lib/staff-password-recovery.js';
 import { deliverPasswordRecovery } from '../functions/lib/password-recovery-delivery.js';
+import { matchesFirstAdministrator } from '../functions/lib/owner-recovery-client.js';
 const read = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 const unmodule = source => source.replace(/^import[\s\S]*?from ['"][^'"]+['"];\r?$/gm, '').replace(/^export /gm, '');
 const recoverySource = await read('functions/lib/staff-password-recovery.js');
@@ -47,7 +48,8 @@ async function fixture(edition = 'school', overrides = {}) {
   const common = { ...branchAccess, crypto, Date, TextEncoder, TextDecoder, Uint8Array, btoa, atob, console, ...database };
   const epoch = vm.createContext(common);
   vm.runInContext(unmodule(epochSource), epoch);
-  const context = vm.createContext({ ...common, credentialStateId: epoch.credentialStateId,
+  const context = vm.createContext({ ...common, credentialStateId: epoch.credentialStateId, matchesFirstAdministrator,
+    findStaffUserRecord: async (_env, username) => clone([...docs.values()].find(row => row.__id === 'legacy-id' && row.Username === username)),
     hashStaffPassword, requiredDeploymentIdentity, externalAuditAccessExpired,
     findStaffLoginRecord: async (_env, login) => clone([...docs.values()].find(row => row.LoginUsername === login)),
     escapeEmailHtml: value => value, deliverPasswordRecovery: (env,path,id,message)=>deliverPasswordRecovery(env,path,id,message,
@@ -71,6 +73,64 @@ async function fixture(edition = 'school', overrides = {}) {
   const code = () => emails.at(-1)?.textContent.match(/[a-f0-9]{48}/)[0];
   return { env, docs, put, emails, batches, original, context, epoch, auth, api, mfa, post, request, pending, code };
 }
+
+async function ownerFixture() {
+  const f = await fixture('school', { Username: 'founder', Role: 'Super Admin', BranchId: '', RecoveryEmail: '',
+    ActivationId: 'ACT-123-ABCD', LoginUsername: 'founder.login' });
+  f.put('settings', 'firstAdministrator', { Username: 'founder', ActivationId: 'ACT-123-ABCD', Status: 'Completed' });
+  const code = '01'.repeat(24);
+  const hash = Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(code))).toString('hex');
+  let calls = 0;
+  f.context.contactOwnerRegistry = async (_env, _identity, _first, action) => {
+    calls++;
+    return { binding: 'a'.repeat(64), ...(action === 'issue-owner-recovery' ? { codeHash: hash } : { email: 'owner@example.test' }) };
+  };
+  return { ...f, ownerCode: code, calls: () => calls };
+}
+
+test('owner code resets only the linked first administrator and saves the verified registry address once', async () => {
+  const f = await ownerFixture();
+  const session = await f.auth.createStaffSession(f.env, { username: 'founder', role: 'Super Admin' });
+  const response = await f.post({ action: 'request-owner', username: 'founder.login', email: 'other@example.test' });
+  assert.equal(response.status, 200);
+  assert.ok(!(await response.text()).includes('owner@example'));
+  await Promise.all(f.pending);
+  assert.equal(f.docs.get('staffUsers/legacy-id').RecoveryEmail, '');
+  await assert.rejects(f.context.resetStaffPassword(f.env, f.ownerCode, 'too-short'), /12 characters/);
+  await assert.rejects(f.context.resetStaffPassword(f.env, '03'.repeat(24), 'strong-fixture-password'), /invalid/);
+  const outcomes = await Promise.allSettled([1, 2].map(() => f.post({ action: 'reset', code: f.ownerCode,
+    password: 'strong-fixture-password', recoveryEmail: 'other@example.test' })));
+  assert.deepEqual(outcomes.map(result => result.value.status).sort(), [200, 400]);
+  const account = f.docs.get('staffUsers/legacy-id');
+  assert.equal(account.RecoveryEmail, 'owner@example.test');
+  assert.equal(account.Role, 'Super Admin');
+  assert.equal(f.batches.filter(batch => batch.length === 4).length, 1);
+  assert.equal(await f.auth.readStaffSession(f.env, new Request('https://tenant.test', { headers: { Authorization: 'Bearer ' + session } })), null);
+});
+
+test('missing founder, different activation, existing recovery email, branch-limited and disabled accounts are ineligible', async () => {
+  for (const edit of [{ Username: 'other' }, { ActivationId: 'another' }, { RecoveryEmail: 'saved@example.test' },
+    { BranchAccess: 'selected', BranchIds: ['north'] }, { Role: 'Teacher' }, { Active: false }]) {
+    const f = await ownerFixture();
+    Object.assign(f.docs.get('staffUsers/legacy-id'), edit);
+    assert.equal((await f.post({ action: 'request-owner', username: 'founder.login' })).status, 200);
+    await Promise.all(f.pending);
+    assert.equal(f.calls(), 0);
+  }
+});
+
+test('owner code cannot be used after an ownership or administrator role change', async () => {
+  for (const change of ['owner', 'role', 'activation']) {
+    const f = await ownerFixture();
+    await f.context.requestStaffPasswordRecovery(f.env, 'founder.login', true);
+    if (change === 'owner') f.context.contactOwnerRegistry = async () => ({ binding: 'b'.repeat(64), email: 'other@example.test' });
+    if (change === 'role') f.docs.get('staffUsers/legacy-id').Role = 'Teacher';
+    if (change === 'activation') f.docs.get('settings/firstAdministrator').ActivationId = 'replaced';
+    await assert.rejects(f.context.resetStaffPassword(f.env, f.ownerCode, 'strong-fixture-password'), /invalid/);
+    assert.equal(f.docs.get('staffUsers/legacy-id').PasswordHash, f.original.PasswordHash);
+    assert.equal(f.docs.get('staffUsers/legacy-id').RecoveryEmail, '');
+  }
+});
 
 for (const edition of ['school', 'faith', 'organization']) {
   test(`${edition}: recovery accepts 6–128 characters and rejects out-of-range passwords without consuming the code`, async () => {

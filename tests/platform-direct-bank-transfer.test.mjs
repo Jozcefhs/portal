@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import {
+  loadPlatformPaymentSettings,
   normalizePlatformPaymentSettings,
   platformBankReferenceHash,
   platformTransferEvidence,
@@ -10,6 +11,18 @@ import {
 } from '../functions/lib/platform-direct-bank-transfer.js';
 
 const source = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
+
+test('payment settings distinguish absent configuration from a temporary read failure', async () => {
+  const env = {
+    DYNAMAX_PLATFORM_FIREBASE_PROJECT_ID: 'test-platform', DYNAMAX_PLATFORM_FIREBASE_CLIENT_EMAIL: 'fixture',
+    DYNAMAX_PLATFORM_FIREBASE_PRIVATE_KEY: 'fixture'
+  };
+  assert.equal((await loadPlatformPaymentSettings(env, async () => null)).DirectBankTransferReady, false);
+  await assert.rejects(
+    () => loadPlatformPaymentSettings(env, async () => { throw new Error('upstream error'); }),
+    { status: 503, message: /try again/i }
+  );
+});
 
 test('Dynamax direct-transfer settings remain separate from tenant bank settings', () => {
   const settings = normalizePlatformPaymentSettings({
@@ -59,6 +72,7 @@ test('Dynamax registration and upgrades use the central payment chooser', async 
   assert.match(registrationHtml, /js\/payment-methods\.js/);
   assert.ok(registrationHtml.indexOf('js/payment-methods.js') < registrationHtml.indexOf('js/register-organization.js'));
   assert.match(registrationClient, /methodsUrl:\s*'\/api\/platform-payment-methods'/);
+  assert.doesNotMatch(registrationClient, /allowDirectTransfer:\s*false/);
   assert.match(registrationClient, /PaymentMethod:\s*paymentChoice\.paymentMethod/);
   assert.match(adminHtml, /js\/payment-methods\.js/);
   assert.ok(adminHtml.indexOf('js/payment-methods.js') < adminHtml.indexOf('js/admin.js'));

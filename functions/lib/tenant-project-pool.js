@@ -27,7 +27,7 @@ const DEFAULT_READY_TARGET = 2;
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 
-export function tenantProjectAssignmentEligibility(registration = {}) {
+export function tenantProjectAssignmentEligibility(registration = {}, approvedTransferReference = '') {
   if (clean(registration.WorkspaceId)) return { eligible: true, existing: true, reason: '' };
   const ownerDemo = registration.OwnerDemo === true
     && registration.NonBillable === true
@@ -37,9 +37,16 @@ export function tenantProjectAssignmentEligibility(registration = {}) {
   const cardVerified = lower(registration.CardVerificationStatus) === 'verified'
     && Boolean(clean(registration.CardVerifiedAt));
   if (cardVerified) return { eligible: true, cardVerified: true, reason: '' };
+  const transfer = clean(registration.DirectTransferReference);
+  const settledTransfer = registration.SubscriptionPaymentProvider === 'Direct Bank Transfer'
+    && lower(registration.PaymentStatus) === 'paid' && registration.SubscriptionPaymentReference === transfer;
+  if (transfer && clean(registration.Plan) && lower(registration.Plan) !== 'free' && Number(registration.Price) > 0
+      && (transfer === approvedTransferReference || settledTransfer)) {
+    return { eligible: true, approvedTransfer: true, reason: '' };
+  }
   return {
     eligible: false,
-    reason: 'A successful Paystack card verification is required before a tenant project can be assigned.'
+    reason: 'Workspace assignment requires a verified Paystack card or a paid subscription transfer approved by Dynamax.'
   };
 }
 
@@ -1049,7 +1056,7 @@ async function queueCapacityRequest(platformEnv, registration) {
   });
 }
 
-export async function reserveTenantProjectSlot(platformEnv, currentRegistration = {}) {
+export async function reserveTenantProjectSlot(platformEnv, currentRegistration = {}, approvedTransferReference = '') {
   if (clean(currentRegistration.WorkspaceId)) {
     return { assigned: true, registration: currentRegistration, slot: null, existing: true };
   }
@@ -1068,7 +1075,7 @@ export async function reserveTenantProjectSlot(platformEnv, currentRegistration 
     throw error;
   }
   if (clean(registration.WorkspaceId)) return { assigned: true, registration, slot: null, existing: true };
-  const eligibility = tenantProjectAssignmentEligibility(registration);
+  const eligibility = tenantProjectAssignmentEligibility(registration, approvedTransferReference);
   if (!eligibility.eligible) {
     const error = new Error(eligibility.reason);
     error.status = 409;

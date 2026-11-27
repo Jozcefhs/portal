@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { validatePlatformCatalogPayload, validateTutorialCatalogPayload, verifyPlatformDeployment } from '../scripts/verify-platform-deployment.mjs';
+import { validatePlatformCatalogPayload, validateTutorialCatalogPayload, verifyPlatformDeployment, verifyRegistrationCheckout } from '../scripts/verify-platform-deployment.mjs';
 import {
   SUBSCRIPTION_MODULE_CATALOG_VERSION,
   subscriptionModulesForEdition
@@ -76,12 +76,21 @@ test('the live platform verifier rejects an unavailable or malformed owner tutor
   assert.throws(() => validateTutorialCatalogPayload({ ok: true, published: false, catalog: {} }), /tutorial catalogue/);
 });
 
-test('deployment verification reads both the plan and owner tutorial APIs', async () => {
+test('deployment verifies the live checkout assets and saved switches alongside both catalogues', async () => {
   const originalFetch = globalThis.fetch;
   const requestedPaths = [];
+  let stale = false;
   globalThis.fetch = async (url) => {
     const path = new URL(url).pathname;
     requestedPaths.push(path);
+    if (path === '/register-organization') return new Response(await readFile(new URL('../register-organization.html', import.meta.url)));
+    if (path.startsWith('/js/')) {
+      if (stale && path === '/js/register-organization.js') return new Response('old card-only checkout');
+      return new Response(await readFile(new URL('..' + path, import.meta.url)));
+    }
+    if (path === '/api/platform-payment-methods') return Response.json({
+      ok: true, methods: { online: { enabled: false }, directTransfer: { enabled: true } }
+    }, { headers: { 'Cache-Control': 'no-store' } });
     if (path === '/api/plan-catalog') {
       return Response.json({ ok: true, catalog: {
         ModuleCatalogVersion: SUBSCRIPTION_MODULE_CATALOG_VERSION,
@@ -98,7 +107,11 @@ test('deployment verification reads both the plan and owner tutorial APIs', asyn
   try {
     const result = await verifyPlatformDeployment({ url: 'https://dynamax.example', attempts: 1, delayMs: 0 });
     assert.equal(result.tutorialPublished, false);
-    assert.deepEqual(requestedPaths, ['/api/plan-catalog', '/api/tutorial-catalog']);
+    assert.deepEqual(result.checkout, { online: false, directTransfer: true });
+    assert.deepEqual(requestedPaths, ['/api/plan-catalog', '/api/tutorial-catalog', '/register-organization',
+      '/js/payment-methods.js', '/js/register-organization.js', '/api/platform-payment-methods']);
+    stale = true;
+    await assert.rejects(() => verifyRegistrationCheckout('https://dynamax.example'), /different version of js\/register-organization/);
   } finally {
     globalThis.fetch = originalFetch;
   }

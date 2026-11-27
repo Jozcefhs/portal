@@ -35,9 +35,14 @@ export function validatePlatformPaymentSettings(input = {}) {
   return settings;
 }
 
-export async function loadPlatformPaymentSettings(env) {
+export async function loadPlatformPaymentSettings(env, readDocument = getDocument) {
   const platformEnv = requirePlatformFirestoreEnv(env);
-  const saved = await getDocument(platformEnv, 'settings', PLATFORM_PAYMENT_SETTINGS_DOCUMENT).catch(() => null);
+  let saved;
+  try {
+    saved = await readDocument(platformEnv, 'settings', PLATFORM_PAYMENT_SETTINGS_DOCUMENT);
+  } catch {
+    throw paymentError('Subscription payment methods could not be loaded. Please try again.', 503);
+  }
   return normalizePlatformPaymentSettings(saved || {});
 }
 
@@ -70,6 +75,7 @@ export function platformTransferEvidence(input = {}) {
   }
   return {
     BankReference: bankReference,
+    TransferNarration: /^DMX-[A-Z0-9]{1,16}$/.test(input.transferNarration || '') ? input.transferNarration : '',
     ProofDataUrl: proofDataUrl,
     ProofFileName: clean(input.proofFileName || input.ProofFileName).replace(/[^A-Za-z0-9._ -]/g, '').slice(0, 120)
   };
@@ -93,6 +99,7 @@ export function publicPlatformTransferRecord(row = {}) {
     Amount: Number(row.Amount || 0),
     Currency: clean(row.Currency || 'NGN'),
     BankReference: clean(row.BankReference),
+    TransferNarration: clean(row.TransferNarration),
     ProofFileName: clean(row.ProofFileName),
     HasProof: Boolean(clean(row.ProofDataUrl)),
     Status: clean(row.Status),

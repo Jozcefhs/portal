@@ -395,11 +395,13 @@ form.addEventListener('submit', async (event) => {
         : Number(selectedPlan?.MonthlyAmount || 0);
     let paymentChoice = {};
     if (selectedPlan?.Name !== 'Free' && selectedAmount > 0) {
+      registrationIdempotencyKey ||= newIdempotencyKey();
       paymentChoice = await window.DynamaxPaymentMethods.choose({
         methodsUrl: '/api/platform-payment-methods',
         amount: selectedAmount,
         currency: planCatalog?.Currency || 'NGN',
-        allowDirectTransfer: false
+        transferNarration: 'DMX-' + registrationIdempotencyKey.replace(/[^a-z0-9]/gi, '').slice(0, 16).toUpperCase(),
+        onlineDescription: 'Pay by card through Paystack for automatic subscription renewals.'
       });
       if (!paymentChoice) return;
     }
@@ -424,6 +426,7 @@ form.addEventListener('submit', async (event) => {
       body: JSON.stringify({
         ...payload,
         PaymentMethod: paymentChoice.paymentMethod || '',
+        transferNarration: paymentChoice.transferNarration || '',
         bankReference: paymentChoice.bankReference || '',
         proofDataUrl: paymentChoice.proofDataUrl || '',
         proofFileName: paymentChoice.proofFileName || '',
@@ -463,7 +466,10 @@ form.addEventListener('submit', async (event) => {
       window.location.assign(data.authorizationUrl);
       return;
     }
-    if (data.directTransfer) return;
+    if (data.directTransfer) {
+      statusNode.append(document.createTextNode(' Once Dynamax confirms the transfer and your workspace is ready, we will email the administrator activation link to ' + payload.Email + '.'));
+      return;
+    }
     if (data.activationUrl || data.loginUrl || data.onboardingUrl) {
       statusNode.textContent = data.activationUrl
         ? 'Opening secure administrator activation...'

@@ -1,4 +1,4 @@
-import { getDocument, patchDocumentFields, patchDocumentFieldsIfCurrent, upsertDocument } from '../lib/firestore.js';
+import { batchCommitDocuments, getDocument, patchDocumentFields, patchDocumentFieldsIfCurrent, upsertDocument } from '../lib/firestore.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { syncRegistrationSubscriptionToWorkspace } from '../lib/subscription-workspace-sync.js';
 import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
@@ -91,14 +91,34 @@ export async function verifySubscriptionTransaction(env, reference) {
     error.status = 503;
     throw error;
   }
-  const response = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
-    headers: { Authorization: `Bearer ${env.PAYSTACK_SECRET_KEY}` }
-  });
+  let response;
+  try {
+    response = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
+      headers: { Authorization: `Bearer ${env.PAYSTACK_SECRET_KEY}` }
+    });
+  } catch {
+    throw Object.assign(new Error('Paystack is temporarily unreachable. Check this same reference again.'), { status: 503, code: 'PAYSTACK_VERIFICATION_UNAVAILABLE' });
+  }
   const data = await response.json().catch(() => ({}));
-  if (!response.ok || data.status === false || clean(data.data?.status).toLowerCase() !== 'success') {
-    const error = new Error(data.message || 'The subscription payment has not been confirmed.');
-    error.status = 400;
+  if (!response.ok || data.status !== true || !data.data) {
+    const error = new Error('Paystack could not confirm this reference. If you were debited, keep your reference and contact Dynamax before paying again.');
+    error.status = response.status === 429 || response.status >= 500 ? 503 : 400;
+    error.code = 'PAYSTACK_VERIFICATION_UNAVAILABLE';
     throw error;
+  }
+  if (clean(data.data.reference) !== reference) throw Object.assign(new Error('Paystack returned a different payment reference.'), { status: 409 });
+  const status = clean(data.data.status).toLowerCase();
+  if (status === 'failed' && /^(?:denied|blocked) by (?:the )?fraud system[.!]?$/i.test(clean(data.data.gateway_response))) {
+    throw Object.assign(new Error('Paystack declined this payment during its security checks. Contact Dynamax with the transaction reference for a Paystack review.'), {
+      status: 409, code: 'PAYSTACK_SECURITY_DECLINE'
+    });
+  }
+  if (status !== 'success') {
+    const pending = ['pending', 'ongoing', 'processing', 'queued'].includes(status);
+    const message = pending ? 'Paystack is still processing this payment. Check this same reference again.'
+      : status === 'failed' ? 'Paystack reports that this payment failed. If your account was debited, contact Dynamax with the reference before paying again.'
+      : 'Paystack has not confirmed a successful payment for this reference. Contact Dynamax if you were debited.';
+    throw Object.assign(new Error(message), { status: 409, code: pending ? 'PAYSTACK_VERIFICATION_PENDING' : 'PAYSTACK_PAYMENT_UNSUCCESSFUL' });
   }
   return data.data;
 }
@@ -188,7 +208,7 @@ export async function activateSavedSubscriptionPayment(env, options = {}) {
   }
   const assignment = clean(savedRegistration.WorkspaceId)
     ? { assigned: true, registration: savedRegistration }
-    : await reserveTenantProjectSlot(platformEnv, savedRegistration);
+    : await reserveTenantProjectSlot(platformEnv, savedRegistration, options.approvedTransferReference);
   const registration = assignment.registration;
   const provider = clean(options.provider || 'Paystack');
   const paystack = provider.toLowerCase() === 'paystack';
@@ -276,18 +296,19 @@ export async function activateSavedSubscriptionPayment(env, options = {}) {
     }),
     UpdatedAt: updatedAt
   };
-  await Promise.all([
-    patchDocumentFields(platformEnv, 'subscriptionPayments', reference, {
-      Status: 'Paid',
-      PaymentMethod: provider,
-      PaidAt: paidAt,
-      ReceiptNo: receipt.ReceiptNo,
-      Receipt: receipt,
-      ...providerFields,
-      UpdatedAt: updatedAt
-    }),
-    upsertDocument(platformEnv, 'tenantRegistrations', registrationReference, updatedRegistration),
-    upsertDocument(platformEnv, 'subscriptionReceipts', reference, receipt)
+  const paidFields = {
+    Status: 'Paid',
+    PaymentMethod: provider,
+    PaidAt: paidAt,
+    ReceiptNo: receipt.ReceiptNo,
+    Receipt: receipt,
+    ...providerFields,
+    UpdatedAt: updatedAt
+  };
+  await batchCommitDocuments(platformEnv, [
+    { collectionPath: 'subscriptionPayments', documentId: reference, data: paidFields, updateMask: Object.keys(paidFields) },
+    { collectionPath: 'tenantRegistrations', documentId: registrationReference, data: updatedRegistration, updateMask: Object.keys(updatedRegistration) },
+    { collectionPath: 'subscriptionReceipts', documentId: reference, data: receipt }
   ]);
   await syncRegistrationSubscriptionToWorkspace(env, updatedRegistration);
   let receiptDelivery = { sent: false, status: 'Failed' };
@@ -661,7 +682,8 @@ export async function onRequestPost({ request, env }) {
       ...result
     }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
-    return Response.json({ ok: false, message: error.message || String(error) }, {
+    return Response.json({ ok: false, message: error.message || String(error),
+      canRecheck: ['PAYSTACK_VERIFICATION_PENDING', 'PAYSTACK_VERIFICATION_UNAVAILABLE'].includes(error.code) }, {
       status: error.status || 500,
       headers: { 'Cache-Control': 'no-store' }
     });

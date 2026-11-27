@@ -23,7 +23,9 @@ async function confirmPayment() {
       body: JSON.stringify({ reference, registrationReference })
     });
     const data = await response.json().catch(() => null);
-    if (!response.ok || !data?.ok) throw new Error(data?.message || 'Subscription payment could not be confirmed.');
+    if (!response.ok || !data?.ok) {
+      throw Object.assign(new Error(data?.message || 'Subscription payment could not be confirmed.'), { canRecheck: data?.canRecheck === true });
+    }
     message.textContent = data.message;
     const nextUrl = data.activationUrl || data.loginUrl || data.portalUrl;
     const nextLabel = data.activationUrl ? 'Create administrator account' : data.loginUrl ? 'Sign in to organisation' : 'Open organisation portal';
@@ -34,7 +36,18 @@ async function confirmPayment() {
     result.innerHTML = `<dl class="subscription-confirmation-summary"><div><dt>Reference</dt><dd>${safeText(data.registrationReference)}</dd></div><div><dt>Plan</dt><dd>${safeText(data.plan)}</dd></div>${paymentSummary}<div><dt>Workspace</dt><dd>${data.workspacePending ? 'Being prepared' : 'Ready'}</dd></div></dl>${data.receiptUrl ? `<p><a class="settings-link" href="${safeText(data.receiptUrl)}">View / print payment receipt</a></p>` : ''}${nextUrl ? `<p><a class="settings-link" href="${safeText(nextUrl)}">${safeText(nextLabel)}</a></p>` : ''}`;
   } catch (error) {
     message.textContent = 'Payment confirmation needs attention.';
-    result.innerHTML = `<p class="status bad">${safeText(error.message || error)}</p>`;
+    result.innerHTML = `<p class="status bad">${safeText(error.message || error)}</p><p>Payment reference: ${safeText(reference)}</p>`;
+    if (error.canRecheck) {
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.textContent = 'Check payment status again';
+      retry.addEventListener('click', () => {
+        retry.disabled = true;
+        message.textContent = 'Checking the existing payment with Paystack…';
+        confirmPayment();
+      }, { once: true });
+      result.append(retry);
+    }
   }
 }
 

@@ -217,7 +217,7 @@ function requestPlatformTransferDecision(approve, reference) {
   document.getElementById('platformDecisionSubscriber').textContent = transfer.OrganisationName || transfer.RegistrationReference || 'Subscriber';
   document.getElementById('platformDecisionPlan').textContent = [transfer.Plan, transfer.BillingCycle].filter(Boolean).join(' • ') || '—';
   document.getElementById('platformDecisionAmount').textContent = platformPaymentMoney(transfer.Amount, transfer.Currency);
-  document.getElementById('platformDecisionReference').textContent = transfer.BankReference || reference || '—';
+  document.getElementById('platformDecisionReference').textContent = [transfer.BankReference || reference, transfer.TransferNarration].filter(Boolean).join(' · ') || '—';
   document.getElementById('platformTransferDecisionNoteLabel').textContent = approve ? 'Approval note (optional)' : 'Rejection reason';
   platformTransferDecisionNotes.value = '';
   platformTransferDecisionNotes.required = rejecting;

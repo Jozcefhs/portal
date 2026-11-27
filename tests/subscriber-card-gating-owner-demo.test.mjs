@@ -5,6 +5,7 @@ import test from 'node:test';
 import { paystackCardVerificationAmount } from '../functions/api/register-organization.js';
 import {
   requestPaystackCardVerificationRefund,
+  verifySubscriptionTransaction,
   verifiedPaystackCardFields
 } from '../functions/api/verify-subscription-payment.js';
 import { tenantProjectAssignmentEligibility } from '../functions/lib/tenant-project-pool.js';
@@ -16,7 +17,7 @@ const poolApiSource = await readFile(new URL('../functions/api/tenant-project-po
 const poolUiSource = await readFile(new URL('../plan-management.html', import.meta.url), 'utf8');
 const poolClientSource = await readFile(new URL('../js/plan-management.js', import.meta.url), 'utf8');
 
-test('tenant projects require verified-card evidence except for the explicit owner demo', () => {
+test('tenant projects require verified payment evidence or an authorised owner demo', () => {
   assert.equal(tenantProjectAssignmentEligibility({ PaymentStatus: 'Paid' }).eligible, false);
   assert.equal(tenantProjectAssignmentEligibility({
     CardVerificationStatus: 'Verified',
@@ -29,6 +30,36 @@ test('tenant projects require verified-card evidence except for the explicit own
     CardVerificationExempt: true,
     PaymentStatus: 'Owner Authorized'
   }).eligible, true);
+});
+
+test('first-time transfers can provision only after approval of the matching paid-plan reference', () => {
+  const registration = { Plan: 'Flex', Price: 709500, DirectTransferReference: 'TRF-1', PaymentStatus: 'Awaiting Verification' };
+  assert.equal(tenantProjectAssignmentEligibility(registration).eligible, false);
+  assert.equal(tenantProjectAssignmentEligibility(registration, 'TRF-2').eligible, false);
+  assert.equal(tenantProjectAssignmentEligibility(registration, 'TRF-1').eligible, true);
+  const settled = { ...registration, PaymentStatus: 'Paid', SubscriptionPaymentProvider: 'Direct Bank Transfer', SubscriptionPaymentReference: 'TRF-1' };
+  assert.equal(tenantProjectAssignmentEligibility(settled).eligible, true);
+  assert.equal(tenantProjectAssignmentEligibility({ ...settled, SubscriptionPaymentReference: 'TRF-2' }).eligible, false);
+  assert.equal(tenantProjectAssignmentEligibility({ ...registration, Plan: 'Free' }, 'TRF-1').eligible, false);
+  assert.equal(tenantProjectAssignmentEligibility({ ...registration, Price: 0 }, 'TRF-1').eligible, false);
+});
+
+test('Paystack verification checks the payment outcome and the transaction reference', async (t) => {
+  let transaction = { reference: 'DMX-SUB-1', status: 'failed' };
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ status: true, message: 'Verification successful', data: transaction }));
+  const verify = () => verifySubscriptionTransaction({ PAYSTACK_SECRET_KEY: 'fixture' }, 'DMX-SUB-1');
+  await assert.rejects(verify, { code: 'PAYSTACK_PAYMENT_UNSUCCESSFUL', message: /payment failed/i });
+  transaction.gateway_response = 'Denied by Fraud System.';
+  await assert.rejects(verify, { code: 'PAYSTACK_SECURITY_DECLINE', message: /security checks/ });
+  transaction.reference = 'different';
+  await assert.rejects(verify, /different payment reference/);
+  transaction.reference = 'DMX-SUB-1';
+  transaction.status = 'pending';
+  await assert.rejects(verify, { code: 'PAYSTACK_VERIFICATION_PENDING' });
+  transaction.status = 'success';
+  assert.equal((await verify()).reference, transaction.reference);
+  transaction.reference = 'different-reference';
+  await assert.rejects(verify, /different payment reference/);
 });
 
 test('free trial uses the supported minimum verification amount and Paystack card-only checkout', () => {
