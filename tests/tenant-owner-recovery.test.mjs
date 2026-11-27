@@ -6,6 +6,7 @@ import { readFile } from 'node:fs/promises';
 import * as signing from '../functions/lib/tenant-control-plane.js';
 import { activeTenantControlRecord } from '../functions/lib/tenant-email-provider.js';
 import { contactOwnerRegistry } from '../functions/lib/owner-recovery-client.js';
+import { escapeEmailHtml } from '../functions/lib/email-service.js';
 
 const source = (await readFile(new URL('../functions/api/tenant-owner-recovery.js', import.meta.url), 'utf8'))
   .replace(/^import .*;\r?$/gm, '').replace(/^export /gm, '');
@@ -22,7 +23,7 @@ function fixture() {
     CloudflareProject: 'example-tenant', Email: 'original-owner@example.test', AdminUsername: details.founderUsername,
     AdminActivatedAt: activation.UsedAt, Status: 'Active', SubscriptionStatus: 'Active', Edition: 'school', TenantControlPublicKey: keys.publicKey };
   const mail = [], receipts = new Set();
-  const context = vm.createContext({ ...signing, crypto, Date, Response, activeTenantControlRecord,
+  const context = vm.createContext({ ...signing, crypto, Date, Response, activeTenantControlRecord, escapeEmailHtml,
     requirePlatformFirestoreEnv: () => ({}),
     getDocument: (_env, collection, id) => collection === 'tenantActivations' && id === activation.ActivationId
       ? activation : collection === 'tenantRegistrations' && id === registration.Reference ? registration : null,
@@ -47,6 +48,9 @@ test('central delivery uses only the completed registration, returns a digest an
   assert.equal(f.mail.length, 1);
   assert.equal(f.mail[0].toEmail, 'original-owner@example.test');
   const code = f.mail[0].textContent.match(/[a-f0-9]{48}/)[0];
+  assert.deepEqual(f.mail[0].htmlContent.match(/[a-f0-9]{48}/g), [code]);
+  assert.ok(f.mail[0].htmlContent.includes(f.details.portalHost));
+  assert.match(f.mail[0].htmlContent, /15 minutes/);
   assert.equal(challenge.codeHash, await signing.tenantControlSecretHash(code));
   assert.ok(!JSON.stringify(challenge).includes(code));
   assert.equal(challenge.email, undefined);
