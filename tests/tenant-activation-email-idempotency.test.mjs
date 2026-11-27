@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import {
   activationEmailDeliveryDecision,
+  issueTenantActivation,
   sendPlatformActivationEmail,
   TENANT_ACTIVATION_EMAIL_CLAIM_MINUTES,
   TENANT_ACTIVATION_TTL_HOURS
@@ -11,6 +13,54 @@ import {
 const now = Date.parse('2026-09-17T12:00:00.000Z');
 const future = new Date(now + TENANT_ACTIVATION_TTL_HOURS * 60 * 60 * 1000).toISOString();
 const past = new Date(now - 1000).toISOString();
+
+test('a paid registration with a retry-safe failure sends one usable activation link through the Firestore claim', async (t) => {
+  const registration = {
+    Reference: 'registration-test', WorkspaceId: 'school-test', PortalUrl: 'https://school.example',
+    OrganisationName: 'Example School', Email: 'owner@example.org', PaymentStatus: 'Paid',
+    ActivationEmailDeliveryStatus: 'Failed', ActivationEmailRetrySafe: true
+  };
+  const fields = Object.fromEntries(Object.entries(registration).map(([key, value]) =>
+    [key, typeof value === 'boolean' ? { booleanValue: value } : { stringValue: value }]));
+  const registrationPath = 'tenantRegistrations/registration-test';
+  const documents = new Map([[registrationPath, { fields, name: registrationPath, updateTime: new Date().toISOString() }]]);
+  const emails = [];
+  t.mock.method(globalThis, 'fetch', async (endpoint, options = {}) => {
+    const url = new URL(endpoint);
+    if (url.origin === 'https://oauth2.googleapis.com') return Response.json({ access_token: 'fixture', expires_in: 3600 });
+    if (url.origin === 'https://api.brevo.com') {
+      emails.push(JSON.parse(options.body));
+      return Response.json({ messageId: 'delivery-fixture' }, { status: 201 });
+    }
+    assert.equal(url.hostname, 'firestore.googleapis.com');
+    let path = url.pathname.split('/documents/')[1];
+    if (options.method === 'POST') path += '/' + url.searchParams.get('documentId');
+    const previous = documents.get(path);
+    if (!options.body) return previous ? Response.json(previous) : Response.json({}, { status: 404 });
+    const expectedVersion = url.searchParams.get('currentDocument.updateTime');
+    if (expectedVersion && previous?.updateTime !== expectedVersion) return Response.json({}, { status: 412 });
+    const document = {
+      name: path, updateTime: new Date().toISOString(),
+      fields: { ...previous?.fields, ...JSON.parse(options.body).fields }
+    };
+    documents.set(path, document);
+    return Response.json(document);
+  });
+  const env = {
+    FIREBASE_PROJECT_ID: 'fixture', FIREBASE_CLIENT_EMAIL: 'fixture@example.org',
+    FIREBASE_PRIVATE_KEY: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' }),
+    BREVO_API_KEY: 'fixture', DYNAMAX_SENDER_EMAIL: 'sender@example.org'
+  };
+  const first = await issueTenantActivation(env, { Reference: registration.Reference });
+  assert.equal(first.emailStatus, 'Sent', first.emailMessage);
+  const repeat = await issueTenantActivation(env, { Reference: registration.Reference });
+  assert.equal(repeat.emailDeliverySuppressed, true);
+  assert.equal(emails.length, 1);
+  assert.equal(emails[0].to[0].email, registration.Email);
+  assert.ok(emails[0].textContent.includes(first.activationUrl));
+  assert.equal(new URL(first.activationUrl).origin, registration.PortalUrl);
+  assert.equal(documents.get(registrationPath).fields.ActivationEmailDeliveryStatus.stringValue, 'Sent');
+});
 
 test('activation delivery addresses the registered contact and includes the single-use workspace link', async (t) => {
   const url = 'https://school.example/activate-account.html#activation=fixture&token=fixture';
