@@ -1,6 +1,29 @@
 const status = document.getElementById('recoveryStatus');
+const ownerSection = document.getElementById('owner-recovery');
+const recoveryType = document.getElementById('recoveryType');
 let busy = false;
-if (window.location.hash === '#owner-recovery') document.getElementById('owner-recovery').open = true;
+
+function selectRecoveryType(type) {
+  const owner = type === 'owner';
+  const minimum = owner ? 12 : 6;
+  recoveryType.value = type;
+  ownerSection.open = owner;
+  document.getElementById('newPasswordLabel').textContent = `New password (${minimum}–128 characters)`;
+  document.getElementById('newPassword').minLength = minimum;
+  document.getElementById('confirmPassword').minLength = minimum;
+  const fragment = owner ? '#owner-recovery' : '#staff-recovery';
+  if (window.location.hash !== fragment) window.history.replaceState(null, '', fragment);
+}
+
+function readRecoveryType() {
+  selectRecoveryType(window.location.hash === '#owner-recovery' ? 'owner' : 'staff');
+}
+readRecoveryType();
+window.addEventListener('hashchange', readRecoveryType);
+recoveryType.addEventListener('change', () => selectRecoveryType(recoveryType.value));
+ownerSection.addEventListener('toggle', () => {
+  if (ownerSection.open && recoveryType.value !== 'owner') selectRecoveryType('owner');
+});
 
 function result(message, ok) {
   status.textContent = message;
@@ -11,6 +34,7 @@ function result(message, ok) {
 
 async function submit(form, action) {
   if (busy) return;
+  if (action === 'request' || action === 'request-owner') selectRecoveryType(action === 'request-owner' ? 'owner' : 'staff');
   const data = Object.fromEntries(new FormData(form));
   if (action === 'reset' && data.password !== data.confirmPassword) {
     result('The new passwords do not match.', false);
@@ -27,8 +51,12 @@ async function submit(form, action) {
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...data, action })
     });
     const payload = await response.json();
-    if (!response.ok || !payload.ok) throw new Error(payload.message || 'Recovery is temporarily unavailable.');
-    if (action === 'reset') form.reset();
+    if (!response.ok || payload.ok !== true) throw new Error(payload.message || 'Recovery is temporarily unavailable.');
+    if (action === 'reset') {
+      form.reset();
+      window.location.replace(document.getElementById('staffSignInLink').href);
+      return;
+    }
     result(payload.message, true);
   } catch (error) {
     result(error instanceof TypeError ? 'The connection failed. If you submitted a reset, try signing in before requesting another code.' : error.message, false);
