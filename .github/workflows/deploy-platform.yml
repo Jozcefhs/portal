@@ -35,7 +35,7 @@ jobs:
         run: npm ci --ignore-scripts --omit=dev
 
       - name: Verify platform deployment contract
-        run: node --test tests/platform-deployment-workflow.test.mjs
+        run: node --test tests/platform-deployment-workflow.test.mjs tests/platform-direct-bank-transfer.test.mjs tests/subscriber-card-gating-owner-demo.test.mjs
 
       - name: Synchronize optional Google email OAuth credentials
         shell: bash

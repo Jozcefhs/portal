@@ -49,6 +49,11 @@ test('Paystack verification checks the payment outcome and the transaction refer
   t.mock.method(globalThis, 'fetch', async () => Response.json({ status: true, message: 'Verification successful', data: transaction }));
   const verify = () => verifySubscriptionTransaction({ PAYSTACK_SECRET_KEY: 'fixture' }, 'DMX-SUB-1');
   await assert.rejects(verify, { code: 'PAYSTACK_PAYMENT_UNSUCCESSFUL', message: /payment failed/i });
+  transaction.gateway_response = 'Denied by Fraud System.';
+  await assert.rejects(verify, { code: 'PAYSTACK_SECURITY_DECLINE', message: /security checks/ });
+  transaction.reference = 'different';
+  await assert.rejects(verify, /different payment reference/);
+  transaction.reference = 'DMX-SUB-1';
   transaction.status = 'pending';
   await assert.rejects(verify, { code: 'PAYSTACK_VERIFICATION_PENDING' });
   transaction.status = 'success';

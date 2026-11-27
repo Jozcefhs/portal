@@ -106,7 +106,13 @@ export async function verifySubscriptionTransaction(env, reference) {
     error.code = 'PAYSTACK_VERIFICATION_UNAVAILABLE';
     throw error;
   }
+  if (clean(data.data.reference) !== reference) throw Object.assign(new Error('Paystack returned a different payment reference.'), { status: 409 });
   const status = clean(data.data.status).toLowerCase();
+  if (status === 'failed' && /^(?:denied|blocked) by (?:the )?fraud system[.!]?$/i.test(clean(data.data.gateway_response))) {
+    throw Object.assign(new Error('Paystack declined this payment during its security checks. Contact Dynamax with the transaction reference for a Paystack review.'), {
+      status: 409, code: 'PAYSTACK_SECURITY_DECLINE'
+    });
+  }
   if (status !== 'success') {
     const pending = ['pending', 'ongoing', 'processing', 'queued'].includes(status);
     const message = pending ? 'Paystack is still processing this payment. Check this same reference again.'
@@ -114,7 +120,6 @@ export async function verifySubscriptionTransaction(env, reference) {
       : 'Paystack has not confirmed a successful payment for this reference. Contact Dynamax if you were debited.';
     throw Object.assign(new Error(message), { status: 409, code: pending ? 'PAYSTACK_VERIFICATION_PENDING' : 'PAYSTACK_PAYMENT_UNSUCCESSFUL' });
   }
-  if (clean(data.data.reference) !== reference) throw Object.assign(new Error('Paystack returned a different payment reference.'), { status: 409 });
   return data.data;
 }
 

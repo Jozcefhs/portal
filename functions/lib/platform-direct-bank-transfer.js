@@ -35,9 +35,14 @@ export function validatePlatformPaymentSettings(input = {}) {
   return settings;
 }
 
-export async function loadPlatformPaymentSettings(env) {
+export async function loadPlatformPaymentSettings(env, readDocument = getDocument) {
   const platformEnv = requirePlatformFirestoreEnv(env);
-  const saved = await getDocument(platformEnv, 'settings', PLATFORM_PAYMENT_SETTINGS_DOCUMENT).catch(() => null);
+  let saved;
+  try {
+    saved = await readDocument(platformEnv, 'settings', PLATFORM_PAYMENT_SETTINGS_DOCUMENT);
+  } catch {
+    throw paymentError('Subscription payment methods could not be loaded. Please try again.', 503);
+  }
   return normalizePlatformPaymentSettings(saved || {});
 }
 

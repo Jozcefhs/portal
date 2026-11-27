@@ -1,4 +1,5 @@
 import { resolve } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import {
   SUBSCRIPTION_MODULE_CATALOG_VERSION,
@@ -71,6 +72,34 @@ async function fetchJson(url) {
   return response.json();
 }
 
+export async function verifyRegistrationCheckout(baseUrl) {
+  const get = async (url) => {
+    const response = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(15000) });
+    if (!response.ok) throw new Error('Registration checkout returned HTTP ' + response.status);
+    return response;
+  };
+  const pageUrl = new URL('/register-organization', baseUrl);
+  const html = await (await get(pageUrl)).text();
+  const scripts = [...html.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/gi)]
+    .map(match => new URL(match[1], pageUrl));
+  for (const file of ['js/payment-methods.js', 'js/register-organization.js']) {
+    const asset = scripts.find(url => url.origin === pageUrl.origin && url.pathname === '/' + file);
+    if (!asset) throw new Error('Registration checkout is missing ' + file);
+    const expected = await readFile(new URL('../' + file, import.meta.url), 'utf8');
+    const actual = await (await get(asset)).text();
+    if (actual.replaceAll('\r\n', '\n') !== expected.replaceAll('\r\n', '\n')) {
+      throw new Error('Registration checkout is serving a different version of ' + file);
+    }
+  }
+  const response = await get(new URL('/api/platform-payment-methods', baseUrl));
+  const { ok, methods } = await response.json();
+  if (!ok || typeof methods?.online?.enabled !== 'boolean' || typeof methods?.directTransfer?.enabled !== 'boolean'
+      || !/\bno-store\b/i.test(response.headers.get('cache-control') || '')) {
+    throw new Error('Registration checkout could not verify the current payment settings.');
+  }
+  return { online: methods.online.enabled, directTransfer: methods.directTransfer.enabled };
+}
+
 export async function verifyPlatformDeployment(options = {}) {
   const baseUrl = new URL(requiredOption(options.url, 'Platform URL'));
   const attempts = Math.max(1, Number(options.attempts || 8));
@@ -83,7 +112,8 @@ export async function verifyPlatformDeployment(options = {}) {
       const catalogUrl = new URL(`/api/plan-catalog?${cacheKey}`, baseUrl);
       const tutorialUrl = new URL(`/api/tutorial-catalog?${cacheKey}`, baseUrl);
       const plan = validatePlatformCatalogPayload(await fetchJson(catalogUrl));
-      return { ...plan, ...validateTutorialCatalogPayload(await fetchJson(tutorialUrl)) };
+      const tutorial = validateTutorialCatalogPayload(await fetchJson(tutorialUrl));
+      return { ...plan, ...tutorial, checkout: await verifyRegistrationCheckout(baseUrl) };
     } catch (error) {
       lastError = error;
       if (attempt < attempts && delayMs) {
