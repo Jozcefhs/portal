@@ -434,7 +434,7 @@ export async function sendConfiguredEmail(env, {
       senderName: clean(senderOverride?.name) || senderProfileConfig.senderName,
       fallbackSenderEmail: overrideEmail,
       fallbackSenderName: clean(senderOverride?.name) || senderProfileConfig.fallbackSenderName,
-      replyToEmail: clean(senderOverride?.replyToEmail),
+      replyToEmail: clean(senderOverride?.replyToEmail) || clean(env.DYNAMAX_REPLY_TO_EMAIL),
       replyToName: clean(senderOverride?.replyToName)
     };
   }
