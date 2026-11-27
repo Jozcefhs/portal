@@ -20,11 +20,15 @@ test('activation delivery addresses the registered contact and includes the sing
     deliveries.push(JSON.parse(options.body));
     return Response.json({ messageId: 'fixture-id' }, { status: 201 });
   });
-  const result = await sendPlatformActivationEmail({ BREVO_API_KEY: 'fixture', DYNAMAX_SENDER_EMAIL: 'sender@example.org' },
+  const result = await sendPlatformActivationEmail({
+    BREVO_API_KEY: 'fixture', DYNAMAX_SENDER_EMAIL: 'sender@notify.example.org', DYNAMAX_REPLY_TO_EMAIL: 'support@example.org'
+  },
     { Email: 'Owner@example.org', OrganisationName: 'Example school' }, url);
   assert.equal(result.providerMessageId, 'fixture-id');
   assert.equal(deliveries.length, 1);
   assert.equal(deliveries[0].to[0].email, 'owner@example.org');
+  assert.equal(deliveries[0].sender.email, 'sender@notify.example.org');
+  assert.equal(deliveries[0].replyTo.email, 'support@example.org');
   assert.ok(deliveries[0].textContent.includes(url));
   assert.ok(deliveries[0].htmlContent.includes(url.replace('&', '&amp;')));
   assert.match(deliveries[0].subject, /Example school/);
