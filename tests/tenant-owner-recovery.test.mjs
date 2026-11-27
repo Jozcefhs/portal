@@ -87,7 +87,7 @@ test('tenant and registry exchange signed requests without forwarding credential
     TENANT_CONTROL_PLANE_PRIVATE_KEY: keys.privateKey };
   const fetchMock = t.mock.method(globalThis, 'fetch', async (url, options) => {
     assert.equal(url.href, 'https://platform.example.test/api/tenant-owner-recovery');
-    assert.equal(options.redirect, 'error');
+    assert.equal(options.redirect, 'manual');
     const details = JSON.parse(options.body);
     assert.deepEqual(Object.keys(details).sort(), Object.keys(f.details).sort());
     const reply = await f.invoke(details, options.headers['X-Dynamax-Tenant-Signature']);
@@ -101,4 +101,7 @@ test('tenant and registry exchange signed requests without forwarding credential
   assert.equal(f.mail.length, 1);
   await assert.rejects(contactOwnerRegistry({ ...env, CANONICAL_PORTAL_URL: env.PUBLIC_PORTAL_URL }, identity, first, 'issue-owner-recovery'));
   assert.equal(fetchMock.mock.callCount(), 2);
+  fetchMock.mock.mockImplementation(async () => Response.redirect('https://elsewhere.example.test', 307));
+  await assert.rejects(contactOwnerRegistry(env, identity, first, 'issue-owner-recovery'), /could not be confirmed/);
+  assert.equal(fetchMock.mock.callCount(), 3);
 });

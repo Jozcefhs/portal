@@ -19,7 +19,8 @@ export async function contactOwnerRegistry(env, identity, first, action) {
     activationId: first.ActivationId, founderUsername: first.Username, requestId: crypto.randomUUID(),
     issuedAt: new Date().toISOString() };
   const signature = await signTenantControlRequest(env.TENANT_CONTROL_PLANE_PRIVATE_KEY, details);
-  const response = await fetch(central, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(25000),
+  // Workers supports manual redirect handling. Reject every non-2xx response below.
+  const response = await fetch(central, { method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(25000),
     headers: { 'Content-Type': 'application/json', 'X-Dynamax-Tenant-Signature': signature },
     body: JSON.stringify(details) });
   if (!response.ok) throw new Error('The registered owner could not be confirmed.');
