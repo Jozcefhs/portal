@@ -238,7 +238,7 @@ async function decideTransfer(env, platformEnv, body) {
     return { message: 'The subscription transfer was rejected. No plan was activated.' };
   }
 
-  await updateDocumentIfCurrent(platformEnv, 'subscriptionPayments', reference, {
+  const processingPayment = await updateDocumentIfCurrent(platformEnv, 'subscriptionPayments', reference, {
     ...withoutFirestoreMetadata(payment),
     Status: 'Approval Processing',
     ReviewNotes: notes,
@@ -266,6 +266,7 @@ async function decideTransfer(env, platformEnv, body) {
       savedRegistration: registration,
       registrationReference,
       provider: 'Direct Bank Transfer',
+      approvedTransferReference: reference,
       paidAt: reviewedAt,
       providerFields: {
         BankReference: clean(payment.BankReference),
@@ -307,12 +308,12 @@ async function decideTransfer(env, platformEnv, body) {
       result: { ...result, updatedRegistration: undefined }
     };
   } catch (error) {
-    await upsertDocument(platformEnv, 'subscriptionPayments', reference, {
+    await updateDocumentIfCurrent(platformEnv, 'subscriptionPayments', reference, {
       ...withoutFirestoreMetadata(payment),
       Status: 'Awaiting Verification',
       LastError: clean(error.message || error).slice(0, 500),
       UpdatedAt: new Date().toISOString()
-    }).catch(() => null);
+    }, processingPayment).catch(() => null);
     throw error;
   }
 }

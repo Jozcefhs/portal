@@ -94,7 +94,7 @@ test('all successful subscription methods use the shared receipt activation path
   const webhook = await readFile(new URL('../functions/api/paystack-subscription-webhook.js', import.meta.url), 'utf8').catch(() => '');
   const callback = await readFile(new URL('../js/subscription-payment.js', import.meta.url), 'utf8');
   const receiptApi = await readFile(new URL('../functions/api/subscription-receipt.js', import.meta.url), 'utf8');
-  assert.match(verify, /upsertDocument\(platformEnv, 'subscriptionReceipts'/);
+  assert.match(verify, /collectionPath: 'subscriptionReceipts', documentId: reference, data: receipt/);
   assert.match(verify, /deliverSubscriptionReceiptEmail/);
   assert.match(directTransfer, /activateSavedSubscriptionPayment/);
   assert.match(verify, /recordVerifiedSubscriptionPayment/);

@@ -106,8 +106,10 @@ test('payment activation replaces the previous plan marker with the paid selecti
       clean, safeId: clean, withoutFirestoreMetadata, subscriptionIntentModuleCatalogVersion,
       paidSubscriptionRecoveryFields: () => ({ SubscriptionStatus: 'Active' }),
       buildSubscriptionReceipt: () => ({ ReceiptNo: 'FIXTURE-1', IssuedAt: '2026-10-11T00:00:00.000Z' }),
-      patchDocumentFields: async () => {},
-      upsertDocument: async (_env, collection, id, data) => writes.push({ collection, id, data: structuredClone(data) }),
+      batchCommitDocuments: async (_env, batch) => {
+        assert.deepEqual(Array.from(batch, write => write.collectionPath), ['subscriptionPayments', 'tenantRegistrations', 'subscriptionReceipts']);
+        for (const write of batch) writes.push({ collection: write.collectionPath, id: write.documentId, data: structuredClone(write.data) });
+      },
       syncRegistrationSubscriptionToWorkspace: async (_env, registration) => synchronized.push(structuredClone(registration)),
       deliverSubscriptionReceiptEmail: async () => ({ sent: false, status: 'Fixture' }),
       issueTenantActivation: async () => ({ alreadyActivated: true }),

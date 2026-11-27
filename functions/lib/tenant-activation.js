@@ -163,7 +163,7 @@ export function tenantActivationUrl(portalUrl, activationId, token) {
   return url.href;
 }
 
-async function sendPlatformActivationEmail(env, registration, activationUrl) {
+export async function sendPlatformActivationEmail(env, registration, activationUrl) {
   const apiKey = clean(env.BREVO_API_KEY);
   const senderEmail = clean(env.DYNAMAX_SENDER_EMAIL || env.BREVO_SENDER_EMAIL);
   const senderName = clean(env.DYNAMAX_SENDER_NAME || env.BREVO_SENDER_NAME || 'Dynamax');

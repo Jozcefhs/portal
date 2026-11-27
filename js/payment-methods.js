@@ -21,7 +21,8 @@
     const endpoint = new URL(clean(methodsUrl) || '/api/payment-methods', window.location.origin);
     endpoint.searchParams.set('branch', branch);
     const cacheKey = `${endpoint.pathname}${endpoint.search}`;
-    if (cache.has(cacheKey)) return cache.get(cacheKey);
+    const platformCheckout = endpoint.pathname === '/api/platform-payment-methods';
+    if (!platformCheckout && cache.has(cacheKey)) return cache.get(cacheKey);
     const promise = fetch(endpoint, {
       credentials: 'same-origin', cache: 'no-store'
     }).then(async (response) => {
@@ -32,7 +33,7 @@
       cache.delete(cacheKey);
       throw error;
     });
-    cache.set(cacheKey, promise);
+    if (!platformCheckout) cache.set(cacheKey, promise);
     return promise;
   }
 
@@ -91,6 +92,7 @@
         <p class="direct-transfer-warning"><strong>Awaiting verification:</strong> submitting this transfer does not mark it paid. A receipt is issued only after an authorised user verifies the bank credit.</p>
         ${amountText ? `<p class="direct-transfer-amount"><small>Transfer exactly</small><strong>${escapeHtml(amountText)}</strong></p>` : ''}
         <dl><div><dt>Bank</dt><dd>${escapeHtml(transfer.bankName)}</dd></div><div><dt>Account name</dt><dd>${escapeHtml(transfer.accountName)}</dd></div><div><dt>Account number</dt><dd>${escapeHtml(transfer.accountNumber)}</dd></div><div><dt>Amount currency</dt><dd>${escapeHtml(transfer.currency)}</dd></div></dl>
+        ${options.transferNarration ? `<p>Transfer narration <strong>${escapeHtml(options.transferNarration)}</strong></p>` : ''}
         ${transfer.instructions ? `<p class="direct-transfer-instructions">${escapeHtml(transfer.instructions)}</p>` : ''}
         <label>Bank transaction reference <input name="bankReference" maxlength="160" autocomplete="off" placeholder="Required after making the transfer"></label>
         <label>Payment proof <span>(optional, maximum 450 KB)</span><input name="paymentProof" type="file" accept="image/png,image/jpeg,image/webp,application/pdf"></label>
@@ -132,7 +134,7 @@
           const bankReference = clean(form.elements.bankReference.value);
           if (!bankReference) throw new Error('Enter the bank transaction reference.');
           const proof = await readProof(form.elements.paymentProof.files?.[0]);
-          finish({ paymentMethod: 'direct_bank_transfer', bankReference, ...proof });
+          finish({ paymentMethod: 'direct_bank_transfer', bankReference, transferNarration: options.transferNarration || '', ...proof });
         } catch (error) {
           status.textContent = error.message || String(error);
         }

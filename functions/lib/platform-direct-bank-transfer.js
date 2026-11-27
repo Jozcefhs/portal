@@ -70,6 +70,7 @@ export function platformTransferEvidence(input = {}) {
   }
   return {
     BankReference: bankReference,
+    TransferNarration: /^DMX-[A-Z0-9]{1,16}$/.test(input.transferNarration || '') ? input.transferNarration : '',
     ProofDataUrl: proofDataUrl,
     ProofFileName: clean(input.proofFileName || input.ProofFileName).replace(/[^A-Za-z0-9._ -]/g, '').slice(0, 120)
   };
@@ -93,6 +94,7 @@ export function publicPlatformTransferRecord(row = {}) {
     Amount: Number(row.Amount || 0),
     Currency: clean(row.Currency || 'NGN'),
     BankReference: clean(row.BankReference),
+    TransferNarration: clean(row.TransferNarration),
     ProofFileName: clean(row.ProofFileName),
     HasProof: Boolean(clean(row.ProofDataUrl)),
     Status: clean(row.Status),

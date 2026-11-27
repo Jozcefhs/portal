@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
   activationEmailDeliveryDecision,
+  sendPlatformActivationEmail,
   TENANT_ACTIVATION_EMAIL_CLAIM_MINUTES,
   TENANT_ACTIVATION_TTL_HOURS
 } from '../functions/lib/tenant-activation.js';
@@ -10,6 +11,24 @@ import {
 const now = Date.parse('2026-09-17T12:00:00.000Z');
 const future = new Date(now + TENANT_ACTIVATION_TTL_HOURS * 60 * 60 * 1000).toISOString();
 const past = new Date(now - 1000).toISOString();
+
+test('activation delivery addresses the registered contact and includes the single-use workspace link', async (t) => {
+  const url = 'https://school.example/activate-account.html#activation=fixture&token=fixture';
+  const deliveries = [];
+  t.mock.method(globalThis, 'fetch', async (endpoint, options) => {
+    assert.equal(String(endpoint), 'https://api.brevo.com/v3/smtp/email');
+    deliveries.push(JSON.parse(options.body));
+    return Response.json({ messageId: 'fixture-id' }, { status: 201 });
+  });
+  const result = await sendPlatformActivationEmail({ BREVO_API_KEY: 'fixture', DYNAMAX_SENDER_EMAIL: 'sender@example.org' },
+    { Email: 'Owner@example.org', OrganisationName: 'Example school' }, url);
+  assert.equal(result.providerMessageId, 'fixture-id');
+  assert.equal(deliveries.length, 1);
+  assert.equal(deliveries[0].to[0].email, 'owner@example.org');
+  assert.ok(deliveries[0].textContent.includes(url));
+  assert.ok(deliveries[0].htmlContent.includes(url.replace('&', '&amp;')));
+  assert.match(deliveries[0].subject, /Example school/);
+});
 
 test('sent and uncertain activation email outcomes suppress automatic duplicate delivery', () => {
   const sent = activationEmailDeliveryDecision({

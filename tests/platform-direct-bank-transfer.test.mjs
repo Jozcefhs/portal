@@ -59,6 +59,7 @@ test('Dynamax registration and upgrades use the central payment chooser', async 
   assert.match(registrationHtml, /js\/payment-methods\.js/);
   assert.ok(registrationHtml.indexOf('js/payment-methods.js') < registrationHtml.indexOf('js/register-organization.js'));
   assert.match(registrationClient, /methodsUrl:\s*'\/api\/platform-payment-methods'/);
+  assert.doesNotMatch(registrationClient, /allowDirectTransfer:\s*false/);
   assert.match(registrationClient, /PaymentMethod:\s*paymentChoice\.paymentMethod/);
   assert.match(adminHtml, /js\/payment-methods\.js/);
   assert.ok(adminHtml.indexOf('js/payment-methods.js') < adminHtml.indexOf('js/admin.js'));
