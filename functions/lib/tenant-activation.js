@@ -243,7 +243,7 @@ async function claimActivationEmailDelivery(platformEnv, reference, activationId
     const attemptId = crypto.randomUUID();
     const startedAt = new Date().toISOString();
     try {
-      const updated = await patchDocumentFieldsIfCurrent(platformEnv, 'tenantRegistrations', reference, {
+      await patchDocumentFieldsIfCurrent(platformEnv, 'tenantRegistrations', reference, {
         ActivationStatus: 'Awaiting first administrator',
         LastActivationIssuedAt: startedAt,
         ActivationEmailDeliveryStatus: 'Sending',
@@ -259,7 +259,8 @@ async function claimActivationEmailDelivery(platformEnv, reference, activationId
         ActivationEmailProviderMessageId: '',
         UpdatedAt: startedAt
       }, current);
-      return { claimed: true, attemptId, startedAt, registration: updated };
+      // The version check guarantees this contact was current when the claim succeeded.
+      return { claimed: true, attemptId, startedAt, registration: current };
     } catch (error) {
       if (error?.code === 'FIRESTORE_WRITE_CONFLICT') continue;
       throw error;
