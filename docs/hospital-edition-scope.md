@@ -2,9 +2,9 @@
 
 Scope confirmed: 26 October 2026, Africa/Lagos.
 
-## Current delivery status (22 November 2026)
+## Current delivery status (28 November 2026)
 
-The Hospital Owner's Demo includes the H14 branch bed census and financial reports. The delivery log below records each deployed workflow and the remaining acceptance work. Waiting-time statistics and posted hospital billing revenue are now included. Next: reconcile the core care pathway and recovery acceptance evidence before practitioner testing. Core clinical and recovery sign-off, specialist workflows and desktop/offline parity remain open.
+The Hospital Owner's Demo includes the core care pathway, branch bed census, waiting-time statistics and posted billing revenue. Recovery checks cover the completed care pathway, paid invoice and encrypted attachments. The record restore has passed against a second Firestore emulator database. A separately hosted Firestore restore and practitioner sign-off are the next acceptance steps. Specialist workflows and desktop/offline parity remain open.
 
 The user wants Hospital to become the fourth Dynamax edition, alongside School, Faith and Other Organisations, and wants every feature in the proposed Hospital scope included. This document is the implementation checklist for that full scope, covering the web companion, desktop and shared backend.
 
@@ -499,3 +499,7 @@ The drill uses a unique synthetic workspace prefix and removes its test file at 
 The recovery drill generates a synthetic completed patient journey, seeds an isolated emulator database, exports one snapshot, encrypts and reopens the archive, and previews a missing-records restore into an empty second database. It compares every exported row with both databases and retries every restore batch. Interrupted hospital exports now require their original continuation token.
 
 Run `firebase emulators:exec --only firestore --config firebase.hospital.json --project demo-hospital-recovery "node scripts/verify-hospital-database-recovery.mjs"`. For a separately authorised cloud exercise, set `GOOGLE_APPLICATION_CREDENTIALS` to the Hospital Owner’s Demo service account and add `--live` to the Node command. The source stays local. The only cloud destination the drill accepts is the empty `hospital-recovery-drill` database in `dynamax-hospital-review`. The drill retains the restored synthetic data for inspection. The staff portal continues to use its configured working database. Practitioner sign-off is still outstanding.
+
+The drill recovered 113 synthetic records across 36 populated collections and replayed all 36 batches. A second preview reported all 113 unchanged. The local emulator source was held fixed during export because emulator 1.21 rejects historical REST GETs. The live staff portal independently returned matching snapshot times for two successive export pages and rejected a missing continuation with HTTP 400. Staff sign-in and the main-branch hospital workspace also passed. The live check made no patient, clinical or financial changes. [Recovery check on GitHub](https://github.com/Jozcefhs/portal/actions/runs/46093319541) · [Hospital deployment b8c7c01e](https://b8c7c01e.dynamax-hospital-review.pages.dev/hospital.html).
+
+All 783 targeted hospital and shared regression checks passed. In the broader repository run, 4,999 checks passed, 13 failed and three were skipped. Each of the 13 failures also reproduced at the previous hospital revision, `12a800b`.
