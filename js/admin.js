@@ -17927,6 +17927,71 @@ function bindAcademicAreaNavigation() {
   });
 }
 
+function pupilPresenceLookup() {
+  if (academicManagementView !== 'presence') return '';
+  return `<form class="academic-management-editor academic-management-editor-wide" data-pupil-presence-lookup>
+    <h3>Find a pupil’s attendance</h3>
+    <label>Pupil name or admission number<input type="search" name="Pupil" required autocomplete="off"></label>
+    <button type="submit">Search pupils</button>
+    <p role="status" data-pupil-lookup-status></p><div data-pupil-lookup-results></div>
+  </form>`;
+}
+
+function bindPupilPresenceLookup() {
+  const form = panelEl.querySelector('[data-pupil-presence-lookup]');
+  if (!form) return;
+  const status = form.querySelector('[data-pupil-lookup-status]');
+  const results = form.querySelector('[data-pupil-lookup-results]');
+  const data = academicManagementData;
+  const scope = { SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId, TermId: academicManagementFilters.termId };
+  const period = [academicLabel(data.sessions, scope.SessionId), academicLabel(data.terms, scope.TermId)].join(' · ');
+  let directory, generation = 0, matches = [];
+  form.elements.Pupil.addEventListener('input', () => {
+    generation++; matches = []; results.replaceChildren(); status.textContent = '';
+  });
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    const query = lower(form.elements.Pupil.value), attempt = ++generation;
+    if (!query) return;
+    status.textContent = 'Searching pupils…';
+    try {
+      directory ??= academicManagementRequest('getPresencePupils', scope).catch(error => { directory = null; throw error; });
+      const { pupils } = await directory;
+      if (!form.isConnected || attempt !== generation) return;
+      matches = pupils.filter(row => lower(row.StudentRef).includes(query) || lower(row.StudentName).includes(query));
+      status.textContent = matches.length > 30 ? `${matches.length} pupils match. Refine your search to see more.`
+        : matches.length ? `${matches.length} matching pupil${matches.length === 1 ? '' : 's'}.` : 'No matching pupils in this section.';
+      results.innerHTML = matches.slice(0, 30).map((pupil,index) => `<p><strong>${escapeHtml(pupil.StudentName)}</strong> · ${escapeHtml(pupil.StudentRef)}
+        <button type="button" class="secondary" data-pupil-report="${index}">Preview / print</button></p>`).join('');
+    } catch (error) { if (attempt === generation) status.textContent = error.message; }
+  });
+  results.addEventListener('click', async event => {
+    const button = event.target.closest('[data-pupil-report]');
+    const pupil = button && matches[Number(button.dataset.pupilReport)];
+    if (!pupil || button.disabled) return;
+    const preview = window.open('', '_blank', 'width=1000,height=760');
+    if (!preview) { status.textContent = 'Allow pop-ups to preview and print attendance.'; return; }
+    preview.opener = null;
+    button.disabled = true;
+    preview.document.body.textContent = 'Loading attendance…';
+    try {
+      const [{ records }, { studentAttendancePrintHtml }] = await Promise.all([
+        academicManagementRequest('getPupilPresence', { ...scope, StudentRef: pupil.StudentRef }),
+        import('./academic-attendance-print.js')
+      ]);
+      if (!form.isConnected || preview.closed) { if (!preview.closed) preview.close(); return; }
+      if (!records.length) { preview.close(); status.textContent = 'No saved daily attendance for this pupil in the selected period.'; return; }
+      preview.document.open();
+      preview.document.write(studentAttendancePrintHtml({ schoolName: document.getElementById('staffBrand')?.innerText.split('\n')[0] || 'School',
+        reference: pupil.StudentRef, name: pupil.StudentName, period, register: 'Daily presence', records,
+        classroom: row => row.Classroom, lesson: () => 'Daily' }));
+      preview.document.close();
+      preview.focus();
+    } catch (error) { if (!preview.closed) preview.close(); status.textContent = error.message; }
+    finally { button.disabled = false; }
+  });
+}
+
 function academicRecordLoadForm(data, title, deferred = false) {
   if (data.teacherWorkspace) {
     const own = data.teacherWorkspace;
@@ -18030,7 +18095,7 @@ function renderAcademicManagement(data = academicManagementData || {}, message =
   }
   if (data.workspaceDataDeferred) {
     panelEl.innerHTML = `${academicManagementHeader(data, rows, 'Settings loaded. Choose the records to load.')}<section class="academic-management-workspace">
-      ${academicRecordLoadForm(data, workspaceTitle, true)}</section>`;
+      ${pupilPresenceLookup()}${academicRecordLoadForm(data, workspaceTitle, true)}</section>`;
     renderModuleSummary('academics', data);
     bindAcademicManagement();
     updateTutorialControls();
@@ -18055,7 +18120,7 @@ function renderAcademicManagement(data = academicManagementData || {}, message =
   else if (academicManagementView === 'readiness') workspace = academicResultsReadinessWorkspace(data);
   else if (academicManagementView === 'cbt') workspace = academicCbtWorkspace(data, rows);
   else workspace = academicStructureWorkspace(data, rows);
-  panelEl.innerHTML = `${academicManagementHeader(data, rows, message)}${academicManagementView !== 'classrooms' && (data.workspaceRecordSelection || data.teacherWorkspace) ? academicRecordLoadForm(data, workspaceTitle) : ''}<section class="academic-management-workspace">${workspace}</section>`;
+  panelEl.innerHTML = `${academicManagementHeader(data, rows, message)}${pupilPresenceLookup()}${academicManagementView !== 'classrooms' && (data.workspaceRecordSelection || data.teacherWorkspace) ? academicRecordLoadForm(data, workspaceTitle) : ''}<section class="academic-management-workspace">${workspace}</section>`;
   organizeAcademicManagementWorkspace(academicManagementView);
   renderModuleSummary('academics', data);
   bindAcademicManagement();
@@ -19145,6 +19210,7 @@ function bindAcademicSubjectBatch(root) {
 }
 
 function bindAcademicManagement() {
+  bindPupilPresenceLookup();
   bindAcademicSubjectBatch(panelEl.querySelector('[data-academic-subject-change-requests]'));
   panelEl.querySelector('[data-staff-meetings]')?.addEventListener('click', () => { void openStaffMeetingWorkspace().catch(error => setStatus(document.getElementById('academicManagementStatus'), error.message, 'bad')); });
   panelEl.querySelectorAll('[data-academic-subject-results]').forEach(button => button.addEventListener('click', event =>

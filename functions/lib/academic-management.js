@@ -2367,7 +2367,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
     teacherWorkspace = academicTeacherWorkspace(teacherSelectors,user,scope,input,focusedView,teacherRegisterOnly);
     input = {...input,SessionId:teacherWorkspace.SessionId,TermId:teacherWorkspace.TermId,
       RecordClassId:teacherWorkspace.ClassId,RecordArmId:teacherWorkspace.ArmId,
-      WorkspaceLoadMode:teacherWorkspace.ArmId ? 'records' : 'navigation'};
+      WorkspaceLoadMode:teacherWorkspace.ArmId && (focusedView !== 'presence' || input.WorkspaceLoadMode === 'records') ? 'records' : 'navigation'};
   }
   const baseStateKeys = registerOnly ? ['sessions', 'terms', 'classes', ...(permissions.canViewClassroomScores ? ['arms'] : []), ...(teacherRegisterOnly ? ['teacherAllocations'] : [])] : academicBootstrapReadKeys(
     academicManagementViewStateKeys(focusedView, permissions), focusedView, input, loadOptions);
@@ -10284,8 +10284,60 @@ export async function revokeAcademicResultClearance(env, user = {}, input = {}) 
   return { ...response, message: `Result clearance revoked for ${record.StudentRef}.` };
 }
 
+async function getIndividualPresence(env, user, input, directory) {
+  const permissions = requireCapability(user, 'enabled');
+  if (permissions.financeView) throw failure('Your role cannot view the class register.', 403);
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const SessionId = clean(input.SessionId), TermId = clean(input.TermId);
+  if (!SessionId || !TermId) throw failure('Select an academic session and term.');
+  const ref = clean(input.StudentRef);
+  if (!directory && (!ref || ref.length > 200)) throw failure('Choose a pupil.');
+  const filters = Object.entries({ BranchId: scope.branchId, SessionId, TermId })
+    .map(([field, value]) => ({ field, op: '==', value }));
+  const refFilter = { field: 'StudentRef', op: 'in', value: [...new Set([ref, lower(ref), ref.toUpperCase()])] };
+  let memberships;
+  const room = row => JSON.stringify([row.ClassId, row.ArmId]);
+  if (permissions.teacherView) {
+    const allocations = await loadScopedAcademicState(env, scope, ['teacherAllocations'], {
+      ClassroomRegisterTeacher: actorUsername(user), SessionId, TermId
+    });
+    const rooms = new Set(allocations.teacherAllocations.filter(row => statusActive(row)
+      && lower(row.TeacherUsername) === actorUsername(user) && ['form teacher','assistant teacher'].includes(lower(row.AllocationRole))).map(room));
+    memberships = rooms.size ? scopedAcademicRows(await queryCollectionPages(env, ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships, {
+      filters: directory ? filters : [...filters, refFilter], maxRows: 50000
+    }), scope).filter(row => rooms.has(room(row))) : [];
+  }
+  if (directory) {
+    const profiles = memberships ? await academicResultBatchRecipients(env, scope, memberships)
+      : (await loadPeople(env, user, scope, { staff: false })).students;
+    const pupils = new Map((memberships || []).map(row => [lower(row.StudentRef), { StudentRef: row.StudentRef, StudentName: row.StudentName || row.StudentRef }]));
+    for (const { StudentName, StudentRef } of displayStudents(profiles)) {
+      if (!memberships || pupils.has(lower(StudentRef))) pupils.set(lower(StudentRef), { StudentName, StudentRef });
+    }
+    return { ok: true, pupils: [...pupils.values()] };
+  }
+  const allowedRooms = memberships && new Set(memberships.filter(row => lower(row.StudentRef) === lower(ref)).map(room));
+  const records = allowedRooms?.size === 0 ? [] : scopedAcademicRows(await queryCollectionPages(env, ACADEMIC_MANAGEMENT_COLLECTIONS.studentAttendance, {
+    filters: [...filters, refFilter, { field: 'Mode', op: '==', value: 'Daily' }]
+  }), scope).filter(row => lower(row.StudentRef) === lower(ref) && (!allowedRooms || allowedRooms.has(room(row))));
+  const labels = async (key, field) => {
+    const ids = [...new Set(records.map(row => row[field]).filter(Boolean))];
+    const pairs = await Promise.all(ids.map(async id => {
+      const row = await getDocument(env, ACADEMIC_MANAGEMENT_COLLECTIONS[key], id);
+      return [id, row && row.BranchId === scope.branchId && effectiveAcademicSection(row, scope) === scope.section ? row.Name : ''];
+    }));
+    return new Map(pairs);
+  };
+  const [classes, arms] = await Promise.all([labels('classes','ClassId'), labels('arms','ArmId')]);
+  return { ok: true, records: records.map(({StudentRef, AttendanceDate, Status, MinutesLate, Note, MarkedBy, ClassId, ArmId}) =>
+    ({StudentRef, AttendanceDate, Status, MinutesLate, Note, MarkedBy, Classroom: [classes.get(ClassId) || ClassId, arms.get(ArmId) || ArmId].filter(Boolean).join(' / ')})) };
+}
+
 export async function handleAcademicManagementAction(env, user = {}, input = {}) {
   const action = lower(input.action || input.Action).replace(/[^a-z]/g, '');
+  if (['getpresencepupils','getpupilpresence'].includes(action)) {
+    return getIndividualPresence(env, user, input, action === 'getpresencepupils');
+  }
   if (['getacademicduplicatescorereview','resolveacademicduplicatescore'].includes(action)) {
     requireCapability(user, 'canManageScoreCorrections');
     const save = action === 'resolveacademicduplicatescore';
