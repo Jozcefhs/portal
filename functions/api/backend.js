@@ -2578,7 +2578,7 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
     StudentScopePath: student.__scopePath,
     Status: student.Status || 'Active',
     Enrolled: 'YES'
-  }, studentWalletProfile(student)));
+  }, { ...studentWalletProfile(student), AcademicClassId: clean(student.AcademicClassId), ClassArm: student.ClassArm }));
   // Student register identity and eligibility fields are authoritative. Legacy
   // account rows may still say New Intake after a CSV import, so merge them second.
   accounts.map(normalizeAccount).forEach((row) => putAccount(row));

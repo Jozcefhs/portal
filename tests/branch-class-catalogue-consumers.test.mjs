@@ -3,6 +3,7 @@ import test from 'node:test';
 import vm from './helpers/module-policy-vm.mjs';
 import { readFile } from 'node:fs/promises';
 import { canonicalCatalogueClassName } from '../functions/lib/class-names.js';
+import { withCatalogueClassroom, classReportSeries } from '../functions/lib/branch-class-catalogue.js';
 import { schoolSectionFor } from '../functions/lib/school-scope.js';
 
 const source = async file => (await readFile(new URL(`../${file}`, import.meta.url), 'utf8'))
@@ -77,10 +78,10 @@ for (const [edition, section, storeType] of [['school', 'bookstore', 'Bookstore'
   });
 }
 
-async function executiveFixture(classes = rows) {
+async function executiveFixture(classes = rows, students = []) {
   const catalogue = reader(classes);
   const api = vm.runInNewContext(`${await source('functions/lib/executive-correspondence.js')}\n({bootstrap,metricData,searchDirectory,authoritativeRecipientTokens,executiveOfficeCapabilities})`, {
-    ...catalogue,
+    ...catalogue, withCatalogueClassroom, classReportSeries, listSchoolCollection: async () => students,
     listCollection: async (_env, collection) => {
       assert.notEqual(collection, 'settings/academics/classes');
       return [];
@@ -93,6 +94,18 @@ async function executiveFixture(classes = rows) {
   const user = { edition: 'school', role: 'Principal', username: 'head', allowedSections: ['executiveOffice'] };
   return { ...catalogue, api, scope, user, capabilities: api.executiveOfficeCapabilities(user, scope.edition) };
 }
+
+test('Executive Office counts mixed-case and spaced profile labels once using the saved catalogue spelling', async () => {
+  const students = ['NURSERY2', 'Nursery 2', 'Nursery2', 'GRADE 4', 'Grade 4'].map(ClassName => ({
+    ClassName, BranchId: 'garden', SchoolSection: 'primary'
+  }));
+  const f = await executiveFixture([...rows, { ...rows[0], ClassId: 'g4', ClassName: 'Grade 4' }], students);
+  const [chart] = await f.api.metricData({}, f.scope, ['studentByClass'], [], f.user);
+  assert.equal(chart.value, 5);
+  assert.deepEqual(Array.from(chart.series, p => [p.label, p.value]), [['Nursery2', 3], ['Grade 4', 2]]);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.calls[0].includeArms, false);
+});
 
 test('Executive Office bootstrap counts the same scoped classes without reading them twice', async () => {
   const f = await executiveFixture();

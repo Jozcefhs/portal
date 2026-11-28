@@ -4013,7 +4013,8 @@ function openStudentEditor(student) {
         if (field === 'WalletCardStatus') value = pick(student, ['WalletCardStatus', 'walletCardStatus']) || 'Active';
         if (field === 'WalletCardId') value = pick(student, ['WalletCardId', 'walletCardId']);
         if (field === 'DisplayName') value = value || pick(student, ['ApplicantName', 'StudentName']);
-        if (field === 'ClassName') value = value || pick(student, ['ClassAdmitted']);
+        if (field === 'ClassName') value = student.CatalogueClassName || value || pick(student, ['ClassAdmitted']);
+        if (field === 'ClassArm') value = student.CatalogueArmName ?? value;
         if (field === 'BillingCategory') value = value || 'Regular';
         if (field === 'AcademicProgress' && !value && clean(pick(student, ['EnrollmentCategory'])).toLowerCase() === 'returning') value = 'Promoted';
         if (field === 'ParentLoginCode') value = value || pick(student, ['VerificationCode']);
@@ -4541,6 +4542,13 @@ function bindStudentEditor(students) {
       return;
     }
     delete payload.StudentLoginPasswordConfirm;
+    // The catalogue can rename a linked classroom while its saved profile still has the old label.
+    // An unrelated profile edit must not submit that display change as a transfer.
+    if (form.elements.ClassName.value === form.elements.ClassName.defaultValue &&
+        form.elements.ClassArm.value === form.elements.ClassArm.defaultValue) {
+      delete payload.ClassName;
+      delete payload.ClassArm;
+    }
     payload.action = 'update';
     payload.VerificationCode = payload.ParentLoginCode || '';
     setButtonLoading(button, true, 'Saving...', 'Save student profile');

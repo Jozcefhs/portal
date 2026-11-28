@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { debtorReportRow, schoolDebtorsReport } from '../functions/lib/school-debtors-report.js';
+import { schoolClassLabelReader, classReportSeries } from '../functions/lib/branch-class-catalogue.js';
 const source = readFileSync(new URL('../functions/api/admin.js', import.meta.url), 'utf8');
 const uiContext = vm.createContext({ Intl, Date });
 vm.runInContext(readFileSync(new URL('../js/school-debtors.js', import.meta.url), 'utf8'), uiContext);
@@ -51,10 +52,13 @@ test('preview contains every matching row, correct totals, scope, time and escap
   assert.equal((ui.printHtml(report, { search: 'TEST/214' }).match(/<tr>/g) || []).length, 2);
 });
 
-async function route({ branch = 'main', section = 'secondary', records = [], allowed = ['accounts'], overviewFails = false, requestedSection = 'schoolInsights' } = {}) {
+async function route({ branch = 'main', section = 'secondary', records = [], classes = [], allowed = ['accounts'], overviewFails = false, requestedSection = 'schoolInsights' } = {}) {
   const reads = [];
   const io = (kind, result) => async (...args) => { reads.push({ kind, args }); return result; };
   const context = vm.createContext({ Response, Date, console, debtorReportRow, schoolDebtorsReport,
+    classReportSeries, schoolClassLabelReader: (env, opts) => schoolClassLabelReader(env, {
+      ...opts, load: io('catalogue', { classes })
+    }),
     requireFirestoreEnv: () => {}, requireStaffSession: async () => ({ allowedSections: allowed, edition: 'school', branchId: branch, schoolSectionAccess: section }),
     readJsonBody: async () => ({ section: requestedSection }),
     loadFinanceSchoolProfile: io('profile', { SchoolName: 'Sample School', CurrentAcademicSession: '2026/2027' }),
@@ -68,7 +72,7 @@ async function route({ branch = 'main', section = 'secondary', records = [], all
   return { response, body: await response.json(), reads };
 }
 
-test('actual School Insights handler returns all authorised debtors without any additional collection read', async () => {
+test('actual School Insights handler reuses the authorised accounts and loads only class names once for all debtors', async () => {
   const records = Array.from({ length: 215 }, (_, i) => account(i));
   records.push(account('other', { BranchId: 'other' }), account('primary', { SchoolSection: 'primary' }));
   const result = await route({ records });
@@ -79,7 +83,25 @@ test('actual School Insights handler returns all authorised debtors without any 
   assert.equal(result.body.summary.outstandingFees.toFixed(2), '12921.50');
   assert.deepEqual(result.reads.filter(read => read.kind === 'finance').map(read => read.args[1]), ['accountSummaries', 'payments', 'invoices', 'ledger']);
   assert.equal(result.reads.filter(read => read.kind === 'overview').length, 1);
+  assert.deepEqual(result.reads.filter(read => read.kind === 'catalogue').map(read => read.args[1].includeArms), [false]);
   assert.equal(result.response.headers.get('Cache-Control'), 'no-store');
+});
+
+test('School Insights labels the fee chart, top ten and printable accounts from the same branch catalogue', async () => {
+  const branch = 'garden', section = 'primary';
+  const records = ['GRADE 4', 'Grade 4', 'Former name'].map((ClassName, i) => account(i, {
+    BranchId: branch, SchoolSection: section, ClassName, OutstandingBalance: i + 1,
+    ...(i === 2 ? { AcademicClassId: 'g4' } : {})
+  }));
+  const result = await route({ branch, section, records,
+    classes: [{ BranchId: branch, SchoolSection: section, ClassId: 'g4', ClassName: 'Grade 4' }] });
+  assert.equal(result.response.status, 200);
+  assert.deepEqual(result.body.charts.classBalances, [{ label: 'Grade 4', value: 6 }]);
+  assert.equal(result.body.summary.outstandingFees, 6);
+  const { defaulters, debtorsReport } = result.body.departments.schoolInsights;
+  assert.deepEqual(defaulters.map(row => row.ClassName), ['Grade 4', 'Grade 4', 'Grade 4']);
+  assert.deepEqual(debtorsReport.rows.map(row => row.ClassName), ['Grade 4', 'Grade 4', 'Grade 4']);
+  assert.equal(records[0].ClassName, 'GRADE 4');
 });
 
 test('report preserves separate branch identities with matching admission numbers', async () => {

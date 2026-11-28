@@ -8,7 +8,7 @@ import { getAccountsOverview, loadAccountsWalletLedger } from '../functions/api/
 import { accountingRequestBranch, accountingRowsForBranch } from '../functions/lib/accounting-branch-scope.js';
 import { ORGANIZATION_EDITIONS } from '../functions/lib/organization-config.js';
 import { branchProfilesForRecords } from '../functions/lib/branch-profile-settings.js';
-import { studentRegisterCatalogueLabels } from '../functions/lib/branch-class-catalogue.js';
+import { schoolClassLabelReader, classReportSeries } from '../functions/lib/branch-class-catalogue.js';
 import { recordBranchId } from '../functions/lib/branch-scope.js';
 
 const adminSource = await readFile(new URL('../functions/api/admin.js', import.meta.url), 'utf8');
@@ -80,7 +80,8 @@ function financeHarness(options = {}) {
   };
   const admin = vm.runInNewContext(
     `${adminSource.replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '')}\nonRequestPost`, {
-      ...common, Response, studentRegisterCatalogueLabels,
+      ...common, Response, classReportSeries,
+      schoolClassLabelReader: env => schoolClassLabelReader(env, { load: async () => ({ classes: [] }) }),
       requireFirestoreEnv: () => {}, withVendorStorePolicy: async (_env, _user, rows) => rows,
       requireStaffSession: async () => user,
       readJsonBody: async () => ({ section: 'accounts', ...options.body }),

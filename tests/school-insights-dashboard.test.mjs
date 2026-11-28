@@ -39,7 +39,7 @@ test('school insights restores enrolment charts, fee cards and defaulters table'
 });
 
 test('insight account identities retain branch and school-section scope', () => {
-  assert.match(adminApi, /const accountRows = accountOverview && accountOverview\.ok \? staffScope/);
+  assert.match(adminApi, /const scopedAccounts = accountOverview && accountOverview\.ok \? staffScope/);
   assert.match(backend, /BranchId: clean\(existing\.BranchId \|\| normalized\.BranchId\)/);
   assert.match(backend, /SchoolSection: clean\(existing\.SchoolSection \|\| normalized\.SchoolSection\)/);
   assert.match(backend, /BranchId: student\.BranchId/);

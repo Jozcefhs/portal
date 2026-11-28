@@ -7,7 +7,6 @@ import { loadBranchFinanceRows } from '../lib/finance-branch-reads.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { getSchoolStructure, listSchoolCollection, schoolSectionFor } from '../lib/school-scope.js';
 import { configuredStaffBranches } from '../lib/staff-branch-context.js';
-import { normalizeClassKey } from '../lib/class-names.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { loadPublishedTutorials } from '../lib/tutorial-catalog.js';
 import { withStudentProfileDefaults } from '../lib/student-profile-defaults.js';
@@ -15,7 +14,7 @@ import { studentWalletProfile } from '../lib/student-wallet-profile.js';
 import { loadFinanceSchoolProfile } from '../lib/finance-school-profile.js';
 import { branchProfilesForRecords } from '../lib/branch-profile-settings.js';
 import { recordBranchId } from '../lib/branch-scope.js';
-import { studentRegisterCatalogueLabels } from '../lib/branch-class-catalogue.js';
+import { schoolClassLabelReader, classReportSeries } from '../lib/branch-class-catalogue.js';
 import { debtorReportRow, schoolDebtorsReport } from '../lib/school-debtors-report.js';
 
 function clean(value) {
@@ -346,8 +345,9 @@ export async function onRequestPost(context) {
     const lowRestaurant = visibleRestaurantInventory.filter((row) => toNumber(row.ReorderLevel) > 0 && toNumber(row.Quantity) <= toNumber(row.ReorderLevel));
     const lowTuckShop = visibleTuckShopInventory.filter((row) => toNumber(row.ReorderLevel) > 0 && toNumber(row.Quantity) <= toNumber(row.ReorderLevel));
 
+    const labelClasses = schoolClassLabelReader(env, { includeArms: !schoolInsights && shouldLoad('students') });
     const registerStudents = user.edition === 'school' && !schoolInsights && shouldLoad('students')
-      ? await studentRegisterCatalogueLabels(env, visibleStudents) : visibleStudents;
+      ? await labelClasses(visibleStudents) : visibleStudents;
     const allDepartments = {
       admissions: publicRows(sortRecent(visibleApplications, ['SubmittedAt', 'UpdatedAt', 'Timestamp']), 80),
       students: publicRows(sortRecent(registerStudents,
@@ -436,15 +436,11 @@ export async function onRequestPost(context) {
     const countBy = (rows, getter) => Object.entries(rows.reduce((out, row) => {
       const key = clean(getter(row)) || 'Unspecified'; out[key] = (out[key] || 0) + 1; return out;
     }, {})).map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
-    const accountRows = accountOverview && accountOverview.ok ? staffScope(accountOverview.accounts || []) : [];
-    const classBalanceGroups = accountRows.reduce((out, row) => {
-      const original = clean(row.ClassName) || 'Unspecified';
-      const key = normalizeClassKey(original) || 'unspecified';
-      out[key] = out[key] || { label: original, value: 0 };
-      out[key].value += Math.max(0, toNumber(row.OutstandingBalance ?? row.Balance));
-      return out;
-    }, {});
-    const classBalances = Object.values(classBalanceGroups).sort((a, b) => b.value - a.value);
+    const scopedAccounts = accountOverview && accountOverview.ok ? staffScope(accountOverview.accounts || []) : [];
+    const accountRows = user.edition === 'school'
+      ? (await labelClasses(scopedAccounts)).map(row => row.CatalogueClassName ? { ...row, ClassName: row.CatalogueClassName } : row)
+      : scopedAccounts;
+    const classBalances = classReportSeries(accountRows, row => Math.max(0, toNumber(row.OutstandingBalance ?? row.Balance)), 'Unspecified');
     const charts = {
       studentGender: countBy(visibleStudents, (row) => row.Gender),
       studentCategory: countBy(visibleStudents, (row) => row.EnrollmentCategory || row.IntakeCategory || 'Returning'),
