@@ -79,8 +79,13 @@ test('activation delivery addresses the registered contact and includes the sing
   assert.equal(deliveries[0].to[0].email, 'owner@example.org');
   assert.equal(deliveries[0].sender.email, 'sender@notify.example.org');
   assert.equal(deliveries[0].replyTo.email, 'support@example.org');
-  assert.ok(deliveries[0].textContent.includes(url));
-  assert.ok(deliveries[0].htmlContent.includes(url.replace('&', '&amp;')));
+  const { htmlContent, textContent } = deliveries[0];
+  assert.ok(textContent.split('\n').includes(url), 'The plain-text URL is on its own line');
+  const escapedUrl = url.replace('&', '&amp;');
+  assert.ok(htmlContent.includes(`href="${escapedUrl}"`), 'The button opens the issued activation');
+  const fallback = htmlContent.slice(htmlContent.indexOf('</a>') + 4);
+  const visibleUrl = fallback.match(/<code\b[^>]*>([^<]+)<\/code>/)?.[1];
+  assert.equal(visibleUrl, escapedUrl, 'Copying the visible text must preserve the entire URL and token');
   assert.match(deliveries[0].subject, /Example school/);
 });
 
