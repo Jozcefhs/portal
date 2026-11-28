@@ -128,6 +128,43 @@ test('new laboratory orders require receipt and retain each rejected/recollected
   assert.equal(f.rows('ChargeEvents').length,0);assert.equal(f.rows('StockMovements').length,0);
 });
 
+test('dispatch preserves the collection label, is replay safe and remains visible through receipt',async()=>{
+  const f=await ordersFixture(),order=await f.create('Laboratory');
+  const handoff={Courier:'Demo porter',Destination:'Main laboratory',OccurredAt:'2026-10-26T12:05:00Z'};
+  f.db.now=()=>new Date('2026-10-26T12:08:00Z');
+  await assert.rejects(handle(f,order,'Dispatched',handoff),/collected specimen/);
+  await handle(f,order,'Collected',{OccurredAt:'2026-10-26T12:01:00Z'});
+  await assert.rejects(handle(f,order,'Dispatched',{...handoff,Courier:''}),/Courier/);
+  await assert.rejects(handle(f,order,'Dispatched',{...handoff,Destination:''}),/Destination/);
+  const c=await f.laboratory.orderDetails(request(order));
+  const body=request({...order,...handoff,Decision:'Dispatched',Note:'Handed over',Revision:c.order.Revision,ConfirmPatient:true,SpecimenLabel:c.order.LabelToPrint});
+  await f.laboratory.recordSpecimen(body);
+  const commits=f.commits.length;
+  assert.ok((await f.laboratory.recordSpecimen(body)).replayed);
+  assert.equal(f.commits.length,commits);
+  assert.equal((await f.laboratory.orderDetails(request(order))).order.LabelToPrint,body.SpecimenLabel);
+  await assert.rejects(handle(f,order,'Dispatched',handoff),/collected specimen/);
+  await assert.rejects(handle(f,order,'Received',{OccurredAt:'2026-10-26T12:04:00Z'}),/handling time/);
+  await assert.rejects(f.laboratory.recordInvestigationReport(await f.body(order,{Text:'Demo'},f.laboratory)),/receive/);
+  const worklist=await f.laboratory.getOutstandingInvestigations(request({Kind:'Laboratory',AllOrderDates:true}));
+  assert.equal(worklist.orders.find(row=>row.id===order.OrderId).stage,'In transit');
+  await handle(f,order,'Received');
+  const specimen=f.rows('Orders')[0].CurrentSpecimen;
+  assert.equal(specimen.Label,body.SpecimenLabel);assert.equal(specimen.Courier,handoff.Courier);
+  assert.equal(specimen.Destination,handoff.Destination);assert.equal(specimen.DispatchedBy,actors.laboratory.username);
+  assert.equal(f.rows('OrderEvents').filter(e=>e.Decision==='Dispatched').length,1);
+});
+
+test('rejecting a transported specimen preserves the handoff only on its original collection attempt',async()=>{
+  const f=await ordersFixture(),order=await f.create('Laboratory');
+  await handle(f,order,'Collected');
+  await handle(f,order,'Dispatched',{Courier:'Demo porter',Destination:'Main laboratory'});
+  await handle(f,order,'Rejected');await handle(f,order,'Collected');
+  const specimen=f.rows('Orders')[0].CurrentSpecimen;
+  assert.equal(specimen.Courier,undefined);assert.match(specimen.Label,/-S02$/);
+  assert.equal(f.rows('OrderEvents').find(e=>e.Decision==='Rejected').Specimen.Courier,'Demo porter');
+});
+
 test('specimen states prevent fresh duplicate clicks as well as exact retries',async()=>{
   const f=await ordersFixture(),order=await f.create('Laboratory');await assert.rejects(handle(f,order,'Received'),/collection/);
   await handle(f,order,'Collected');await assert.rejects(handle(f,order,'Collected'),/already recorded/);

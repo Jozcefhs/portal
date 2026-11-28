@@ -6,6 +6,7 @@ const stages = {
   Requested: 'Requested',
   'Specimen rejected': 'Recollection needed',
   'Specimen collected': 'Specimen collected',
+  'Specimen dispatched': 'In transit',
   'Specimen received': 'Specimen received',
   'Result draft': 'Awaiting verification',
   Verified: 'Awaiting release'

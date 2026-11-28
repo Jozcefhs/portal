@@ -136,6 +136,12 @@ try{
   await login('laboratory','laboratory');await openList();assert.equal(await page.locator('#stockWorkspace').isVisible(),false);
   await page.evaluate(()=>{window.print=()=>{window.printedLabel=document.querySelector('#cardPrint').textContent;};});await page.locator('#printSpecimen').click();assert.match(await page.evaluate(()=>window.printedLabel),new RegExp(labOrder.OrderNumber));
   await expand('specimenWork');await fill('specimenForm',{SpecimenLabel:labOrder.OrderNumber+'-S01',Note:'Patient identity and specimen label checked'});await page.locator('#confirmOrder').check();await page.locator('#specimenForm button').click();await done('Specimen handling recorded');
+  await page.locator('#specimenForm [name=Decision]').selectOption('Dispatched');
+  assert.ok(await page.locator('#specimenDispatch').isVisible());
+  await fill('specimenForm',{SpecimenLabel:labOrder.OrderNumber+'-S01',Courier:'Demo porter',Destination:'Main laboratory',Note:'Handed over for transport'});
+  await page.locator('#confirmOrder').check();await page.locator('#specimenForm button').click();await done('Specimen handling recorded');
+  assert.match(await page.locator('#specimenSummary').textContent(),/Demo porter for Main laboratory/);
+  assert.ok(await page.locator('#specimenDispatch').isHidden());
   await fill('specimenForm',{SpecimenLabel:labOrder.OrderNumber+'-S01',Note:'Received and checked in laboratory'});await page.locator('#specimenForm [name=Decision]').selectOption('Received');await page.locator('#confirmOrder').check();await page.locator('#specimenForm button').click();await done('Specimen handling recorded');
   await expand('reportWork');await fill('reportForm',{Text:'Synthetic critical laboratory result'});await page.locator('#reportForm [name=Critical]').check();await page.locator('#confirmOrder').check();await page.locator('#reportForm button').click();await done('Report saved for independent verification');
   assert.equal(await page.locator('#verifyReport').isEnabled(),false);

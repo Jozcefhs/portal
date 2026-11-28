@@ -65,7 +65,7 @@ Laboratory Scientists and Radiographers configure their own type. Super Admin, H
 ### Specimens and reports
 
 1. Select dates in the relevant workspace and open an order.
-2. For new laboratory orders, use **Print specimen label**, check patient identity and scan/type the label reference. Record **Collected**, then **Received** when the laboratory receives it, or **Rejected** with details. Reporting requires receipt. Each recollection uses a fresh numbered label; the earlier attempt remains in history. Optional actual handling time uses WAT and cannot precede the order or preceding handling event, or be in the future. Earlier orders retain their original collection/report workflow without migration.
+2. For new laboratory orders, use **Print specimen label**, confirm the patient and enter the label reference. Record **Collected**. If someone transports the specimen, choose **Dispatched** and enter the courier and destination. The outstanding investigations report shows **In transit** until the laboratory records **Received** or **Rejected** against the same label. On-site staff can go straight from collection to receipt. Reporting requires receipt. Each recollection gets a fresh numbered label and keeps the previous attempt in history. Staff can enter the actual handling time in WAT, between the previous event and now. Earlier orders keep their original collection and reporting workflow.
 3. Enter the report, including findings, units and applicable reference ranges. Mark critical results explicitly. Saving creates a report version for verification.
 4. A second authorised officer of the relevant investigation role reviews the report and chooses **Verify latest report**. The report author cannot verify their own version.
 5. Release the verified report. For critical results, record who was contacted, how and when. This records a staff communication; it does not claim that an automatic message was sent.
@@ -110,7 +110,7 @@ Future Hospital work must retain these tests and add a bounded query and mutatio
 
 ## Remaining Hospital scope
 
-The complete checklist remains in [hospital-edition-scope.md](hospital-edition-scope.md). Billing/HMO workflows are documented separately. Remaining investigation/pharmacy work includes procurement and supplier-payable integration, inventory costing, patient access, structured lab panels/reference intervals, analyser integration, report attachments/PACS, specimen transport/accession beyond collection/receipt/rejection, automatic communication delivery, desktop/offline integration, and practitioner validation. The existence of a working order workflow does not mark the whole Pharmacy, Laboratory or Imaging module complete.
+The complete checklist remains in [hospital-edition-scope.md](hospital-edition-scope.md). Billing/HMO workflows are documented separately. Remaining investigation/pharmacy work includes procurement and supplier-payable integration, inventory costing, patient access, structured lab panels/reference intervals, analyser integration, report attachments/PACS, laboratory accession numbering, automatic communication delivery, desktop/offline integration, and practitioner validation. The existence of a working order workflow does not mark the whole Pharmacy, Laboratory or Imaging module complete.
 
 ## Verification
 

@@ -305,26 +305,28 @@ export function createHospitalOrdersService(ctx){
     },
     async recordSpecimen(body){
       requireCapability('laboratory.work');await branch(body);confirmed(body);const Note=field(body,'Note',2000,true);
-      if(!['Collected','Received','Rejected'].includes(body.Decision))fail('Choose Collected, Received or Rejected.');
+      if(!['Collected','Dispatched','Received','Rejected'].includes(body.Decision))fail('Choose a valid specimen handling decision.');
       return operation(body,'recordSpecimen',async key=>{
         const c=await orderContext(body);revision(body,c.order);notCancelled(c.order);
-        if(c.order.Kind!=='Laboratory'||!['Requested','Specimen rejected','Specimen collected','Specimen received'].includes(c.order.Status))fail('This order is not awaiting specimen handling.',409);
+        if(c.order.Kind!=='Laboratory'||!['Requested','Specimen rejected','Specimen collected','Specimen dispatched','Specimen received'].includes(c.order.Status))fail('This order is not awaiting specimen handling.',409);
         if(body.SpecimenLabel!==specimenLabel(c.order))fail('Match the specimen label to this patient and collection attempt.');
         if(c.order.SpecimenWorkflow===2){
           const old=c.order.CurrentSpecimen,Decision=body.Decision;
           if(Decision==='Collected'&&!['Requested','Specimen rejected'].includes(c.order.Status))fail('This collection is already recorded. Receive or reject the specimen before another collection.',409);
-          if(Decision==='Received'&&old?.Status!=='Collected')fail('Record collection before laboratory receipt. A received specimen cannot be received twice.',409);
+          if(Decision==='Dispatched'&&old?.Status!=='Collected')fail('Only a collected specimen can be dispatched.',409);
+          if(Decision==='Received'&&!['Collected','Dispatched'].includes(old?.Status))fail('Record collection before laboratory receipt. A received specimen cannot be received twice.',409);
           if(Decision==='Rejected'&&c.order.Status==='Specimen rejected')fail('This specimen is already rejected. Record a new collection.',409);
-          const OccurredAt=clean(body.OccurredAt)||clock(),previousTime=old?.RejectedAt||old?.ReceivedAt||old?.CollectedAt;
+          const handoff=Decision==='Dispatched'?{Courier:field(body,'Courier',160,true),Destination:field(body,'Destination',160,true)}:{};
+          const OccurredAt=clean(body.OccurredAt)||clock(),previousTime=old?.RejectedAt||old?.ReceivedAt||old?.DispatchedAt||old?.CollectedAt;
           if(!/^\d{4}-\d{2}-\d{2}T/.test(OccurredAt)||!Number.isFinite(Date.parse(OccurredAt))||Date.parse(OccurredAt)>Date.parse(clock())||Date.parse(OccurredAt)<Date.parse(c.order.CreatedAt)
             ||previousTime&&Date.parse(OccurredAt)<Date.parse(previousTime))fail('Choose a handling time between the order/previous handling time and now.');
           const fresh=Decision==='Collected'||!old,Sequence=fresh?(c.order.SpecimenSequence||0)+1:old.Sequence;
-          const specimen={...(fresh?{}:old),Label:body.SpecimenLabel,Sequence,Status:Decision,Note,
+          const specimen={...(fresh?{}:old),...handoff,Label:body.SpecimenLabel,Sequence,Status:Decision,Note,
             [`${Decision}At`]:new Date(OccurredAt).toISOString(),[`${Decision}By`]:actor,RecordedAt:clock()};
           return {writes:changes(key,c,'Record laboratory specimen',{Status:`Specimen ${Decision.toLowerCase()}`,SpecimenSequence:Sequence,CurrentSpecimen:specimen,
             SpecimenLabel:specimen.Label,SpecimenHandledAt:clock(),SpecimenHandledBy:actor},{Decision,Note,Specimen:specimen}),result:result(c)};
         }
-        if(body.Decision==='Received')fail('This earlier order uses the original collection workflow. Its recorded specimen and reports are preserved.');
+        if(['Received','Dispatched'].includes(body.Decision))fail('This earlier order uses the original collection workflow. Its recorded specimen and reports are preserved.');
         return {writes:changes(key,c,'Record laboratory specimen',{Status:body.Decision==='Collected'?'Specimen collected':'Specimen rejected',
           SpecimenLabel:c.order.OrderNumber,SpecimenHandledAt:clock(),SpecimenHandledBy:actor},{Decision:body.Decision,Note}),result:result(c)};
       });

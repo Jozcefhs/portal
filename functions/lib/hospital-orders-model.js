@@ -51,7 +51,7 @@ export function investigation(input){
 }
 export function specimenLabel(order) {
   if (order.SpecimenWorkflow !== 2) return order.OrderNumber;
-  if (['Collected', 'Received'].includes(order.CurrentSpecimen?.Status)) return order.CurrentSpecimen.Label;
+  if (['Collected', 'Dispatched', 'Received'].includes(order.CurrentSpecimen?.Status)) return order.CurrentSpecimen.Label;
   return `${order.OrderNumber}-S${String((order.SpecimenSequence || 0) + 1).padStart(2, '0')}`;
 }
 export function allergySnapshot(care){return {Status:care?.AllergyStatus||'Unknown',Details:care?.Allergies||'',RecordedAt:care?.AllergyRecordedAt||'',RecordedBy:care?.AllergyRecordedBy||''};}
