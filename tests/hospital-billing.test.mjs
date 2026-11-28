@@ -6,6 +6,32 @@ import {createHospitalService} from '../functions/lib/hospital-service.js';
 import {hospitalCollectionPath} from '../functions/lib/hospital-storage.js';
 import {hospitalCapabilities} from '../functions/lib/hospital-model.js';
 import {splitCharge,balances,planFields} from '../functions/lib/hospital-billing-model.js';
+import {backupJsonValue,firestoreDocumentToObject,objectToFirestoreFields} from '../functions/lib/firestore.js';
+
+test('numeric-looking chart codes survive Firestore configuration, invoice posting and collection on legacy invoices',async()=>{
+  const f=await billingFixture();
+  const commit=f.db.batchCommitLiteralDocuments;
+  f.db.batchCommitLiteralDocuments=(env,writes)=>commit(env,writes.map(w=>{
+    const fields=w.restoreJsonTypes?backupJsonValue(w.data).mapValue.fields:objectToFirestoreFields(w.data);
+    return {...w,data:firestoreDocumentToObject({fields})};
+  }));
+  const branchSettings=f.rows('BillingSettings')[0];
+  f.store.set('chartOfAccounts/4310',{__id:'4310',Code:'4310',Type:'Revenue',Active:'YES'});
+  await f.admin.saveBillingSettings(request({Settings:{...mapping,Revenue:'4310'},Revision:branchSettings.__updateTime}));
+  assert.equal(f.rows('BillingSettings')[0].Revenue,'4310');
+  assert.ok(f.rows('BillingSettingVersions').some(r=>r.Revenue==='4310'));
+  const stored=[...f.store.entries()].find(([k])=>k.startsWith(collection('BillingSettings')+'/'))[1];
+  stored.Revenue=4310;stored.PatientReceivable=1130;stored.Cash=1000;
+  const inv=await f.issue();
+  assert.equal(f.rows('Invoices')[0].Accounts.PatientReceivable,'1130');
+  const legacy=f.store.get(collection('Invoices')+'/'+inv.InvoiceId);
+  legacy.Accounts.PatientReceivable=1130;
+  await f.cashier.recordHospitalPayment(await f.billBody(inv,{Amount:'100',Method:'Cash',Reference:'LEGACY-MAP',Payer:'Patient'}));
+  assert.equal(stored.Revenue,4310,'reading a legacy setting must not rewrite it');
+  assert.equal(f.rows('Payments').length,1);
+  assert.equal(balances(f.rows('Invoices')[0]).PatientBalanceCents,0);
+  assert.ok(journals(f).flatMap(j=>j.Lines).every(line=>typeof line.AccountCode==='string'));
+});
 
 const collection=name=>hospitalCollectionPath(env,name);
 const journals=f=>[...f.store.entries()].filter(([k])=>k.startsWith('accountingJournals/')).map(([,r])=>r);

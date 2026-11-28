@@ -11,8 +11,17 @@ import {createHospitalFundsService} from './hospital-funds-service.js';
 
 export function createHospitalBillingService(ctx){
   const {env,user,db,collection,capabilities,requireCapability,branch,patient,clock,actor,condition,strip,eq,auditWrite,auditRead,operation,page}=ctx;
-  const read=(name,key)=>db.getDocument(env,collection(name),id(key));
-  const write=(name,key,data,old)=>({collectionPath:collection(name),documentId:key,data,currentDocument:condition(old)});
+  async function read(name,key){
+    const row=await db.getDocument(env,collection(name),id(key));
+    // Older Firestore documents may contain numeric chart codes in these mappings.
+    const mapping=name==='BillingSettings'?row:name==='Invoices'?row?.Accounts:null;
+    if(mapping)for(const field of Object.keys(ACCOUNT_TYPES)){
+      if(typeof mapping[field]==='number')mapping[field]=String(mapping[field]);
+    }
+    return row;
+  }
+  const write=(name,key,data,old)=>({collectionPath:collection(name),documentId:key,data,currentDocument:condition(old),
+    ...(['BillingSettings','BillingSettingVersions','Invoices'].includes(name)?{restoreJsonTypes:true}:{})});
   const view=row=>row?{...strip(row),Revision:row.__updateTime}:null;
   const stamp=()=>({CreatedAt:clock(),ActorUsername:actor,ActorName:clean(user.displayName)||actor});
   const any=(...names)=>{if(!names.some(n=>capabilities.includes(n)))fail('Your role does not permit this billing operation.',403);};
