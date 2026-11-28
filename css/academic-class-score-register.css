@@ -113,6 +113,28 @@ html[data-theme="dark"] [data-academic-class-score-register] .class-score-regist
 html[data-theme="dark"] [data-academic-class-score-register] .class-score-register-table tbody tr:nth-child(even) td:nth-child(2) { background: #172a3e; }
 html[data-theme="dark"] [data-academic-class-score-register] .class-score-register-table th:nth-child(2) { background: #152943; color: #edf4ff; }
 .class-register-note { display: block; color: #9c3b18; }
+.staff-page .academic-student-attendance-history .module-audit-table td:last-child {
+  min-width: 0;
+  white-space: nowrap;
+}
+.staff-page .admin-table button[data-student-attendance-preview] {
+  width: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  vertical-align: baseline;
+}
+.staff-page .admin-table button[data-student-attendance-preview]:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
 @media (max-width: 600px) {
   [data-academic-class-score-register] .class-score-register-table th:nth-child(2),
   [data-academic-class-score-register] .class-score-register-table td:nth-child(2) {
