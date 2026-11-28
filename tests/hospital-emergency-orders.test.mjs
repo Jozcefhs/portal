@@ -79,6 +79,8 @@ test('laboratory collects on the wristband; after identification the same label 
   const after=await f.laboratory.orderDetails(request(o));
   assert.equal(after.order.CurrentSpecimen.Label,before.order.LabelToPrint);
   assert.equal(after.order.Status,'Specimen received');assert.equal(after.order.PatientId,id.PatientId);
+  const found=await f.laboratory.searchLabSpecimen(request({Reference:before.order.LabelToPrint}));
+  assert.equal(found.patient.PatientId,id.PatientId);assert.equal(found.order.EmergencyReference,after.order.EmergencyReference);
 });
 test('role, branch, identity and stale confirmations cannot issue duplicate emergency orders',async()=>{
   const f=await setup(),input=await prepare(f,'Imaging');

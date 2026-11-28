@@ -64,6 +64,8 @@ Laboratory Scientists and Radiographers configure their own type. Super Admin, H
 
 ### Specimens and reports
 
+In **Laboratory**, enter the full accession number or specimen label and choose **Find specimen**. The search uses the working branch and requires no date range. It shows the patient, order, collection attempt and available report. Laboratory staff can review a draft or verified report. Clinicians see released reports. A rejected label continues to identify its own specimen after recollection. Choose **Open linked order** to work on the order.
+
 1. Select dates in the relevant workspace and open an order.
 2. For new laboratory orders, use **Print specimen label**, confirm the patient and enter the label reference. Record **Collected**. If someone transports the specimen, choose **Dispatched** and enter the courier and destination. The outstanding investigations report shows **In transit** until the laboratory records **Received** or **Rejected** against the same label. On-site staff can go straight from collection to receipt. Reporting requires receipt. Each recollection gets a fresh numbered label and keeps the previous attempt in history. Staff can enter the actual handling time in WAT, between the previous event and now. Earlier orders keep their original collection and reporting workflow.
    On receipt the system assigns an accession number to the specimen and displays it beside the patient on the order, on a reprinted label and in the report. Recollection gets a separate accession at its own receipt. Orders with a receipt recorded before this feature show a stable historical reference beginning with **LAB-H-**, derived from the original order and collection attempt. Viewing it leaves the signed source records intact.

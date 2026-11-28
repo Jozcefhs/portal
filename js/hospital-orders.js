@@ -11,6 +11,7 @@
   const quantity=()=>input('Quantity','Quantity','type="number" min="0.001" step="0.001" max="1000000" required');
   window.DynamaxHospitalOrders={create({api,run,can,writable,status,navigate}){
     $('orders').innerHTML=`<h2>Prescriptions, pharmacy and investigations</h2><p>Choose dates and an order type before loading. New orders start from a patient’s reception visit.</p>
+      <section id="labLookup" hidden><form id="labLookupForm" class="toolbar"><label>Accession number or specimen label<input id="labReference" type="search" maxlength="90" required autocomplete="off"></label><button>Find specimen</button></form><div id="labLookupResult" aria-live="polite"></div></section>
       <details id="medicineUsage"></details>
       <details id="outstandingInvestigations"></details>
       <div id="medicineCatalogue"></div><details id="investigationCatalogPanel"><summary>Laboratory and imaging catalogue</summary>
@@ -117,6 +118,7 @@
     $('customInvestigation').onclick=()=>{selectedCatalog=null;$('chosenCatalog').textContent='Custom investigation. Review the service and specimen before issuing.';dirty.add('issueOrderForm');$('confirmIssue').checked=false;};
     const kinds=()=>['Prescription','Laboratory','Imaging'].filter(kind=>can('orders.read')||can(kind==='Prescription'?'pharmacy.work':kind==='Laboratory'?'laboratory.work':'imaging.work'));
     function permissions(){
+      $('labLookup').hidden=!can('orders.read')&&!can('laboratory.work');
       sharing.permissions();
       usage.permissions();
       outstanding.permissions();
@@ -144,6 +146,7 @@
       if(issue)$('issueOrderForm').querySelector('button:not([type=button])').disabled=!writable('orders.create');
     }
     function clear(){
+      clearSpecimenSearch();
       usage.reset();
       outstanding.reset();
       sharing.clear();
@@ -181,6 +184,24 @@
     const accessionLine=specimen=>specimen?.AccessionNumber
       ? `<p>Accession <strong>${esc(specimen.AccessionNumber)}</strong> · Label ${esc(specimen.Label)}</p>`:'';
     const reportHtml=(row,title)=>row?`<article class="clinical-entry"><h3>${esc(title)}${row.Critical?' · Critical result':''}</h3><p>${esc(row.ActorName)} · ${esc(date(row.CreatedAt))} WAT</p>${accessionLine(row.SpecimenSnapshot)}<p class="record-text">${esc(row.Text)}</p>${row.Reason?`<p>Correction: ${esc(row.Reason)}</p>`:''}</article>`:'';
+    function clearSpecimenSearch(){$('labLookupResult').replaceChildren();}
+    $('labReference').oninput=clearSpecimenSearch;
+    $('labLookupForm').onsubmit=event=>{
+      event.preventDefault();
+      run(async()=>{
+        clearSpecimenSearch();
+        const {patient,order,specimen,pendingReport,releasedReport}=await api('searchLabSpecimen',{Reference:$('labReference').value.trim()});
+        const result=$('labLookupResult');
+        result.innerHTML=`<article class="clinical-entry"><h3>${esc(patient.DisplayName)} · ${esc(patient.HospitalNumber)}</h3>
+          ${pairs({Order:order.OrderNumber,Investigation:order.Service,'Order status':order.Status,Label:specimen.Label,'Specimen status':specimen.Status,
+            ...(specimen.AccessionNumber?{Accession:specimen.AccessionNumber}:{}),...(order.EmergencyReference?{Wristband:order.EmergencyReference}:{})})}
+          ${reportHtml(releasedReport,'Released report')}${reportHtml(pendingReport,order.Status==='Verified'?'Verified report awaiting release':'Draft report')}
+          ${!releasedReport&&!pendingReport?'<p>No report is available to view for this specimen.</p>':''}
+          <button type="button">Open linked order</button></article>`;
+        result.querySelector('button').onclick=()=>run(()=>openOrder({OrderId:order.OrderId,PatientId:patient.PatientId}));
+        status('Specimen found.');
+      });
+    };
     async function loadOrder(nextScope=scope){
       const data=await api('orderDetails',nextScope);clearOrder();current=data;scope={OrderId:data.order.OrderId,PatientId:data.patient.PatientId};
       const o=data.order;$('orderPanel').hidden=false;
@@ -295,6 +316,6 @@
     async function stockHistory(next=null){if(!next)stockHistoryQuery={BatchId:$('stockHistoryBatch').value,DateRange:{fromDate:$('stockHistoryFrom').value,toDate:$('stockHistoryTo').value}};const data=await api('stockHistory',{...stockHistoryQuery,...(next?{Cursor:next}:{})});stockHistoryCursor=data.next;if(!next)$('stockHistoryRows').replaceChildren();$('stockHistoryRows').insertAdjacentHTML('beforeend',historyRows(data.movements,'stock'));$('nextStockHistory').hidden=!stockHistoryCursor;status('Dated stock movements loaded.');}
     $('stockHistoryFilter').onsubmit=event=>{event.preventDefault();run(()=>stockHistory());};$('nextStockHistory').onclick=()=>run(()=>stockHistory(stockHistoryCursor));
     function selectTask(task){medicines.selectTask(task);const kind={pharmacy:'Prescription',laboratory:'Laboratory',imaging:'Imaging'}[task];if(kind&&kinds().includes(kind))$('ordersKind').value=kind;if(['Laboratory','Imaging'].includes(kind)&&catalogAllowed(kind)){$('catalogKind').value=kind;if(!kinds().length)$('investigationCatalogPanel').open=true;}permissions();}
-    return {openVisit,openOrder,clear,permissions,confirmLeave,selectTask,outstanding,usage};
+    return {openVisit,openOrder,clear,permissions,confirmLeave,selectTask,outstanding,usage,clearSpecimenSearch};
   }};
 })();

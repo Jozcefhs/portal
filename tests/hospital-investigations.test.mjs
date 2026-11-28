@@ -232,6 +232,57 @@ test('concurrent specimen receipt and rejection cannot overwrite one another',as
   assert.equal(results.filter(row=>row.status==='fulfilled').length,1);assert.equal(f.rows('OrderEvents').filter(row=>row.Specimen).length,2);
 });
 
+test('exact label and accession find one patient and receipt, and preserve report visibility',async()=>{
+  const f=await ordersFixture(),order=await f.create('Laboratory');
+  const find=(reference,user=f.laboratory)=>user.searchLabSpecimen(request({Reference:reference}));
+  const label=f.rows('Orders')[0].OrderNumber+'-S01';
+  assert.equal((await find(label)).specimen.Status,'Awaiting collection');
+  await handle(f,order,'Collected');
+  const receipt=await handle(f,order,'Received');
+  const draft=await f.laboratory.recordInvestigationReport(await f.body(order,{Text:'Synthetic findings'},f.laboratory));
+  assert.equal((await find(receipt.AccessionNumber)).pendingReport.ReportId,draft.ReportId);
+  assert.equal((await find(label,f.doctor)).pendingReport,null);
+  await f.verifier.verifyInvestigationReport(await f.body(order,{ReportId:draft.ReportId},f.verifier));
+  await f.verifier.releaseInvestigationReport(await f.body(order,{ReportId:draft.ReportId},f.verifier));
+  const input=request({Reference:receipt.AccessionNumber.toLowerCase()});
+  const a=await f.doctor.searchLabSpecimen(input);
+  const commits=f.commits.length;
+  assert.deepEqual(await f.doctor.searchLabSpecimen(input),a);
+  assert.equal(f.commits.length,commits);
+  assert.equal(a.order.OrderId,order.OrderId);assert.equal(a.patient.PatientId,order.PatientId);
+  assert.equal(a.releasedReport.ReportId,draft.ReportId);assert.equal(a.pendingReport,null);
+  assert.deepEqual(await find(' '+label.toLowerCase()+' ',f.doctor),a);
+  assert.equal(f.rows('SpecimenAccessions').length,1);
+  await assert.rejects(find('LAB-H-'+order.OrderId+'-1'),{status:404});
+  await assert.rejects(find(label,f.pharmacist),{status:403});
+  const north=createHospitalService(env,{...actors.laboratory,assignedBranchIds:['north']},f.db);
+  for(const Reference of [receipt.AccessionNumber,label]){
+    await assert.rejects(north.searchLabSpecimen(request({BranchId:'north',Reference})),{status:404});
+  }
+});
+
+test('recollection search keeps prior labels and historical accessions separate from the replacement report',async()=>{
+  const f=await ordersFixture(),order=await f.create('Laboratory');
+  const find=Reference=>f.laboratory.searchLabSpecimen(request({Reference}));
+  await handle(f,order,'Collected');await handle(f,order,'Received');
+  const stored=f.store.get(hospitalCollectionPath(env,'Orders')+'/'+order.OrderId);
+  delete stored.CurrentSpecimen.AccessionNumber;
+  const first=stored.CurrentSpecimen.Label,historical='LAB-H-'+order.OrderId+'-1';
+  assert.equal((await find(historical)).specimen.Label,first);
+  await handle(f,order,'Rejected');await handle(f,order,'Collected');await handle(f,order,'Received');
+  await f.laboratory.recordInvestigationReport(await f.body(order,{Text:'Replacement specimen only'},f.laboratory));
+  for(const reference of [first,historical]){
+    const result=await find(reference);
+    assert.equal(result.specimen.Status,'Rejected');assert.equal(result.specimen.AccessionNumber,historical);
+    assert.equal(result.pendingReport,null);assert.equal(result.releasedReport,null);
+  }
+  await assert.rejects(find(first.replace('S01','S99')),{status:404});
+  await assert.rejects(find('partial'),{status:400});
+  const collision={...stored,OrderId:'second-order',__id:'second-order'};
+  f.store.set(hospitalCollectionPath(env,'Orders')+'/second-order',collision);
+  await assert.rejects(find(first),{status:409});
+});
+
 test('specimen handling checks patient confirmation, branch, permissions and actual time',async()=>{
   const f=await ordersFixture(),order=await f.create('Laboratory');
   await assert.rejects(handle(f,order,'Collected',{ConfirmPatient:false}),/Confirm/);
@@ -259,6 +310,8 @@ test('earlier laboratory orders retain their original collection and report work
   await handle(f,order,'Collected');assert.equal(f.rows('Orders')[0].SpecimenLabel,old.OrderNumber);
   await f.laboratory.recordInvestigationReport(await f.body(order,{Text:'Earlier workflow report'},f.laboratory));
   assert.equal(f.rows('InvestigationReports')[0].Text,'Earlier workflow report');assert.equal(f.rows('Orders')[0].SpecimenWorkflow,undefined);
+  const match=await f.laboratory.searchLabSpecimen(request({Reference:old.OrderNumber}));
+  assert.equal(match.pendingReport.Text,'Earlier workflow report');assert.equal(match.specimen.Label,old.OrderNumber);
 });
 
 test('read-only subscriptions cannot save catalogues or specimen handling',async()=>{

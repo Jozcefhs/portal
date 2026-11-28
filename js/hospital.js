@@ -76,7 +76,10 @@
           (action==='clinicQueueAction' && extra.Action==='Start'))attendance.markChanged(extra.VisitId||result.VisitId);
       }
       if(['checkIn','checkInAppointment','updateVisit','clinicQueueAction','saveConsultation','signConsultation','dischargeHospitalPatient'].includes(action))queues?.invalidate();
-      if (!result.Unchanged && ['createOrder','recordSpecimen','recordInvestigationReport','verifyInvestigationReport','releaseInvestigationReport','cancelOrder'].includes(action)) orders?.outstanding.reset();
+      if (!result.Unchanged && ['createOrder','recordSpecimen','recordInvestigationReport','verifyInvestigationReport','releaseInvestigationReport','cancelOrder'].includes(action)){
+        orders?.outstanding.reset();
+        orders?.clearSpecimenSearch();
+      }
       if (!result.Unchanged && ['dispensePrescription','returnDispensedMedicine'].includes(action)) orders?.usage.reset();
       if (stockMutations.has(action)) stockDisposal?.invalidate();
       if (!result.Unchanged && stockMutations.has(action) && !['submitStockCount','submitStockDisposal'].includes(action)) stockControl?.clearExpiry();

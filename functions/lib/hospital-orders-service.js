@@ -1,5 +1,6 @@
 import { createMedicineUsageReport, usageMedicine } from './hospital-medicine-usage.js';
 import { createInvestigationReport } from './hospital-outstanding-investigations.js';
+import {findSpecimenReference} from './hospital-specimen-search.js';
 import {emergencyReference} from './hospital-emergency.js';
 import {clean,fail,id,digest,patientSummary} from './hospital-model.js';
 import {stockReceiptFields,prepareStockReceipt} from './hospital-stock-receipt.js';
@@ -88,8 +89,8 @@ export function createHospitalOrdersService(ctx){
     if(body.PatientId && (body.PatientId!==rid||body.VisitId!==rid))fail('The selected wristband changed.',409);
     return wristbandContext(arrival,BranchId);
   }
-  async function orderContext(body,{reading=false}={}){
-    const BranchId=await branch(body),order=await read('Orders',body.OrderId);
+  async function orderContext(body,{reading=false,loadedOrder}={}){
+    const BranchId=await branch(body),order=loadedOrder||await read('Orders',body.OrderId);
     if(!order||order.BranchId!==BranchId)fail('This order is not available in the selected branch.',404);
     kindAccess(order.Kind);
     if(order.EmergencyArrivalId && order.PatientId===order.EmergencyArrivalId){
@@ -141,6 +142,11 @@ export function createHospitalOrdersService(ctx){
     const row=await read('InvestigationReports',reportId);
     if(!matchesOrder(row,order))fail('Review this investigation report’s references.',409);
     return row;
+  }
+  function orderReports(order,isWorker){
+    const latest=isWorker?report(order,order.LatestReportId):null;
+    const released=isWorker&&order.ReleasedReportId===order.LatestReportId?latest:report(order,order.ReleasedReportId);
+    return Promise.all([latest,released]);
   }
   return {
     getMedicineUsage: createMedicineUsageReport({...ctx,read}),
@@ -197,11 +203,23 @@ export function createHospitalOrdersService(ctx){
         HospitalNumber:row.HospitalNumber,Kind:row.Kind,Service:row.Fields.Medicine||row.Fields.Service,Status:row.Status,CreatedAt:row.CreatedAt,
         CriticalNeedsAcknowledgement:row.CriticalNeedsAcknowledgement})),next:rows.next};
     },
+    async searchLabSpecimen(body){
+      kindAccess('Laboratory');
+      const BranchId=await branch(body);
+      const query=(name,fields)=>db.queryCollection(env,collection(name),{filters:Object.entries(fields).map(([key,value])=>eq(key,value)),limit:2});
+      const {order,specimen}=await findSpecimenReference({BranchId,reference:body.Reference,read,query,receivedSpecimen});
+      const c=await orderContext({...body,PatientId:order.PatientId},{reading:true,loadedOrder:order});
+      const [latest,released]=await orderReports(c.order,can('laboratory.work'));
+      const forSpecimen=row=>row&&(row.SpecimenSnapshot?.Label===specimen.Label||
+        (!row.SpecimenSnapshot&&order.SpecimenWorkflow!==2&&order.OrderNumber===specimen.Label))?reportView(row):null;
+      await auditRead(body,'Find laboratory specimen',BranchId,c.person,{OrderId:order.OrderId,SpecimenLabel:specimen.Label});
+      return {ok:true,patient:patientSummary(c.person),order:{OrderId:order.OrderId,OrderNumber:order.OrderNumber,Status:order.Status,
+        Service:order.Fields.Service,EmergencyReference:order.EmergencyReference},specimen,
+        pendingReport:latest?.ReportId!==released?.ReportId?forSpecimen(latest):null,releasedReport:forSpecimen(released)};
+    },
     async orderDetails(body){
       const c=await orderContext(body,{reading:true}),isWorker=can(c.order.Kind==='Laboratory'?'laboratory.work':c.order.Kind==='Imaging'?'imaging.work':'pharmacy.work');
-      const latestRead=isWorker?report(c.order,c.order.LatestReportId):Promise.resolve(null);
-      const releasedRead=isWorker&&c.order.ReleasedReportId&&c.order.ReleasedReportId===c.order.LatestReportId?latestRead:report(c.order,c.order.ReleasedReportId);
-      const [latest,released]=await Promise.all([latestRead,releasedRead]);
+      const [latest,released]=await orderReports(c.order,isWorker);
       await auditRead(body,'View hospital order',c.BranchId,c.person,{OrderId:c.order.OrderId});
       const order={...publicRow(c.order),LabelToPrint:specimenLabel(c.order)};
       if(order.CurrentSpecimen)order.CurrentSpecimen=receivedSpecimen(order.OrderId,order.CurrentSpecimen);

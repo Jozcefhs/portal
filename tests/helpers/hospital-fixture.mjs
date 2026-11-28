@@ -18,7 +18,7 @@ export function fixture(user = actor, environment = env) {
       queries.push({ path, ...options });
       let rows = [...store.entries()].filter(([key]) => key.startsWith(`${path}/`) && !key.slice(path.length + 1).includes('/')).map(([, row]) => row);
       for (const filter of options.filters || []) rows = rows.filter(row => {
-        const value = row[filter.field];
+        const value = filter.field.split('.').reduce((entry,key)=>entry?.[key],row);
         if (filter.op === 'ARRAY_CONTAINS') return value?.includes(filter.value);
         if (filter.op === 'in') return filter.value.includes(value);
         if (filter.op === '==') return value === filter.value;

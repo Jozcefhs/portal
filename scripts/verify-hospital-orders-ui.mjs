@@ -155,6 +155,17 @@ try{
   await expand('releaseWork');await fill('releaseForm',{Communication:'Attending clinician contacted by telephone at 13:00 WAT'});await page.locator('#confirmOrder').check();await page.locator('#releaseForm button').click();await done('Verified report released');
   await login('doctor','orders');await page.locator('#ordersKind').selectOption('Laboratory');await openList();assert.match(await page.locator('#releasedReport').textContent(),/Synthetic critical laboratory result/);
   assert.ok((await page.locator('#releasedReport').textContent()).includes(accession));
+  for(const reference of [accession,labOrder.OrderNumber+'-S01']){
+    await page.locator('#labReference').fill(reference.toLowerCase());
+    assert.equal(await page.locator('#labLookupResult').textContent(),'');
+    await page.locator('#labLookupForm button').click();await done('Specimen found.');
+    const result=page.locator('#labLookupResult');
+    for(const value of [labOrder.OrderNumber,accession,'Released report','Synthetic critical laboratory result']){
+      assert.ok((await result.textContent()).includes(value));
+    }
+    assert.equal(await result.getByRole('button',{name:'Open linked order'}).count(),1);
+  }
+  await page.locator('#labLookupResult button').click();await done('Order loaded.');
   await expand('ackWork');await page.locator('#loadCriticalAlerts').click();await done('Pending critical results loaded');await fill('ackForm',{Note:'Result reviewed; clinical follow-up recorded'});await page.locator('#confirmOrder').check();await page.locator('#ackForm button').click();await done('Critical result acknowledged');
   assert.equal(f.rows('Orders').find(o=>o.OrderId===labOrder.OrderId).CriticalNeedsAcknowledgement,false);
   assert.ok(!(await page.locator('#ordersRows').textContent()).includes('Critical acknowledgement due'),'loaded list clears the acknowledged flag');
