@@ -143,6 +143,10 @@ try{
   assert.match(await page.locator('#specimenSummary').textContent(),/Demo porter for Main laboratory/);
   assert.ok(await page.locator('#specimenDispatch').isHidden());
   await fill('specimenForm',{SpecimenLabel:labOrder.OrderNumber+'-S01',Note:'Received and checked in laboratory'});await page.locator('#specimenForm [name=Decision]').selectOption('Received');await page.locator('#confirmOrder').check();await page.locator('#specimenForm button').click();await done('Specimen handling recorded');
+  const accession=f.rows('SpecimenAccessions')[0].AccessionNumber;
+  assert.ok((await page.locator('#orderIdentity').textContent()).includes(accession));
+  await page.locator('#printSpecimen').click();
+  assert.ok((await page.evaluate(()=>window.printedLabel)).includes(accession));
   await expand('reportWork');await fill('reportForm',{Text:'Synthetic critical laboratory result'});await page.locator('#reportForm [name=Critical]').check();await page.locator('#confirmOrder').check();await page.locator('#reportForm button').click();await done('Report saved for independent verification');
   assert.equal(await page.locator('#verifyReport').isEnabled(),false);
   const reportWrites=f.commits.length;await page.locator('#confirmOrder').check();await page.locator('#reportForm button').click();await done('No changes to save');assert.equal(f.commits.length,reportWrites,'unchanged report must not create another version or read audit');
@@ -150,6 +154,7 @@ try{
   await login('verifier','laboratory');await openList();await page.locator('#confirmOrder').check();await page.locator('#verifyReport').click();await done('Report independently verified');
   await expand('releaseWork');await fill('releaseForm',{Communication:'Attending clinician contacted by telephone at 13:00 WAT'});await page.locator('#confirmOrder').check();await page.locator('#releaseForm button').click();await done('Verified report released');
   await login('doctor','orders');await page.locator('#ordersKind').selectOption('Laboratory');await openList();assert.match(await page.locator('#releasedReport').textContent(),/Synthetic critical laboratory result/);
+  assert.ok((await page.locator('#releasedReport').textContent()).includes(accession));
   await expand('ackWork');await page.locator('#loadCriticalAlerts').click();await done('Pending critical results loaded');await fill('ackForm',{Note:'Result reviewed; clinical follow-up recorded'});await page.locator('#confirmOrder').check();await page.locator('#ackForm button').click();await done('Critical result acknowledged');
   assert.equal(f.rows('Orders').find(o=>o.OrderId===labOrder.OrderId).CriticalNeedsAcknowledgement,false);
   assert.ok(!(await page.locator('#ordersRows').textContent()).includes('Critical acknowledgement due'),'loaded list clears the acknowledged flag');

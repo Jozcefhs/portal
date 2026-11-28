@@ -170,9 +170,60 @@ test('specimen states prevent fresh duplicate clicks as well as exact retries',a
   await handle(f,order,'Collected');await assert.rejects(handle(f,order,'Collected'),/already recorded/);
   const c=await f.laboratory.orderDetails(request(order)),body=request({...order,Revision:c.order.Revision,ConfirmPatient:true,SpecimenLabel:c.order.LabelToPrint,Decision:'Received',Note:'Received intact'});
   let reads=f.reads.length,commits=f.commits.length;
-  await f.laboratory.recordSpecimen(body);assert.equal(f.reads.length-reads,5);assert.equal(f.commits.length-commits,1);assert.equal(f.commits.at(-1).length,4);
-  reads=f.reads.length;commits=f.commits.length;assert.equal((await f.laboratory.recordSpecimen(body)).replayed,true);assert.equal(f.reads.length-reads,1);assert.equal(f.commits.length,commits);
+  const receipt=await f.laboratory.recordSpecimen(body);assert.equal(f.reads.length-reads,6);assert.equal(f.commits.length-commits,1);assert.equal(f.commits.at(-1).length,5);
+  reads=f.reads.length;commits=f.commits.length;const replay=await f.laboratory.recordSpecimen(body);assert.equal(replay.replayed,true);assert.equal(replay.AccessionNumber,receipt.AccessionNumber);assert.equal(f.reads.length-reads,1);assert.equal(f.commits.length,commits);
   await assert.rejects(handle(f,order,'Received'),/twice/);assert.equal(f.commits.length,commits+1,'only explicit details access audit was added');
+});
+
+test('accession is unique per received attempt, including concurrent receipt and recollection',async()=>{
+  const f=await ordersFixture(),order=await f.create('Laboratory');
+  await handle(f,order,'Collected');
+  assert.equal(f.rows('SpecimenAccessions').length,0);
+  const c=await f.laboratory.orderDetails(request(order));
+  const body={...order,Revision:c.order.Revision,SpecimenLabel:c.order.LabelToPrint,ConfirmPatient:true,Decision:'Received',Note:'Intact'};
+  const results=await Promise.allSettled([request(body),request(body)].map(b=>f.laboratory.recordSpecimen(b)));
+  assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+  const [first]=f.rows('SpecimenAccessions');
+  assert.equal(f.rows('SpecimenAccessions').length,1);
+  assert.equal(first.PatientId,order.PatientId);assert.equal(first.SpecimenLabel,c.order.LabelToPrint);
+  assert.equal(first.OrderId,order.OrderId);assert.equal(first.BranchId,'main');
+  assert.match(first.AccessionNumber,/^LAB-[0-9A-F]{12}-01$/);
+  await handle(f,order,'Rejected');await handle(f,order,'Collected');
+  assert.equal(f.rows('Orders')[0].CurrentSpecimen.AccessionNumber,undefined);
+  await handle(f,order,'Received');
+  const second=f.rows('Orders')[0].CurrentSpecimen;
+  assert.notEqual(second.AccessionNumber,first.AccessionNumber);
+  assert.notEqual(second.Label,first.SpecimenLabel);
+  const other=await f.create('Laboratory');await handle(f,other,'Collected');await handle(f,other,'Received');
+  assert.equal(new Set(f.rows('SpecimenAccessions').map(s=>s.AccessionNumber)).size,3);
+  const history=await f.laboratory.orderHistory(request({...order,DateRange:range}));
+  assert.equal(history.events.find(e=>e.Decision==='Rejected').Specimen.AccessionNumber,first.AccessionNumber);
+});
+
+test('a reserved accession prefix cannot overwrite another specimen',async()=>{
+  const f=await ordersFixture(),order=await f.create('Laboratory');await handle(f,order,'Collected');
+  const occupied='LAB-'+order.OrderId.slice(0,12).toUpperCase()+'-01';
+  const path=hospitalCollectionPath(env,'SpecimenAccessions')+'/'+occupied;
+  f.store.set(path,{OrderId:'unrelated-order',AccessionNumber:occupied});
+  const receipt=await handle(f,order,'Received');
+  assert.match(receipt.AccessionNumber,/^LAB-[0-9A-F]{16}-01$/);
+  assert.equal(f.store.get(path).OrderId,'unrelated-order');
+});
+
+test('historical receipt and report show the same stable accession without rewriting signed records',async()=>{
+  const f=await ordersFixture(),order=await f.create('Laboratory');await handle(f,order,'Collected');await handle(f,order,'Received');
+  const row=f.store.get(hospitalCollectionPath(env,'Orders')+'/'+order.OrderId);
+  delete row.CurrentSpecimen.AccessionNumber;
+  const saved=await f.laboratory.recordInvestigationReport(await f.body(order,{Text:'Historical report'},f.laboratory));
+  const report=f.store.get(hospitalCollectionPath(env,'InvestigationReports')+'/'+saved.ReportId);
+  const before=structuredClone(report);
+  for(let i=0;i<2;i++){
+    const view=await f.laboratory.orderDetails(request(order));
+    assert.equal(view.order.CurrentSpecimen.AccessionNumber,'LAB-H-'+order.OrderId+'-1');
+    assert.equal(view.latestReport.SpecimenSnapshot.AccessionNumber,view.order.CurrentSpecimen.AccessionNumber);
+  }
+  assert.deepEqual(report,before);
+  assert.equal(row.CurrentSpecimen.AccessionNumber,undefined);
 });
 
 test('concurrent specimen receipt and rejection cannot overwrite one another',async()=>{

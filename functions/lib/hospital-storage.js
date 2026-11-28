@@ -8,7 +8,7 @@ export const HOSPITAL_COLLECTIONS = Object.freeze([
   'PortalGrants','PortalSessions','PortalEvents','PortalLoginLimits','PortalClinicalDocuments','PortalClinicalEvents',
   'ClinicQueueEvents', 'EmergencyArrivals', 'EmergencyCareEntries',
   'Referrals','ReferralEvents','ReferralGuards',
-  'InvestigationCatalog','InvestigationCatalogVersions',
+  'InvestigationCatalog','InvestigationCatalogVersions','SpecimenAccessions',
   'PharmacySuppliers','PharmacyPurchases','PharmacyReceipts','PharmacySupplierReturns','SupplierBills','SupplierPayments','SupplierCredits','SupplierPaymentReversals','ProcurementEvents','ProcurementReferences',
   'MedicineCatalog','MedicineCatalogVersions','MedicineCatalogIdentities',
   'AppointmentWaitlist','AppointmentWaitlistGuards','AppointmentWaitlistEvents',

@@ -11,6 +11,31 @@ export function createHospitalOrdersService(ctx){
   const read=(name,key)=>db.getDocument(env,collection(name),id(key));
   const write=(name,key,data,old)=>({collectionPath:collection(name),documentId:key,data,currentDocument:condition(old)});
   const publicRow=row=>row?{...strip(row),Revision:row.__updateTime}:null;
+  // Old receipts have no allocation record. The full immutable order ID and
+  // collection sequence uniquely identify each such receipt, including after restore.
+  function receivedSpecimen(orderId,specimen){
+    if(!specimen?.ReceivedAt||specimen.AccessionNumber)return specimen;
+    return {...specimen,AccessionNumber:`LAB-H-${orderId}-${specimen.Sequence}`};
+  }
+  function reportView(row){
+    const view=publicRow(row);
+    if(view?.SpecimenSnapshot)view.SpecimenSnapshot=receivedSpecimen(view.OrderId,view.SpecimenSnapshot);
+    return view;
+  }
+  async function reserveAccession(c,specimen){
+    const orderId=c.order.OrderId;
+    // A short prefix normally suffices. Extend it if another order reserved it.
+    for(let length=12;length<=orderId.length;length+=4){
+      const number=`LAB-${orderId.slice(0,length).toUpperCase()}-${String(specimen.Sequence).padStart(2,'0')}`;
+      const reserved=await read('SpecimenAccessions',number);
+      if(reserved?.OrderId===orderId)fail('This specimen already has a receipt. Refresh the order and review its history.',409);
+      if(reserved)continue;
+      return write('SpecimenAccessions',number,{AccessionNumber:number,OrderId:orderId,BranchId:c.BranchId,
+        PatientId:c.person.PatientId,...wristband(c.order),SpecimenLabel:specimen.Label,Sequence:specimen.Sequence,
+        ReceivedBy:actor,ReceivedAt:specimen.ReceivedAt},null);
+    }
+    fail('The accession for this specimen is already reserved. Refresh the order before continuing.',409);
+  }
   const can=name=>capabilities.includes(name);
   const requiredAny=names=>{if(!names.some(can))fail('Your role does not permit this hospital operation.',403);};
   const stamp=()=>({ActorUsername:actor,ActorName:clean(user.displayName)||actor,CreatedAt:clock()});
@@ -178,15 +203,21 @@ export function createHospitalOrdersService(ctx){
       const releasedRead=isWorker&&c.order.ReleasedReportId&&c.order.ReleasedReportId===c.order.LatestReportId?latestRead:report(c.order,c.order.ReleasedReportId);
       const [latest,released]=await Promise.all([latestRead,releasedRead]);
       await auditRead(body,'View hospital order',c.BranchId,c.person,{OrderId:c.order.OrderId});
-      return {ok:true,unidentified:!!c.arrival,order:{...publicRow(c.order),LabelToPrint:specimenLabel(c.order)},patient:patientSummary(c.person),care:publicRow(c.care)||{AllergyStatus:'Unknown',Allergies:'',Revision:''},
-        latestReport:publicRow(latest),releasedReport:publicRow(released),canVerify:!!latest&&latest.ActorUsername!==actor&&isWorker,
+      const order={...publicRow(c.order),LabelToPrint:specimenLabel(c.order)};
+      if(order.CurrentSpecimen)order.CurrentSpecimen=receivedSpecimen(order.OrderId,order.CurrentSpecimen);
+      return {ok:true,unidentified:!!c.arrival,order,patient:patientSummary(c.person),care:publicRow(c.care)||{AllergyStatus:'Unknown',Allergies:'',Revision:''},
+        latestReport:reportView(latest),releasedReport:reportView(released),canVerify:!!latest&&latest.ActorUsername!==actor&&isWorker,
         canCancel:can('orders.create')&&(c.order.PrescriberUsername===actor||user.role==='Medical Director')};
     },
     async orderHistory(body){
       const filters=dateFilters(body.DateRange),c=await orderContext(body,{reading:true});
       const rows=await page('OrderEvents',[eq('BranchId',c.BranchId),eq('OrderId',c.order.OrderId),...filters],'CreatedAt',body);
       await auditRead(body,'View hospital order history',c.BranchId,c.person,{OrderId:c.order.OrderId,ResultCount:rows.rows.length});
-      return {ok:true,events:rows.rows.map(publicRow),next:rows.next};
+      return {ok:true,events:rows.rows.map(row=>{
+        const view=publicRow(row);
+        if(view.Specimen)view.Specimen=receivedSpecimen(view.OrderId,view.Specimen);
+        return view;
+      }),next:rows.next};
     },
     async releasedReportHistory(body){
       const filters=dateFilters(body.DateRange),c=await orderContext(body);
@@ -194,7 +225,7 @@ export function createHospitalOrdersService(ctx){
       const rows=await page('ReleasedReports',[eq('BranchId',c.BranchId),eq('OrderId',c.order.OrderId),...filters],'CreatedAt',body);
       if(rows.rows.some(row=>!matchesOrder(row,c.order)))fail('Review these report references.',409);
       await auditRead(body,'View released report history',c.BranchId,c.person,{OrderId:c.order.OrderId,ResultCount:rows.rows.length});
-      return {ok:true,reports:rows.rows.map(publicRow),next:rows.next};
+      return {ok:true,reports:rows.rows.map(reportView),next:rows.next};
     },
     async cancelOrder(body){
       requireCapability('orders.create');await branch(body);const Reason=field(body,'Reason',2000,true);
@@ -323,8 +354,12 @@ export function createHospitalOrdersService(ctx){
           const fresh=Decision==='Collected'||!old,Sequence=fresh?(c.order.SpecimenSequence||0)+1:old.Sequence;
           const specimen={...(fresh?{}:old),...handoff,Label:body.SpecimenLabel,Sequence,Status:Decision,Note,
             [`${Decision}At`]:new Date(OccurredAt).toISOString(),[`${Decision}By`]:actor,RecordedAt:clock()};
-          return {writes:changes(key,c,'Record laboratory specimen',{Status:`Specimen ${Decision.toLowerCase()}`,SpecimenSequence:Sequence,CurrentSpecimen:specimen,
-            SpecimenLabel:specimen.Label,SpecimenHandledAt:clock(),SpecimenHandledBy:actor},{Decision,Note,Specimen:specimen}),result:result(c)};
+          const allocation=Decision==='Received'?await reserveAccession(c,specimen):null;
+          if(allocation)specimen.AccessionNumber=allocation.documentId;
+          const writes=changes(key,c,'Record laboratory specimen',{Status:`Specimen ${Decision.toLowerCase()}`,SpecimenSequence:Sequence,CurrentSpecimen:specimen,
+            SpecimenLabel:specimen.Label,SpecimenHandledAt:clock(),SpecimenHandledBy:actor},{Decision,Note,Specimen:specimen});
+          if(allocation)writes.push(allocation);
+          return {writes,result:allocation?{...result(c),AccessionNumber:specimen.AccessionNumber}:result(c)};
         }
         if(['Received','Dispatched'].includes(body.Decision))fail('This earlier order uses the original collection workflow. Its recorded specimen and reports are preserved.');
         return {writes:changes(key,c,'Record laboratory specimen',{Status:body.Decision==='Collected'?'Specimen collected':'Specimen rejected',
@@ -382,7 +417,7 @@ export function createHospitalOrdersService(ctx){
         const snapshot=row.Report||await report(c.order,row.ReportId);
         if(!matchesOrder(snapshot,c.order)||snapshot.ReportId!==row.ReportId)fail('Review this critical report snapshot.',409);
         const {Report:_storedSnapshot,...alert}=publicRow(row);
-        return {...alert,report:publicRow(snapshot)};
+        return {...alert,report:reportView(snapshot)};
       }));
       await auditRead(body,'View pending critical results',c.BranchId,c.person,{OrderId:c.order.OrderId,ResultCount:alerts.length});
       return {ok:true,alerts,next:rows.next};
