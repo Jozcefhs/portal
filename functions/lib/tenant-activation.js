@@ -197,8 +197,16 @@ export async function sendPlatformActivationEmail(env, registration, activationU
     toEmail: recipient,
     toName: contact,
     subject: `Activate your ${organisation} Dynamax administrator account`,
-    textContent: `Hello ${contact},\n\nYour Dynamax workspace for ${organisation} is ready. Create the first Super Administrator account using this secure link:\n${activationUrl}\n\nThe link expires in ${TENANT_ACTIVATION_TTL_HOURS} hours and can be used only once. If you did not register this organisation, ignore this message.`,
-    htmlContent: `<p>Hello ${escapeHtml(contact)},</p><p>Your Dynamax workspace for <strong>${escapeHtml(organisation)}</strong> is ready.</p><p><a href="${escapeHtml(activationUrl)}" style="display:inline-block;padding:11px 16px;border-radius:8px;background:#126fe8;color:#fff;text-decoration:none;font-weight:700">Create administrator account</a></p><p>This secure link expires in ${TENANT_ACTIVATION_TTL_HOURS} hours and can be used only once.</p><p>If you did not register this organisation, ignore this message.</p>`,
+    textContent: `Hello ${contact},\n\nYour Dynamax workspace for ${organisation} is ready. To create the first Super Administrator account, copy the full URL below and paste it into your browser’s address bar.\n${activationUrl}\n\nThe link expires in ${TENANT_ACTIVATION_TTL_HOURS} hours and can be used only once. If you did not register this organisation, ignore this message.`,
+    htmlContent: [
+      `<p>Hello ${escapeHtml(contact)},</p>`,
+      `<p>Your Dynamax workspace for <strong>${escapeHtml(organisation)}</strong> is ready.</p>`,
+      `<p><a href="${escapeHtml(activationUrl)}" style="display:inline-block;padding:11px 16px;border-radius:8px;background:#126fe8;color:#fff;text-decoration:none;font-weight:700">Create administrator account</a></p>`,
+      '<p>You can also copy the full setup URL below and paste it into your browser’s address bar.</p>',
+      `<p><code dir="ltr" style="overflow-wrap:anywhere;word-break:break-all">${escapeHtml(activationUrl)}</code></p>`,
+      `<p>This secure link expires in ${TENANT_ACTIVATION_TTL_HOURS} hours and can be used only once.</p>`,
+      '<p>If you did not register this organisation, ignore this message.</p>'
+    ].join(''),
     providerOverride: 'brevo',
     senderOverride: { email: senderEmail, name: senderName }
   });
