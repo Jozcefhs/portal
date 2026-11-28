@@ -1,4 +1,4 @@
-import { listCollection, queryCollection, requireFirestoreEnv } from '../lib/firestore.js';
+import { firestoreDatabaseName, listCollection, queryCollection, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { buildIncomeAnalytics, journalMatchesIncomeBranch, resolveIncomePeriod } from '../lib/income-analytics.js';
 import { actorBranchScope, resolveRequestedBranch } from '../lib/branch-scope.js';
@@ -20,7 +20,7 @@ function validCursor(env, cursor) {
   if (!cursor) return null;
   const date = clean(cursor.date);
   const name = clean(cursor.name);
-  const prefix = `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/accountingJournals/`;
+  const prefix = `${firestoreDatabaseName(env)}/documents/accountingJournals/`;
   if (!/^\d{4}-\d{2}-\d{2}/.test(date) || !name.startsWith(prefix) || name.length <= prefix.length) {
     const error = new Error('The income report page cursor is invalid. Refresh the report.');
     error.status = 400;

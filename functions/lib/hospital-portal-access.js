@@ -1,3 +1,4 @@
+import { firestoreDatabaseName } from './firestore.js';
 import {clean,fail,id,digest,nameKey} from './hospital-model.js';
 import {field,dateOnly} from './hospital-orders-model.js';
 import {portalToken,portalCodeFor,portalGrantView,portalSecret} from './hospital-portal-model.js';
@@ -14,7 +15,7 @@ export function createHospitalPortalAccess(ctx){
       requireCapability('patients.write');const {BranchId,person}=await current(body);
       const options={filters:[{field:'BranchId',op:'==',value:BranchId},{field:'PatientId',op:'==',value:person.PatientId}],orderBy:[{field:'__name__'}],limit:31};
       const scope=await digest(JSON.stringify([BranchId,person.PatientId]));
-      if(body.Cursor){if(body.Cursor.scope!==scope)fail('Load access for this patient first.');options.startAfterName=`projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${collection('PortalGrants')}/${id(body.Cursor.id)}`;}
+      if(body.Cursor){if(body.Cursor.scope!==scope)fail('Load access for this patient first.');options.startAfterName=`${firestoreDatabaseName(env)}/documents/${collection('PortalGrants')}/${id(body.Cursor.id)}`;}
       const rows=await db.queryCollection(env,collection('PortalGrants'),options),shown=rows.slice(0,30);
       return {ok:true,grants:shown.map(portalGrantView),next:rows.length>30?{id:shown.at(-1).__id,scope}:null};
     },

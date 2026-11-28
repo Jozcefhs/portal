@@ -292,6 +292,8 @@ export async function exportOrganizationBackupPage(env, options = {}, db = {}) {
       pageToken = rest.join(':');
     } else if (!cursor && !pageToken) {
       readTime = new Date(Date.now() - 2000).toISOString();
+    } else {
+      throw restoreError('This backup continuation is invalid or expired. Start a new backup.');
     }
   }
   const descriptors = readTime ? await hospitalBackupCatalog(env, readTime, db) : await organizationBackupDescriptors(env);

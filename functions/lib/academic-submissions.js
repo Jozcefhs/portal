@@ -1,4 +1,4 @@
-import { getDocument, batchCommitDocuments, queryCollection } from './firestore.js';
+import { firestoreDatabaseName, getDocument, batchCommitDocuments, queryCollection } from './firestore.js';
 import { findStaffUserRecord, staffAccessFor } from './staff-auth.js';
 
 const clean = value => String(value ?? '').trim();
@@ -247,7 +247,7 @@ export async function submissionPaymentAction(env, context, user, input, action,
     const rows = await io.queryCollection(env, SUBMISSION_COLLECTIONS.pending, {
       filters: [{ field: context.permissions.canReviewScores ? 'ScopeKey' : 'ActorScopeKey', op: '==', value: context.permissions.canReviewScores ? key : `${key}:${actor(user)}` }],
       select: summaryFields, orderBy: [{ field: '__name__' }], limit: 100,
-      ...(cursor ? { startAfterName: `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${SUBMISSION_COLLECTIONS.pending}/${cursor}` } : {}) });
+      ...(cursor ? { startAfterName: `${firestoreDatabaseName(env)}/documents/${SUBMISSION_COLLECTIONS.pending}/${cursor}` } : {}) });
     return { ok: true, submissions: rows.filter(row => fields.every(key => row[key] === scope[key])
       && (context.permissions.canReviewScores || row.Actor === actor(user))).map(submissionSummary), nextCursor: rows.length === 100 ? rows.at(-1).Reference : '' };
   }

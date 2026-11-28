@@ -1,3 +1,4 @@
+import { firestoreDatabaseName } from './firestore.js';
 import { assertManualPaymentScope, bindManualPaymentIdentity } from './manual-payment-scope.js';
 import { financeFailure } from './accounting-mutation-guards.js';
 import { isAvailableSchoolCreditReceipt } from '../api/backend.js';
@@ -61,7 +62,7 @@ export async function searchStudentPaymentHistory(env, body, scope, io) {
   if (body.Cursor) {
     let cursor;
     try { if (typeof body.Cursor === 'string' && body.Cursor.length <= 4000) cursor = JSON.parse(body.Cursor); } catch { /* rejected below */ }
-    const prefix = `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/payments/`;
+    const prefix = `${firestoreDatabaseName(env)}/documents/payments/`;
     if (cursor?.version !== 1 || cursor.binding !== binding || typeof cursor.last !== 'string'
       || !cursor.last.startsWith(prefix) || !cursor.last.slice(prefix.length) || cursor.last.slice(prefix.length).includes('/')) {
       throw financeFailure('This payment-history page belongs to a different search or scope. Search again.', 400);

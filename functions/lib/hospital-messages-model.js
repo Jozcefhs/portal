@@ -1,3 +1,4 @@
+import { firestoreDatabaseName } from './firestore.js';
 import {clean,fail,id,digest} from './hospital-model.js';
 import {dateFilters} from './hospital-orders-model.js';
 import {clinicalAccessVersion} from './hospital-clinical-source.js';
@@ -22,7 +23,7 @@ export async function messagePage({env,db,collection},name,filters,field,body,vi
   const scope=await digest(JSON.stringify([name,filters,field]));let cursor={};
   if(body.Cursor){
     if(body.Cursor.scope!==scope||typeof body.Cursor.value!=='string'||body.Cursor.value.length>128)fail('Reload this list before changing pages.');
-    cursor={startAfterName:`projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${collection(name)}/${id(body.Cursor.id)}`,startAfterFieldValue:body.Cursor.value};
+    cursor={startAfterName:`${firestoreDatabaseName(env)}/documents/${collection(name)}/${id(body.Cursor.id)}`,startAfterFieldValue:body.Cursor.value};
   }
   const rows=await db.queryCollection(env,collection(name),{filters,limit:31,orderBy:[{field},{field:'__name__'}],...cursor}),shown=rows.slice(0,30);
   return {rows:shown.map(view),next:rows.length>30?{scope,id:shown.at(-1).__id,value:String(shown.at(-1)[field])}:null};

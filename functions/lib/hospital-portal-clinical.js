@@ -1,3 +1,4 @@
+import { firestoreDatabaseName } from './firestore.js';
 import {clean,fail,id,digest} from './hospital-model.js';
 import {field} from './hospital-orders-model.js';
 import {clinicalAccessVersion,clinicalTypes,clinicalSource} from './hospital-clinical-source.js';
@@ -18,7 +19,7 @@ export function createHospitalPortalClinical(ctx){
     async clinicalPortalContext(body){
       const c=await scope(body),s=await source(c),scopeKey=await digest(JSON.stringify([c.type,c.parentId,c.BranchId,c.person.PatientId]));
       const options={filters:[{field:'BranchId',op:'==',value:c.BranchId},{field:'PatientId',op:'==',value:c.person.PatientId}],orderBy:[{field:'__name__'}],limit:31};
-      if(body.Cursor){if(body.Cursor.scope!==scopeKey)fail('Reload recipients for this record.');options.startAfterName=`projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${collection('PortalGrants')}/${id(body.Cursor.id)}`;}
+      if(body.Cursor){if(body.Cursor.scope!==scopeKey)fail('Reload recipients for this record.');options.startAfterName=`${firestoreDatabaseName(env)}/documents/${collection('PortalGrants')}/${id(body.Cursor.id)}`;}
       const rows=await db.queryCollection(env,collection('PortalGrants'),options),shown=rows.slice(0,30);
       return {ok:true,ready:s.ready,message:s.message||'',SourceId:s.sourceId||'',SourceRevision:s.source?.__updateTime||'',ParentRevision:s.parent.__updateTime,
         recipients:shown.map(g=>({GrantId:g.GrantId,RecipientName:g.RecipientName,Kind:g.Kind,Relationship:g.Relationship,Status:g.Status,AccessUntil:g.AccessUntil,Revision:g.__updateTime})),

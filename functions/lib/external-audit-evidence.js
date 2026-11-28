@@ -1,4 +1,4 @@
-import { getDocument, queryCollection, queryCollectionPages } from './firestore.js';
+import { firestoreDatabaseName, getDocument, queryCollection, queryCollectionPages } from './firestore.js';
 import { recordBranchId } from './branch-scope.js';
 import { churchCollectionPath } from './church-foundation.js';
 import { externalAuditDate, externalAuditNextDate } from './external-audit.js';
@@ -185,7 +185,7 @@ function safeRecordId(value) {
 export function auditRegisterCursor(env, cursor, collection) {
   if (!cursor) return null;
   const name = clean(cursor.name);
-  const prefix = `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${collection}/`;
+  const prefix = `${firestoreDatabaseName(env)}/documents/${collection}/`;
   if (!name.startsWith(prefix) || !name.slice(prefix.length) || name.slice(prefix.length).includes('/')) throw auditError('The register cursor is invalid. Refresh the register.');
   return { name };
 }

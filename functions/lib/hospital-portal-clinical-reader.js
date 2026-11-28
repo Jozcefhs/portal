@@ -1,3 +1,4 @@
+import { firestoreDatabaseName } from './firestore.js';
 import {fail,id,digest} from './hospital-model.js';
 import {dateOnly} from './hospital-orders-model.js';
 import {clinicalAccessVersion,clinicalTypes,clinicalSource,clinicalDocument} from './hospital-clinical-source.js';
@@ -27,7 +28,7 @@ export async function readPortalClinical({env,db,collection,read,write,commit,cl
   const options={filters:Object.entries({BranchId:grant.BranchId,PatientId:person.PatientId,GrantId:grant.GrantId,GrantAccessVersion:clinicalAccessVersion(grant),DocumentType:type,Status:'Published'}).map(([field,value])=>({field,op:'==',value})),orderBy:[{field:'PublishedAt'},{field:'__name__'}],limit:31};
   options.filters.push({field:'PublishedAt',op:'>=',value:start},{field:'PublishedAt',op:'<',value:end});
   if(body.Cursor){if(body.Cursor.scope!==scope||typeof body.Cursor.value!=='string'||body.Cursor.value<start||body.Cursor.value>=end)fail('Load the first page for this period.');
-    options.startAfterName=`projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${collection('PortalClinicalDocuments')}/${id(body.Cursor.id)}`;options.startAfterFieldValue=body.Cursor.value;}
+    options.startAfterName=`${firestoreDatabaseName(env)}/documents/${collection('PortalClinicalDocuments')}/${id(body.Cursor.id)}`;options.startAfterFieldValue=body.Cursor.value;}
   const rows=await db.queryCollection(env,collection('PortalClinicalDocuments'),options),shown=rows.slice(0,30);
   if(shown.some(r=>!matches(r)))fail('The requested documents could not be verified.',409);
   return {ok:true,rows:shown.map(r=>({DocumentId:r.DocumentId,Title:r.Title,Number:r.Number,CreatedAt:r.PublishedAt})),LoadedAt:clock(),next:rows.length>30?{scope,id:shown.at(-1).__id,value:shown.at(-1).PublishedAt}:null};

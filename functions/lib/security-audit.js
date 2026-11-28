@@ -1,4 +1,4 @@
-import { queryCollection, upsertDocument } from './firestore.js';
+import { firestoreDatabaseName, queryCollection, upsertDocument } from './firestore.js';
 import { readStaffSession } from './staff-auth.js';
 import { auditWords, auditSentence, auditNarrative, auditActionContext } from './audit-language.js';
 import { hospitalCollectionPath } from './hospital-storage.js';
@@ -621,7 +621,7 @@ export async function loadAggregatedSecurityAudit(env, options = {}) {
       if (!Object.prototype.hasOwnProperty.call(cursor.sources, source.collection)) throw invalidCursor();
       const position = cursor.sources[source.collection];
       if (position === null) continue;
-      const prefix = `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${source.collection}/`;
+      const prefix = `${firestoreDatabaseName(env)}/documents/${source.collection}/`;
       if (!position || typeof position !== 'object' || typeof position.name !== 'string'
         || !position.name.startsWith(prefix) || !position.name.slice(prefix.length)
         || position.name.slice(prefix.length).includes('/') || typeof position.timestamp !== 'string'

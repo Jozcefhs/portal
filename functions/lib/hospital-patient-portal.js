@@ -1,6 +1,6 @@
 import {patientMessages} from './hospital-messages-patient.js';
 import {readPortalClinical} from './hospital-portal-clinical-reader.js';
-import {getDocument,queryCollection,batchCommitLiteralDocuments} from './firestore.js';
+import { firestoreDatabaseName,getDocument,queryCollection,batchCommitLiteralDocuments} from './firestore.js';
 import {getSchoolStructure} from './school-scope.js';
 import {configuredStaffBranches} from './staff-branch-context.js';
 import {staffAccessFor} from './staff-auth.js';
@@ -132,7 +132,7 @@ export async function hospitalPatientPortalAction(env,sessionToken,body,override
     orderBy:[{field:'CreatedAt'},{field:'__name__'}],limit:31};
   if(body.Cursor){
     if(body.Cursor.scope!==scope||typeof body.Cursor.value!=='string'||body.Cursor.value<start||body.Cursor.value>=end)fail('Load the first page for this period.');
-    options.startAfterName=`projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${collection(types[type])}/${id(body.Cursor.id)}`;options.startAfterFieldValue=body.Cursor.value;
+    options.startAfterName=`${firestoreDatabaseName(env)}/documents/${collection(types[type])}/${id(body.Cursor.id)}`;options.startAfterFieldValue=body.Cursor.value;
   }
   const rows=await db.queryCollection(env,collection(types[type]),options),shown=rows.slice(0,30);
   if(shown.some(row=>!matching(row,type)))fail('The requested records could not be verified.',409);

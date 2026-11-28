@@ -46,3 +46,9 @@ jobs:
       - run: npm ci
       - name: Verify Hospital and shared edition behaviour
         run: node --test tests/hospital*.test.mjs tests/organization-config.test.mjs tests/role-module-access.test.mjs tests/data-backup-restore.test.mjs tests/deployment-identity.test.mjs tests/subscription-plans.test.mjs tests/service-worker-cache-version.test.mjs tests/web-release-freshness.test.mjs
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Recover a synthetic discharge and paid invoice in a second Firestore database
+        run: npx --yes firebase-tools@15.24.0 emulators:exec --only firestore --config firebase.hospital.json --project demo-hospital-recovery "node scripts/verify-hospital-database-recovery.mjs"

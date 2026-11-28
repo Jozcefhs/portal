@@ -10,7 +10,7 @@ import { createHospitalStockDisposal } from './hospital-stock-disposal.js';
 import { createHospitalInvestigationsService } from './hospital-investigations-service.js';
 import { createHospitalMedicinesService } from './hospital-medicines-service.js';
 import { createHospitalReferralsService } from './hospital-referrals-service.js';
-import { countCollection, getDocument, queryCollection, batchCommitLiteralDocuments } from './firestore.js';
+import { firestoreDatabaseName, countCollection, getDocument, queryCollection, batchCommitLiteralDocuments } from './firestore.js';
 import { requiredDeploymentIdentity } from './deployment-identity.js';
 import { getSchoolStructure } from './school-scope.js';
 import { configuredStaffBranches } from './staff-branch-context.js';
@@ -116,7 +116,7 @@ export function createHospitalService(env, user, overrides = {}) {
     if (body.Cursor) {
       const docId = id(body.Cursor.id);
       if (typeof body.Cursor.value !== 'string' || body.Cursor.value.length > 500) fail('Invalid page reference.');
-      cursor = { startAfterName: `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${path}/${docId}`,
+      cursor = { startAfterName: `${firestoreDatabaseName(env)}/documents/${path}/${docId}`,
         startAfterFieldValue: body.Cursor.value };
     }
     const rows = await db.queryCollection(env, path, { ...options, filters, limit: limit + 1,

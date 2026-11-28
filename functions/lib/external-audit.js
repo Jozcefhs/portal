@@ -1,3 +1,4 @@
+import { firestoreDatabaseName } from './firestore.js';
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 
@@ -91,7 +92,7 @@ function collectionCursor(env, cursor, collection) {
   if (!cursor) return null;
   const date = clean(cursor.date);
   const name = clean(cursor.name);
-  const prefix = `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${collection}/`;
+  const prefix = `${firestoreDatabaseName(env)}/documents/${collection}/`;
   if ((collection === 'accountingJournals' && !/^\d{4}-\d{2}-\d{2}/.test(date))
     || !name.startsWith(prefix) || name.length <= prefix.length || name.slice(prefix.length).includes('/')) {
     throw inputError('The audit page cursor is invalid. Refresh the register.');

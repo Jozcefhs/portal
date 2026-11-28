@@ -122,16 +122,21 @@ export async function getFirestoreAccessToken(env) {
   return cachedToken.accessToken;
 }
 
+export function firestoreDatabaseName(env) {
+  const id = clean(env.FIRESTORE_DATABASE_ID) || '(default)';
+  if (id !== '(default)' && !/^[a-z][a-z0-9-]{2,61}[a-z0-9]$/.test(id)) {
+    throw new Error('Invalid Firestore database ID.');
+  }
+  return `projects/${encodeURIComponent(env.FIREBASE_PROJECT_ID)}/databases/${id}`;
+}
+
 export function firestoreBaseUrl(env) {
-  requireFirestoreEnv(env);
-  const projectId = encodeURIComponent(env.FIREBASE_PROJECT_ID);
-  return `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents`;
+  return `${firestoreDatabaseUrl(env)}/documents`;
 }
 
 export function firestoreDatabaseUrl(env) {
   requireFirestoreEnv(env);
-  const projectId = encodeURIComponent(env.FIREBASE_PROJECT_ID);
-  return `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)`;
+  return `https://firestore.googleapis.com/v1/${firestoreDatabaseName(env)}`;
 }
 
 export async function listRootCollectionIds(env, options = {}) {

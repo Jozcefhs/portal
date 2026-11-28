@@ -1,4 +1,4 @@
-import {getDocument,queryCollection,batchCommitLiteralDocuments} from './firestore.js';
+import { firestoreDatabaseName,getDocument,queryCollection,batchCommitLiteralDocuments} from './firestore.js';
 import {getSchoolStructure} from './school-scope.js';
 import {configuredStaffBranches} from './staff-branch-context.js';
 import {staffAccessFor} from './staff-auth.js';
@@ -56,7 +56,7 @@ export async function hospitalPatientBookingAction(env,token,body,overrides={}){
   if(body.action==='clinics'){
     const Day=day(body.Day),filters=[eq('BranchId',link.BranchId),eq('Day',Day),eq('Active',true),eq('SelfBookingEnabled',true)];
     const scope=await keyFor(LinkId,Day);let cursor={};
-    if(body.Cursor){if(body.Cursor.scope!==scope)fail('Load the first page for this clinic date.');cursor.startAfterName=`projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${collection('AppointmentSchedules')}/${id(body.Cursor.id)}`;}
+    if(body.Cursor){if(body.Cursor.scope!==scope)fail('Load the first page for this clinic date.');cursor.startAfterName=`${firestoreDatabaseName(env)}/documents/${collection('AppointmentSchedules')}/${id(body.Cursor.id)}`;}
     const rows=await db.queryCollection(env,collection('AppointmentSchedules'),{filters,orderBy:[{field:'__name__'}],limit:31,...cursor}),shown=rows.slice(0,30);
     return {ok:true,clinics:shown.map(publicClinic),next:rows.length>30?{id:shown.at(-1).__id,scope}:null};
   }
