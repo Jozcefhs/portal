@@ -35,7 +35,7 @@
   <script src="/js/hospital-portal-access.js?v=541" defer></script>
   <script src="/js/hospital-messages-ui.js?v=544" defer></script>
   <script src="/js/hospital-attendance.js?v=561" defer></script>
-  <script src="/js/hospital.js?v=566-dropdowns" defer></script>
+  <script src="/js/hospital.js?v=567-patient-journey" defer></script>
 </head>
 <body>
   <main>
@@ -46,6 +46,7 @@
       <p id="hospitalOwnerDemo" class="hint" hidden><strong>Hospital Owner&rsquo;s Demo</strong> &middot; Use synthetic demonstration records only. This workspace has a separate database.</p>
       <nav aria-label="Hospital tasks" class="toolbar"><label>Hospital task<select id="hospitalTask">
         <option value="patients" data-tab="patients">Patients and NFC cards</option>
+        <option value="journey" data-tab="journey" hidden>Test the patient journey</option>
         <option value="reception" data-tab="reception">Reception visits</option>
         <option value="queues" data-tab="queues" hidden>Clinic queues</option>
         <option value="appointments" data-tab="appointments" hidden>Appointments</option>
@@ -61,6 +62,20 @@
         <option value="stockControl" data-tab="stockControl" hidden>Pharmacy stock control</option>
         <option value="stockDisposal" data-tab="stockDisposal" hidden>Quarantined stock disposal</option>
       </select></label></nav>
+      <section id="journey" aria-labelledby="journeyTitle" hidden>
+        <h2 id="journeyTitle">Test the patient journey</h2>
+        <p>Choose one working branch and a fictional patient for this exercise. Pass the hospital number and visit date to the next member of staff. At each handoff, match the patient and visit before saving.</p>
+        <details><summary>Before the first handoff</summary><p>Arrange a second authorised laboratory user to verify the report. Ask pharmacy to check for a priced, unexpired demo batch, the ward clerk to check for an available bed, and finance to check the billing account mappings. Use simulated money throughout.</p></details>
+        <ol>
+          <li><h3>Reception · Register and check in</h3><p>Search for the fictional patient first. Reuse their record if found, or register them once. Check them in and confirm there is one visit for this arrival.</p><button type="button" data-journey-tab="patients" data-write="visits.write">Open patient registration</button></li>
+          <li><h3>Nurse · Record triage</h3><p>Load reception visits for the arrival date. Choose <strong>Open care record</strong> on the matching visit, enter the test observations and save. The doctor should see the triage entry on that visit.</p><button type="button" data-journey-tab="reception" data-write="triage.write">Find the visit for triage</button></li>
+          <li><h3>Doctor · Sign the consultation and place orders</h3><p>Open the care record, review triage, save the consultation and sign it. From the visit, choose <strong>Prescribe / request investigation</strong>. Place one laboratory request and one prescription for the demo batch.</p><button type="button" data-journey-tab="reception" data-write="consultations.write">Find the consultation visit</button></li>
+          <li><h3>Laboratory · Release the report</h3><p>Find the laboratory order. Record specimen collection and receipt, then enter a fictional result. A second laboratory user verifies and releases it. Confirm the released report belongs to the original order.</p><button type="button" data-journey-tab="orders" data-order-task="laboratory" data-write="laboratory.work">Open laboratory orders</button></li>
+          <li><h3>Pharmacy · Dispense the prescription</h3><p>Review the prescription and dispense from the demo batch. Check the dispensed quantity and the resulting medicine charge against the same visit.</p><button type="button" data-journey-tab="orders" data-order-task="pharmacy" data-write="pharmacy.work">Open prescriptions</button></li>
+          <li><h3>Ward · Admit and discharge</h3><p>From the reception visit choose <strong>Ward admission</strong> and admit the patient to an available bed. The doctor signs the discharge summary. The ward nurse then completes discharge. Check that the admission shows Discharged and the visit shows Completed.</p><button type="button" data-journey-tab="reception" data-write="inpatient.admit">Find the visit for admission</button> <button type="button" data-journey-tab="inpatients" data-write="inpatient.discharge">Open the admission to sign discharge</button> <button type="button" data-journey-tab="inpatients" data-write="inpatient.admit">Open the admission to complete discharge</button></li>
+          <li><h3>Cashier · Invoice and reconcile</h3><p>Open the completed visit and choose <strong>Open billing / HMO</strong>. Issue one invoice for the test charges. Record one simulated payment for the full patient balance, using a unique reference. Reopen the invoice and load receipts for today. Check for one receipt, one payment and a zero patient balance.</p><button type="button" data-journey-tab="reception" data-write="billing.write">Find the visit for billing</button> <button type="button" data-journey-tab="billing" data-write="billing.write">Check invoices and receipts</button></li>
+        </ol>
+      </section>
       <section id="queues" hidden></section>
       <section id="appointments" hidden></section>
       <section id="theatre" hidden></section>

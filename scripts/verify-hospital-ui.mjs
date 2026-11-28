@@ -15,8 +15,9 @@ const assets = hospitalBrowserAssets();
 assets.add('/css/app-dialogs.css'); assets.add('/js/app-dialogs.js');
 assets.add('/js/hospital-clinical.js');
 assets.add('/js/hospital-medicines.js'); assets.add('/js/hospital-procurement.js');assets.add('/js/hospital-orders.js'); assets.add('/js/hospital-billing.js'); assets.add('/js/hospital-funds.js'); assets.add('/js/hospital-corporate.js');assets.add('/js/hospital-inpatients.js');assets.add('/js/hospital-nursing.js');assets.add('/js/hospital-theatre.js');
-let expire = false, unscopedBranch = 'main';
+let expire = false, unscopedBranch = 'main', ownerDemo = false;
 const stateBranches = [];
+const hospitalActions = [];
 const server = createServer(async (req,res) => {
   try {
     const path = new URL(req.url, 'http://localhost').pathname;
@@ -28,10 +29,11 @@ const server = createServer(async (req,res) => {
       if (expire) throw Object.assign(new Error('Staff session expired'),{status:401});
       let raw=''; for await (const chunk of req) raw+=chunk;
       const body=JSON.parse(raw);
+      hospitalActions.push(body.action);
       const activeBranchId=req.headers['x-dynamax-branch'] || unscopedBranch;
       if(body.action==='state')stateBranches.push(activeBranchId);
       const user={...actor, assignedBranchIds:['main','north'], activeBranchId};
-      const data=await createHospitalService(env,user,f.db)[body.action](body);
+      const data=await createHospitalService({...env,HOSPITAL_OWNER_DEMO:String(ownerDemo)},user,f.db)[body.action](body);
       res.setHeader('Content-Type','application/json');res.end(JSON.stringify(data));return;
     }
     if (!assets.has(path)) {res.writeHead(404);res.end();return;}
@@ -49,6 +51,24 @@ try {
   const done = async text => { await page.locator('#status').filter({hasText:text}).waitFor(); await page.waitForFunction(()=>!document.querySelector('#refresh').disabled); };
   await done('Hospital reception ready');
   assert.deepEqual(stateBranches,['main'],'assigned branch loads fresh access once');
+  const journeyUrl = new URL('?task=journey&branch=north', page.url()).href;
+  await page.goto(journeyUrl); await done('Hospital reception ready');
+  assert.equal(await page.locator('#hospitalTask').inputValue(),'patients');
+  assert.equal(await page.locator('[data-tab="journey"]').isDisabled(),true);
+  ownerDemo=true;
+  await page.goto(journeyUrl); await done('Hospital reception ready');
+  assert.equal(await page.locator('#hospitalTask').inputValue(),'journey');
+  assert.equal(await page.locator('#journey li').count(),7);
+  assert.equal(await page.locator('#journey [data-order-task="pharmacy"]').isVisible(),false);
+  const beforeNavigation=hospitalActions.length;
+  await page.locator('#journey button[data-journey-tab="patients"]').click();
+  assert.equal(await page.locator('#patients').isVisible(),true);
+  await page.locator('#hospitalTask').selectOption('journey');
+  assert.equal(await page.locator('#branch').inputValue(),'north');
+  assert.equal(hospitalActions.length,beforeNavigation,'guide navigation requests no hospital data');
+  assert.equal(f.commits.length,0);
+  ownerDemo=false;
+  await page.goto(new URL('/hospital.html',page.url()).href); await done('Hospital reception ready');
   unscopedBranch='all'; stateBranches.length=0;
   await page.reload();await done('Hospital reception ready');
   assert.deepEqual(stateBranches,['all','main'],'organisation-wide access still resolves concrete branch permissions');

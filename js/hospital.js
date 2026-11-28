@@ -86,6 +86,7 @@
   }
   function permissions() {
     $('hospitalOwnerDemo').hidden = !state.ownerDemo;
+    document.querySelector('[data-tab="journey"]').hidden = !state.ownerDemo;
     document.querySelectorAll('[data-write]').forEach(el => { el.hidden = !writable(el.dataset.write); });
     document.querySelector('[data-tab="reception"]').hidden = !can('visits.read');
     document.querySelector('[data-tab="care"]').hidden = !can('clinical.read');
@@ -107,6 +108,10 @@
     stockDisposal?.permissions();
     const picker=$('hospitalTask');
     for(const option of picker.options) option.disabled=option.hidden;
+    for (const button of $('journey').querySelectorAll('[data-journey-tab]')) {
+      const destination = picker.querySelector(`option[value="${button.dataset.journeyTab}"]`);
+      button.hidden = !state.ownerDemo || !writable(button.dataset.write) || destination.hidden;
+    }
     if(picker.selectedOptions[0]?.hidden) showTab('patients');
   }
   async function run(work) {
@@ -145,6 +150,13 @@
     if(option.value==='messages')run(()=>messages.open());
     if(option.value==='queues')run(()=>queues.open());
     if(option.value==='stockDisposal')run(()=>stockDisposal.open());
+  };
+  $('journey').onclick = event => {
+    const button = event.target.closest('button[data-journey-tab]');
+    if (!button || button.hidden || busy || !state.ownerDemo || !writable(button.dataset.write)) return;
+    if (button.dataset.orderTask) orders.selectTask(button.dataset.orderTask);
+    showTab(button.dataset.journeyTab);
+    $('hospitalTask').focus();
   };
   $('refresh').onclick = () => run(async () => { if(!await clinical.confirmLeave()||!await orders.confirmLeave()||!await billing.confirmLeave()||!await inpatients.confirmLeave()||!await nursing.confirmLeave()||!await theatre.confirmLeave()||!await appointments.confirmLeave()||!await referrals.confirmLeave()||!await procurement.confirmLeave()||!await stockControl.confirmLeave()||!await stockDisposal.confirmLeave())return; clearRecords(); await loadAccess(); if(!$('stockDisposal').hidden&&can('stock.read'))await stockDisposal.open(); });
   $('branch').onchange = () => run(async () => {
@@ -328,6 +340,7 @@
   inpatients.onNursing(row=>nursing.open(row));
   inpatients.onCare(row=>clinical.open(row));inpatients.onBilling(row=>billing.openVisit(row));
   run(async () => { await loadAccess(); const task=new URLSearchParams(location.search).get('task');
+    if(task==='journey' && state.ownerDemo) showTab('journey');
     if(task==='messages'&&can('clinical.read')){showTab('messages');await messages.open();}
     if(task==='stock-control'&&can('stock.read'))showTab('stockControl');
     if(task==='stock-disposal'&&can('stock.read')){showTab('stockDisposal');await stockDisposal.open();}
