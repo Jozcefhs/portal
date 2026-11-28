@@ -12,7 +12,7 @@ import { CHURCH_COLLECTIONS, churchCollectionPath } from './church-foundation.js
 import { resolveOrganizationConfig } from './organization-config.js';
 import { requiredDeploymentIdentity } from './deployment-identity.js';
 import { effectiveBranchProfile } from './branch-profile-settings.js';
-import { getBranchClassCatalogue } from './branch-class-catalogue.js';
+import { getBranchClassCatalogue, withCatalogueClassroom, classReportSeries } from './branch-class-catalogue.js';
 import { staffRecordMatchesEdition } from './records-desk.js';
 import { loadStaffPosition } from './staff-position.js';
 import { withStaffEmployment, employmentDirectoryRow } from './staff-employment.js';
@@ -681,8 +681,8 @@ async function metricData(env, scope, selectedIds, correspondenceRows = null, us
         schoolSectionAccess: scope.schoolSection
       })).filter((row) => visibleSchoolRow(row, scope));
     }
-    if (selected.has('classTotal')) classes = loadedClasses || (await getBranchClassCatalogue(env, {
-      branchId: scope.branchId, section: scope.schoolSection, includeArms: false, includeInactive: false
+    if (selected.has('classTotal') || (selected.has('studentByClass') && students.length)) classes = loadedClasses || (await getBranchClassCatalogue(env, {
+      branchId: scope.branchId, section: scope.schoolSection, includeArms: false, includeInactive: false, metadata: {}
     })).classes;
   } else {
     const path = (collection) => churchCollectionPath(collection, scope.branchId);
@@ -707,7 +707,8 @@ async function metricData(env, scope, selectedIds, correspondenceRows = null, us
     if (!definition) return;
     if (id === 'studentTotal') results.push(metricResult(definition, students.length));
     else if (id === 'activeStudents') results.push(metricResult(definition, students.filter((row) => active(row.Status)).length));
-    else if (id === 'studentByClass') results.push(metricResult(definition, students.length, countSeries(students, (row) => row.ClassName || row.Class)));
+    else if (id === 'studentByClass') results.push(metricResult(definition, students.length,
+      classReportSeries(students.map(row => withCatalogueClassroom(row, classes)), () => 1, 'Unassigned').slice(0, 20)));
     else if (id === 'staffTotal') results.push(metricResult(definition, staff.length));
     else if (id === 'activeStaff') results.push(metricResult(definition, staff.filter((row) => active(row.Active)).length));
     else if (id === 'staffByDepartment') results.push(metricResult(definition, staff.length, countSeries(staff, (row) => row.Department)));

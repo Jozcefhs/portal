@@ -11,28 +11,61 @@ const defaults = { getDocument, queryCollectionPages };
 export function branchClassNameKey(name) { return normalizeClassKey(name); }
 export function branchArmNameKey(name) { return lower(name).replace(/\s+/g, ' '); }
 
-export async function studentRegisterCatalogueLabels(env, students, load = getBranchClassCatalogue) {
+function studentScopePath(student) {
+  return /^schoolBranches\/([^/]+)\/sections\/([^/]+)\/students$/.exec(clean(student.__scopePath || student.StudentScopePath));
+}
+
+const spellingKey = name => lower(name).replace(/\s+/g, ' ').replace(/([a-z]) (?=\d)/g, '$1');
+
+export function withCatalogueClassroom(student, classes) {
+  const path = studentScopePath(student);
+  const className = clean(student.ClassName || student.ClassAdmitted || student.Class);
+  const section = path?.[2] || schoolSectionFor({ ...student, ClassName: className });
+  const branchId = lower(path?.[1] || student.BranchId || 'main');
+  const scoped = classes.filter(row => row.SchoolSection === section && lower(row.BranchId) === branchId);
+  const armName = clean(student.ClassArm);
+  const bareName = armName && lower(className).endsWith(' / ' + lower(armName))
+    ? className.slice(0, -(armName.length + 3)) : className;
+  let matches = student.AcademicClassId ? scoped.filter(row => row.ClassId === student.AcademicClassId) : [];
+  if (!matches.length && bareName) {
+    matches = scoped.filter(row => lower(row.ClassName) === lower(bareName));
+    if (!matches.length) matches = scoped.filter(row => spellingKey(row.ClassName) === spellingKey(bareName));
+  }
+  if (!matches.length && !student.AcademicClassId && bareName) {
+    const key = branchClassNameKey(bareName);
+    matches = scoped.filter(row => branchClassNameKey(row.ClassName) === key);
+  }
+  if (matches.length !== 1) return student;
+  const schoolClass = matches[0];
+  const armRecords = schoolClass.ArmRecords || [];
+  let arms = student.AcademicArmId ? armRecords.filter(arm => arm.ArmId === student.AcademicArmId) : [];
+  if (!arms.length && armName) arms = armRecords.filter(arm => branchArmNameKey(arm.Name) === branchArmNameKey(armName));
+  return { ...student, CatalogueClassName: schoolClass.ClassName,
+    CatalogueArmName: arms.length === 1 ? arms[0].Name : armName };
+}
+
+export function classReportSeries(rows, valueFor, emptyLabel) {
+  const groups = new Map();
+  for (const row of rows) {
+    const label = row.CatalogueClassName || clean(row.ClassName || row.ClassAdmitted || row.Class) || emptyLabel;
+    // Keep independently configured names distinct, even when they are recognised academic aliases.
+    const key = row.CatalogueClassName ? 'catalogue:' + label : 'legacy:' + spellingKey(label);
+    const group = groups.get(key) || { label, value: 0 };
+    group.value += valueFor(row);
+    groups.set(key, group);
+  }
+  return [...groups.values()].sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
+}
+
+// Share in-flight reads across the student and finance projections of one request.
+export function schoolClassLabelReader(env, { includeArms = true, load = getBranchClassCatalogue } = {}) {
   const catalogues = new Map();
-  return Promise.all(students.map(async student => {
-    const path = /^schoolBranches\/([^/]+)\/sections\/([^/]+)\/students$/.exec(clean(student.__scopePath));
+  return rows => Promise.all(rows.map(async student => {
+    const path = studentScopePath(student);
     const branchId = lower(path?.[1] || student.BranchId || 'main');
-    if (!catalogues.has(branchId)) catalogues.set(branchId, load(env, { branchId, metadata: {} }));
+    if (!catalogues.has(branchId)) catalogues.set(branchId, load(env, { branchId, metadata: {}, includeArms }));
     const { classes } = await catalogues.get(branchId);
-    const className = clean(student.ClassName || student.ClassAdmitted);
-    const section = path?.[2] || schoolSectionFor({ ...student, ClassName: className });
-    const scoped = classes.filter(row => row.SchoolSection === section);
-    const armName = clean(student.ClassArm);
-    const bareName = armName && lower(className).endsWith(' / ' + lower(armName))
-      ? className.slice(0, -(armName.length + 3)) : className;
-    const matches = student.AcademicClassId
-      ? scoped.filter(row => row.ClassId === student.AcademicClassId)
-      : scoped.filter(row => branchClassNameKey(row.ClassName) === branchClassNameKey(bareName));
-    if (matches.length !== 1) return student;
-    const schoolClass = matches[0];
-    const arms = schoolClass.ArmRecords.filter(arm => student.AcademicArmId
-      ? arm.ArmId === student.AcademicArmId : branchArmNameKey(arm.Name) === branchArmNameKey(armName));
-    return { ...student, CatalogueClassName: schoolClass.ClassName,
-      CatalogueArmName: arms.length === 1 ? arms[0].Name : armName };
+    return withCatalogueClassroom(student, classes);
   }));
 }
 

@@ -1,21 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { studentRegisterCatalogueLabels } from '../functions/lib/branch-class-catalogue.js';
+import { schoolClassLabelReader, withCatalogueClassroom } from '../functions/lib/branch-class-catalogue.js';
 import { getBranchClassCatalogue, projectBranchClassCatalogue, branchClassCatalogueRevisionWrite } from '../functions/lib/branch-class-catalogue.js';
 
 test('register resolves imported labels and linked renames with one catalogue load per branch', async () => {
   const imported = { ClassName: 'NURSERY2', ClassArm: 'EXCELLENCE', __scopePath: 'schoolBranches/garden/sections/primary/students' };
   const linked = { ...imported, ClassName: 'Old name', ClassArm: 'Old arm', AcademicClassId: 'original-nursery', AcademicArmId: 'original-arm' };
   const loads = [];
-  const rows = await studentRegisterCatalogueLabels({}, [imported, linked], async (_, options) => {
+  const labelRows = schoolClassLabelReader({}, { load: async (_, options) => {
     loads.push(options.branchId);
     return { classes: projectBranchClassCatalogue(classes, arms, options) };
-  });
+  } });
+  const rows = await labelRows([imported, linked]);
+  await labelRows([linked]);
   assert.deepEqual(loads, ['garden']);
   assert.deepEqual(rows.map(row => [row.CatalogueClassName, row.CatalogueArmName]),
     [['Nursery 2', 'Excellence'], ['Nursery 2', 'Excellence']]);
   assert.equal(imported.ClassArm, 'EXCELLENCE');
   assert.equal(imported.CatalogueArmName, undefined);
+});
+
+test('equivalent fee-rule aliases never collapse distinct configured classes in student reports', () => {
+  const row = { BranchId: 'garden', SchoolSection: 'primary', ClassName: 'GRADE 1', ClassArm: 'GOLD' };
+  const grade = { ...row, ClassName: 'Grade 1', ClassId: 'g1', ArmRecords: [{ Name: 'Gold', ArmId: 'g' }] };
+  const primary = { ...grade, ClassName: 'Primary 1', ClassId: 'p1' };
+  const catalogue = [grade, primary];
+  assert.equal(withCatalogueClassroom(row, catalogue).CatalogueClassName, 'Grade 1');
+  assert.equal(withCatalogueClassroom(row, catalogue).CatalogueArmName, 'Gold');
+  assert.equal(withCatalogueClassroom({ ...row, ClassName: 'Basic One' }, catalogue).CatalogueClassName, undefined);
+  assert.equal(withCatalogueClassroom({ ...row, BranchId: 'another' }, catalogue).CatalogueClassName, undefined);
 });
 
 const classes = [
