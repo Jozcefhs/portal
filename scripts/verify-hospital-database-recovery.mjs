@@ -47,6 +47,10 @@ globalThis.fetch = async (input,options={}) => {
     assert.equal(url.origin,'https://firestore.googleapis.com');
     if (url.pathname.startsWith(localPrefix)) {
       assert.equal(new Headers(options.headers).get('Authorization'),'Bearer owner');
+      // Emulator 1.21 rejects REST GET readTime with "Only timestamps past
+      // epoch are supported". The seeded source is immutable during export.
+      // The live portal regression separately exercises snapshot reads.
+      if (!options.method || options.method === 'GET') url.searchParams.delete('readTime');
       return network('http://' + emulator + url.pathname + url.search,{...options,redirect:'error'});
     }
     assert.ok(live && url.pathname.startsWith(livePrefix),'Unexpected recovery destination.');

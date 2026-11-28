@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { firestoreDatabaseName } from '../functions/lib/firestore.js';
 import {
   AUDIT_REGISTERS, auditError, auditCollection, auditRecordProjection, auditRecordVisible,
   auditRegisterCursor, buildAuditPeriodReports
@@ -20,7 +21,7 @@ function isolatedModule(source, exports, mocks) {
 }
 function evidenceModule(mocks = {}) {
   return isolatedModule(source, ['listAuditRecords', 'getAuditRecord', 'exportAuditRegister', 'loadAuditPeriodReports', 'auditRecordEvidence'], {
-    externalAuditDate, externalAuditNextDate, recordBranchId, churchCollectionPath,
+    externalAuditDate, externalAuditNextDate, recordBranchId, churchCollectionPath, firestoreDatabaseName,
     getDocument: async () => null, queryCollection: async () => [], queryCollectionPages: async () => [], ...mocks
   });
 }

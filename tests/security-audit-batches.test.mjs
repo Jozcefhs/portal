@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { firestoreDatabaseName } from '../functions/lib/firestore.js';
 import { loadCompleteSecurityAudit } from '../js/security-audit-workspace.js';
 import { normalizedLegacyAudit } from '../functions/lib/security-audit.js';
 import { auditWords, auditSentence, auditNarrative, auditActionContext } from '../functions/lib/audit-language.js';
@@ -20,7 +21,7 @@ const row = (collection, id, extra = {}) => ({ __id: id, __name: name(collection
   Action: 'APPROVE BILL', Method: 'POST', HttpStatus: 200, BranchId: 'main', ...extra });
 const isolated = (source, exports, mocks) => vm.runInNewContext(
   `${source.replace(/^import[\s\S]*?;\r?\n/gm, '').replace(/\bexport\s+/g, '')}\n;({${exports.join(',')}})`,
-  { Response, Request, crypto, console: { warn() {} }, ...mocks });
+  { Response, Request, crypto, firestoreDatabaseName, console: { warn() {} }, ...mocks });
 const auditModule = (queryCollection = async () => [], mocks = {}) => isolated(auditSource,
   ['loadAggregatedSecurityAudit', 'persistRequestSecurityAudit', 'writeSecurityAudit'],
   { queryCollection, readStaffSession: async () => null, upsertDocument: async () => {}, auditWords, auditSentence, auditNarrative, auditActionContext, ...mocks });
