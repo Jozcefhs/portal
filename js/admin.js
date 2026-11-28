@@ -15961,6 +15961,51 @@ async function printAcademicAttendanceReport(data, rows, arm, mode, reportRows) 
   printable.focus();
 }
 
+function academicAttendanceHistoryRows(data, rows, presenceOnly) {
+  const selection = data.workspaceRecordSelection || {};
+  const { sessionId, termId } = academicManagementFilters;
+  return rows.studentAttendance.filter(row => row.SessionId === sessionId && row.TermId === termId
+    && (!selection.ClassId || selection.ClassId === '*' || row.ClassId === selection.ClassId)
+    && (!selection.ArmId || row.ArmId === selection.ArmId)
+    && (presenceOnly ? row.Mode === 'Daily' : ['Period', 'Subject'].includes(row.Mode)));
+}
+
+async function previewStudentAttendance(reference) {
+  const data = academicManagementData || {};
+  const rows = academicCurrentRows(data);
+  const presenceOnly = academicManagementView === 'presence';
+  const records = academicAttendanceHistoryRows(data, rows, presenceOnly)
+    .filter(row => reference && lower(row.StudentRef) === lower(reference));
+  if (!records.length) return;
+  const preview = window.open('', '_blank', 'width=1000,height=760');
+  if (!preview) {
+    setStatus(document.getElementById('academicManagementStatus'), 'Allow pop-ups to preview and print attendance.', 'bad');
+    return;
+  }
+  preview.opener = null;
+  const student = (data.students || []).find(row => lower(row.StudentRef) === lower(reference));
+  const options = {
+    schoolName: data.reportProfile?.SchoolName || currentUser?.organizationName || currentUser?.OrganisationName || 'School',
+    name: student?.StudentName || student?.DisplayName || student?.Name || records[0].StudentName || reference, reference,
+    period: [academicLabel(data.sessions, academicManagementFilters.sessionId), academicLabel(data.terms, academicManagementFilters.termId)].join(' · '),
+    register: presenceOnly ? 'Daily presence' : 'Lesson attendance', records,
+    classroom: row => [academicLabel(rows.classes, row.ClassId), academicLabel(rows.arms, row.ArmId)].join(' / '),
+    lesson: row => {
+      const entry = row.TimetableEntryId && academicFind(rows.timetableEntries, row.TimetableEntryId);
+      const subject = row.SubjectId || entry?.SubjectId;
+      return [row.Mode, subject && academicLabel(rows.subjects, subject), entry?.PeriodCodes?.join('+') || row.TimetableEntryId].filter(Boolean).join(' · ');
+    }
+  };
+  try {
+    const { studentAttendancePrintHtml } = await import('./academic-attendance-print.js');
+    preview.document.write(studentAttendancePrintHtml(options));
+  } catch (error) {
+    preview.document.write('<p>Could not prepare attendance preview: ' + escapeHtml(error.message) + '</p>');
+  }
+  preview.document.close();
+  preview.focus();
+}
+
 function academicAttendanceWorkspace(data, rows, presenceOnly = false) {
   const canMark = data.permissions?.canMarkAttendance;
   const canDecide = data.permissions?.canManageTimetables;
@@ -16024,14 +16069,19 @@ function academicAttendanceWorkspace(data, rows, presenceOnly = false) {
     <label>Correction reason <input name="CorrectionReason" placeholder="Required only when changing attendance already saved"></label>
     <button type="submit" ${attendanceDayOpen && roster.length && (mode === 'Daily' || sourceId) ? '' : 'disabled'}>Synchronize attendance online</button>
   </form>` : '';
-  const historyRows = rows.studentAttendance.filter((row) => row.SessionId === sessionId && row.TermId === termId
-    && (presenceOnly ? row.Mode === 'Daily' : ['Period', 'Subject'].includes(row.Mode)));
+  const historyRows = academicAttendanceHistoryRows(data, rows, presenceOnly);
+  const studentNames = new Map((data.students || []).map(row => [lower(row.StudentRef), row.StudentName || row.DisplayName || row.Name]));
   const history = table('Student Attendance History', historyRows, [
-    { label: 'Date', value: (row) => row.AttendanceDate }, { label: 'Student', value: (row) => academicLabel(data.students, row.StudentRef, row.StudentRef) },
+    { label: 'Date', value: (row) => row.AttendanceDate },
+    { label: 'Student', value: row => studentNames.get(lower(row.StudentRef)) || row.StudentName || row.StudentRef },
+    { label: 'Admission number', value: row => row.StudentRef },
     { label: 'Classroom', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
     { label: 'Register', value: (row) => row.Mode }, { label: 'Status', value: (row) => row.Status },
-    { label: 'Marked by', value: (row) => row.MarkedBy || '-' }
-  ], { numbered: true });
+    { label: 'Marked by', value: (row) => row.MarkedBy || '-' },
+    { label: 'Pupil history', render: row => row.StudentRef
+      ? `<button type="button" class="secondary" data-student-attendance-preview="${escapeHtml(row.StudentRef)}" aria-label="Preview and print attendance for ${escapeHtml(row.StudentRef)}">Preview / print</button>` : '' }
+  ], { numbered: true, searchable: true, searchPlaceholder: 'Student name or admission number',
+    searchLabel: 'attendance records', className: 'academic-student-attendance-history' });
   const correctionActions = (row) => canDecide && row.Status === 'Pending' ? `<div class="academic-management-row-actions"><button type="button" class="compact-icon-action compact-edit-action" data-academic-attendance-decision="Approved" data-academic-id="${escapeHtml(row.CorrectionId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Approve correction">&#10003;</button><button type="button" class="compact-icon-action academic-archive-action" data-academic-attendance-decision="Rejected" data-academic-id="${escapeHtml(row.CorrectionId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Reject correction">&#10005;</button></div>` : '<span class="muted">View only</span>';
   const visibleAttendanceIds = new Set(historyRows.map((row) => row.AttendanceId));
   const corrections = table('Attendance Correction Requests', rows.attendanceCorrections.filter((row) => visibleAttendanceIds.has(row.AttendanceId)), [
@@ -19966,6 +20016,10 @@ function bindAcademicManagement() {
     renderAcademicManagement(academicManagementData || {}, 'Offline attendance draft discarded.');
   });
   updateAttendanceSummary();
+  panelEl.querySelector('.academic-student-attendance-history')?.addEventListener('click', event => {
+    const button = event.target.closest('[data-student-attendance-preview]');
+    if (button) void previewStudentAttendance(button.dataset.studentAttendancePreview);
+  });
   const attendanceReportForm = panelEl.querySelector('[data-academic-attendance-report]');
   attendanceReportForm?.querySelectorAll('[data-academic-attendance-report-filter]').forEach((control) => control.addEventListener('change', () => {
     academicAttendanceDraft.reportArmId = clean(attendanceReportForm.elements.ReportArmId.value);

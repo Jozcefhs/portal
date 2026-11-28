@@ -1255,7 +1255,7 @@ export function academicWorkspaceRecordFilters(key, branchId, scope = {}) {
     if (fields.length) return [{field:'BranchId',op:'==',value:branchId},
       ...fields.filter(field=>clean(scope[field])).map(field=>({field,op:'==',value:clean(scope[field])}))];
   }
-  const termClassKeys = ['offerings', 'teacherAllocations', 'studentMemberships', 'scoreSheets', 'studentScores',
+  const termClassKeys = ['offerings', 'teacherAllocations', 'studentMemberships', 'studentAttendance', 'scoreSheets', 'studentScores',
     'scoreImports', 'scoreSyncBatches', 'cbtTests', 'termResults', 'resultEvents', 'resultClearances'];
   const sessionClassKeys = ['cumulativeResults', 'cumulativeEvents', 'promotionDecisions', 'promotionEvents'];
   const fields = termClassKeys.includes(key) ? ['SessionId', 'TermId', 'ClassId']
@@ -2148,7 +2148,8 @@ function displayStudents(rows = [], classes = []) {
   return rows.map((row) => ({
     StudentRef: studentReference(row),
     Status: clean(row.Status || row.status), BranchId: clean(row.BranchId || 'main'),
-    StudentName: clean(row.DisplayName || row.ApplicantName || row.StudentName || studentReference(row)),
+    StudentName: clean(row.DisplayName || row.ApplicantName || row.StudentName || row.FullName
+      || [row.FirstName, row.MiddleName, row.Surname || row.LastName].map(clean).filter(Boolean).join(' ') || studentReference(row)),
     AcademicClassId: academicStudentClassId(row, classes),
     AcademicArmId: clean(row.AcademicArmId), AcademicDepartmentCode: clean(row.AcademicDepartmentCode),
     ClassName: clean(row.ClassName || row.ClassAdmitted), ClassAdmitted: clean(row.ClassAdmitted),
@@ -2417,7 +2418,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
     // Names for a selected class come from its membership/result references,
     // not from downloading every student profile in the school section.
     people.students = await academicResultBatchRecipients(env,scope,
-      ['studentMemberships','termResults','cumulativeResults','promotionDecisions'].flatMap(key=>rawState[key] || [])
+      ['studentMemberships','studentAttendance','termResults','cumulativeResults','promotionDecisions'].flatMap(key=>rawState[key] || [])
         .filter(row=>row.ClassId === requestedClassId));
   }
   if (teacherDirect && !teacherAllocationView && peopleOptions.students) {

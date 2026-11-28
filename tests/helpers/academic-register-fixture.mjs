@@ -7,7 +7,7 @@ export function extractFunction(name) {
   if (start < 0) throw new Error(`Missing function ${name}`);
   return source.slice(start, source.indexOf('\nfunction ', start + 1));
 }
-const helpers = ['academicRecordId', 'academicIsActive', 'academicFind', 'academicLabel', 'academicSelectOptions', 'academicScoreStateOptions', 'academicCbtUploadStatus', 'academicScoreActionState']
+const helpers = ['academicRecordId', 'academicIsActive', 'academicFind', 'academicLabel', 'academicSelectOptions', 'academicAttendanceHistoryRows', 'academicScoreStateOptions', 'academicCbtUploadStatus', 'academicScoreActionState']
   .map(extractFunction).join('\n');
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g,
   c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -48,11 +48,11 @@ export function fixture() {
 export function renderWorkspace(kind, input = fixture(), presenceOnly = true) {
   const name = kind === 'scorebook' ? 'academicScorebookWorkspace' : 'academicAttendanceWorkspace';
   return runInNewContext(`${helpers}\n(${extractFunction(name)})(data, rows, presenceOnly)`, {
-    ...input, presenceOnly, escapeHtml,
+    ...input, presenceOnly, escapeHtml, lower: value => String(value ?? '').trim().toLowerCase(),
     clean: value => String(value ?? '').trim(),
     academicManagementFilters: { sessionId: 'session', termId: 'term', section: 'Secondary' },
     academicAttendanceDraft: { date: '2026-10-13' }, academicScorebookDraft: {},
     academicLocalToday: () => '2026-10-13', academicCalendarOpenOn: () => true,
-    academicTermAttendanceRows: () => [], table: () => ''
+    academicTermAttendanceRows: () => [], table: input.table || (() => '')
   });
 }
