@@ -1,8 +1,8 @@
 {
-  "version": "3.1.73",
+  "version": "3.1.74",
   "channel": "stable",
   "release_status": "published",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.73.exe",
-  "sha256": "fc3409528c6a705e2d0ec5ff096997389b602ad8feab4637f6afb9edf5c400b4",
-  "notes": "Manual payment confirmation now finds the signed-in officer by permanent staff account ID, including when their login name has changed."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.74.exe",
+  "sha256": "688da7c868e707489dfa0508a18f1ec71f03edb4feaa7a174f1170ed93105842",
+  "notes": "Student accounts highlights selected pupils in blue with white text. Click a selected pupil to deselect just that pupil. Double-click still opens the pupil's ledger."
 }
